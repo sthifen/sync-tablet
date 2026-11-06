@@ -15,7 +15,7 @@ final class IconView extends View {
     static final int BACK = 0, PEN = 1, HIGHLIGHTER = 2, ERASER = 3, SHAPES = 4, UNDO = 5, REDO = 6,
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
             LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29,
-            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44;
+            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44, CAMERA = 45, FILE = 46, TABLE = 47, PASTE = 48, SLIDES = 49, GRID_DOC = 50;
 
     private final int icon;
     private final Path path;
@@ -232,6 +232,33 @@ final class IconView extends View {
                 break;
             case CHIP: // una resistencia
                 p.moveTo(2.5f, 12); p.lineTo(6, 12); p.lineTo(7.7f, 7); p.lineTo(11, 17); p.lineTo(14, 7); p.lineTo(17, 17); p.lineTo(18.3f, 12); p.lineTo(21.5f, 12);
+                break;
+            case CAMERA:
+                p.addRoundRect(new RectF(3.5f, 7, 20.5f, 19), 2.5f, 2.5f, Path.Direction.CW);
+                p.addCircle(12, 13, 3.4f, Path.Direction.CW);
+                p.moveTo(8.5f, 7); p.lineTo(10, 4.5f); p.lineTo(14, 4.5f); p.lineTo(15.5f, 7);
+                break;
+            case FILE:
+                p.moveTo(6, 3.5f); p.lineTo(14, 3.5f); p.lineTo(18.5f, 8); p.lineTo(18.5f, 20.5f); p.lineTo(6, 20.5f); p.close();
+                p.moveTo(14, 3.5f); p.lineTo(14, 8); p.lineTo(18.5f, 8);
+                p.moveTo(9, 13); p.lineTo(15.5f, 13); p.moveTo(9, 16.5f); p.lineTo(15.5f, 16.5f);
+                break;
+            case TABLE:
+                p.addRoundRect(new RectF(3.5f, 5, 20.5f, 19), 1.5f, 1.5f, Path.Direction.CW);
+                p.moveTo(3.5f, 9.7f); p.lineTo(20.5f, 9.7f); p.moveTo(3.5f, 14.3f); p.lineTo(20.5f, 14.3f);
+                p.moveTo(9.2f, 5); p.lineTo(9.2f, 19); p.moveTo(14.8f, 5); p.lineTo(14.8f, 19);
+                break;
+            case PASTE:
+                p.addRoundRect(new RectF(5, 5, 19, 20.5f), 2, 2, Path.Direction.CW);
+                p.addRoundRect(new RectF(9, 3, 15, 7), 1, 1, Path.Direction.CW);
+                break;
+            case SLIDES:
+                p.addRoundRect(new RectF(3.5f, 4.5f, 20.5f, 15.5f), 1.5f, 1.5f, Path.Direction.CW);
+                p.moveTo(12, 15.5f); p.lineTo(12, 19); p.moveTo(8.5f, 20); p.lineTo(15.5f, 20);
+                break;
+            case GRID_DOC:
+                p.moveTo(6, 3.5f); p.lineTo(18, 3.5f); p.lineTo(18, 20.5f); p.lineTo(6, 20.5f); p.close();
+                p.moveTo(9, 8); p.lineTo(15, 8); p.moveTo(9, 12); p.lineTo(15, 12); p.moveTo(9, 16); p.lineTo(13, 16);
                 break;
             case FLIP:
                 p.moveTo(12, 3.5f); p.lineTo(12, 20.5f);

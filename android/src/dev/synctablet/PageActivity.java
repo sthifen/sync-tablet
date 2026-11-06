@@ -1,7 +1,6 @@
 package dev.synctablet;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -91,6 +90,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private InkView ink;
     private GlassLayout bar, palette, selectionBar, shapeBar;
+    private OptionDock dock;
     private LinearLayout shapeRow, circuitRow;
     private HorizontalScrollView circuitDock;
     private final ComponentButton[] circuitButtons = new ComponentButton[CIRCUIT_KINDS.length];
@@ -158,6 +158,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         root.addView(shapeBar, dockLp);
         shapeBar.setVisibility(View.GONE);
+        dock = new OptionDock(this, root, ink);
         root.setOnApplyWindowInsetsListener((v, in) -> {
             @SuppressWarnings("deprecation") int top = in.getSystemWindowInsetTop();
             @SuppressWarnings("deprecation") int left = in.getSystemWindowInsetLeft();
@@ -173,6 +174,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             shapeBar.setLayoutParams(dockLp);
             bar.maxWidth = getResources().getDisplayMetrics().widthPixels - 2 * gap;
             ink.topInset = top + gap + Ui.dp(this, 56);
+            dock.setInsets(bottom, Build.VERSION.SDK_INT >= 30 ? in.getInsets(android.view.WindowInsets.Type.ime()).bottom : 0);
             return in;
         });
         // Cada fotograma de la hoja se ve a través del cristal.
@@ -181,6 +183,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             palette.postInvalidateOnAnimation();
             if (selectionBar.getVisibility() == View.VISIBLE) selectionBar.postInvalidateOnAnimation();
             if (shapeBar.getVisibility() == View.VISIBLE) shapeBar.postInvalidateOnAnimation();
+            dock.invalidateGlass();
         };
         setContentView(root);
         // Se vuelve al dock como se dejó.
@@ -647,36 +650,116 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     // ---- Opciones de herramientas ----
 
     private void chooseKind() {
-        int current = 0;
-        for (int i = 0; i < PEN_KINDS.length; i++) if (PEN_KINDS[i].equals(ink.penKind)) current = i;
-        new AlertDialog.Builder(this)
-                .setTitle("Tipo de lápiz")
-                .setSingleChoiceItems(PEN_NAMES, current, (d, which) -> {
-                    ink.penKind = PEN_KINDS[which];
-                    prefs.edit().putString("penKind", ink.penKind).apply();
-                    d.dismiss();
-                    Ui.toast(this, PEN_NAMES[which]);
-                })
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < PEN_KINDS.length; i++) {
+            String kind = PEN_KINDS[i];
+            tiles.add(new OptionDock.Tile(new PenSample(this, kind, ink.penColor), PEN_NAMES[i], kind.equals(ink.penKind), () -> {
+                ink.penKind = kind;
+                prefs.edit().putString("penKind", kind).apply();
+            }));
+        }
+        dock.tiles("Tipo de lápiz", tiles);
+    }
+
+    private View glyph(int icon) {
+        IconView v = new IconView(this, icon, Ui.ICON, "");
+        v.setClickable(false);
+        v.setFocusable(false);
+        v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        // El icono de la barra, a la medida de una tarjeta.
+        v.setScaleX(1.3f);
+        v.setScaleY(1.3f);
+        return v;
+    }
+
+    /** Muestra de cada lápiz: su trazo de verdad. */
+    private static final class PenSample extends View {
+        private final Ink.Stroke stroke;
+        private final PageRenderer renderer;
+
+        PenSample(android.content.Context c, String kind, int color) {
+            super(c);
+            renderer = new PageRenderer(c);
+            stroke = new Ink.Stroke("muestra", kind, color, 5);
+            for (int i = 0; i <= 40; i++) {
+                float t = i / 40f;
+                stroke.add(8 + 84 * t, 50 - 30 * (float) Math.sin(t * Math.PI * 2), 0.25f + 0.75f * (float) Math.sin(t * Math.PI));
+            }
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float k = getWidth() / 100f;
+            c.save();
+            c.scale(k, k);
+            renderer.drawStroke(c, stroke, false);
+            c.restore();
+        }
+    }
+
+    /** Muestra de una plantilla: la hoja en pequeño. */
+    private static final class TemplateSample extends View {
+        private final String background;
+        private final PageRenderer renderer;
+        private final android.graphics.Paint paper = new android.graphics.Paint();
+
+        TemplateSample(android.content.Context c, String background) {
+            super(c);
+            this.background = background;
+            renderer = new PageRenderer(c);
+            paper.setColor(0xFFFFFFFF);
+            setElevation(Ui.dp(c, 1));
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float h = getHeight(), w = h * Ink.W / Ink.H, k = h / Ink.H;
+            c.save();
+            c.translate((getWidth() - w) / 2, 0);
+            c.clipRect(0, 0, w, h);
+            c.drawRect(0, 0, w, h, paper);
+            c.scale(k, k);
+            renderer.drawBackground(c, background, k * 0.6f);
+            c.restore();
+        }
+    }
+
+    /** Muestra de una tabla de filas × columnas. */
+    private static final class GridSample extends View {
+        private final int rows, cols;
+        private final android.graphics.Paint line = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        GridSample(android.content.Context c, int rows, int cols) {
+            super(c);
+            this.rows = rows;
+            this.cols = cols;
+            line.setStyle(android.graphics.Paint.Style.STROKE);
+            line.setColor(Ui.ICON);
+            line.setStrokeWidth(Ui.dp(c, 1));
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float pad = getWidth() * 0.12f, w = getWidth() - 2 * pad, h = getHeight() - 2 * pad;
+            for (int r = 0; r <= rows; r++) c.drawLine(pad, pad + h * r / rows, pad + w, pad + h * r / rows, line);
+            for (int k = 0; k <= cols; k++) c.drawLine(pad + w * k / cols, pad, pad + w * k / cols, pad + h, line);
+        }
     }
 
     private void chooseEraser() {
-        String[] modes = {"Trazos enteros", "Sólo lo que toca (parcial)", "Sólo el resaltador", "Lo que rodees (lazo)"};
-        new AlertDialog.Builder(this)
-                .setTitle("Goma")
-                .setSingleChoiceItems(modes, ink.eraseMode, (d, which) -> {
-                    ink.eraseMode = which;
-                    prefs.edit().putInt("eraseMode", which).apply();
-                    d.dismiss();
-                    Ui.toast(this, "Goma: " + modes[which].toLowerCase());
-                })
-                .setNeutralButton("Borrar toda esta página", (d, w) -> new AlertDialog.Builder(this)
-                        .setTitle("¿Vaciar la página " + (index + 1) + "?")
-                        .setMessage("Se puede deshacer.")
-                        .setPositiveButton("Vaciar", (d2, w2) -> ink.clearVisiblePage())
-                        .setNegativeButton("Cancelar", null)
-                        .show())
-                .show();
+        String[] modes = {"Trazos enteros", "Sólo lo que toca", "Sólo el resaltador", "Lo que rodees"};
+        int[] icons = {IconView.ERASER, IconView.ERASER, IconView.HIGHLIGHTER, IconView.LASSO};
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < modes.length; i++) {
+            int mode = i;
+            tiles.add(new OptionDock.Tile(glyph(icons[i]), modes[i], ink.eraseMode == i, () -> {
+                ink.eraseMode = mode;
+                prefs.edit().putInt("eraseMode", mode).apply();
+            }));
+        }
+        tiles.add(new OptionDock.Tile(glyph(IconView.TRASH), "Vaciar esta página", false, () ->
+                dock.confirm("¿Vaciar la página " + (index + 1) + "?", "Se puede deshacer.", "Vaciar", () -> ink.clearVisiblePage())).stays());
+        dock.tiles("Goma", tiles);
     }
 
     // ---- Figuras ----
@@ -742,48 +825,47 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private void penButtons() {
         String[] hold = {"Borrar", "Lazo (seleccionar)", "Resaltador", "Nada"};
-        String[] rows = {
-            "Mantener el botón mientras escribes: " + hold[ink.buttonHold],
-            "Un clic con el lápiz en el aire: " + PEN_ACTIONS[prefs.getInt("penClick", 0)],
-            "Doble clic con el lápiz en el aire: " + PEN_ACTIONS[prefs.getInt("penDouble", 1)],
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("Botones del S Pen")
-                .setItems(rows, (d, which) -> {
-                    if (which == 0) {
-                        new AlertDialog.Builder(this).setTitle("Mantener el botón mientras escribes")
-                                .setSingleChoiceItems(hold, ink.buttonHold, (d2, k) -> {
-                                    ink.buttonHold = k;
-                                    prefs.edit().putInt("buttonHold", k).apply();
-                                    d2.dismiss();
-                                    penButtons();
-                                }).show();
-                    } else {
-                        String key = which == 1 ? "penClick" : "penDouble";
-                        new AlertDialog.Builder(this).setTitle(which == 1 ? "Un clic" : "Doble clic")
-                                .setSingleChoiceItems(PEN_ACTIONS, prefs.getInt(key, which == 1 ? 0 : 1), (d2, k) -> {
-                                    prefs.edit().putInt(key, k).apply();
-                                    d2.dismiss();
-                                    penButtons();
-                                }).show();
-                    }
-                })
-                .setNegativeButton("Cerrar", null)
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(glyph(IconView.PEN), "Mantener: " + hold[ink.buttonHold], false, () -> {
+            ArrayList<OptionDock.Tile> options = new ArrayList<>();
+            for (int k = 0; k < hold.length; k++) {
+                int choice = k;
+                options.add(new OptionDock.Tile(glyph(IconView.PEN), hold[k], ink.buttonHold == k, () -> {
+                    ink.buttonHold = choice;
+                    prefs.edit().putInt("buttonHold", choice).apply();
+                    penButtons();
+                }).stays());
+            }
+            dock.tiles("Mantener el botón mientras escribes", options);
+        }).stays());
+        String[] keys = {"penClick", "penDouble"}, heads = {"Un clic", "Doble clic"};
+        for (int i = 0; i < 2; i++) {
+            String key = keys[i], head = heads[i];
+            int fallback = i;
+            tiles.add(new OptionDock.Tile(glyph(IconView.PEN), head + ": " + PEN_ACTIONS[prefs.getInt(key, fallback)], false, () -> {
+                ArrayList<OptionDock.Tile> options = new ArrayList<>();
+                for (int k = 0; k < PEN_ACTIONS.length; k++) {
+                    int choice = k;
+                    options.add(new OptionDock.Tile(glyph(IconView.PEN), PEN_ACTIONS[k], prefs.getInt(key, fallback) == k, () -> {
+                        prefs.edit().putInt(key, choice).apply();
+                        penButtons();
+                    }).stays());
+                }
+                dock.tiles(head + " con el lápiz en el aire", options);
+            }).stays());
+        }
+        dock.tiles("Botones del S Pen", tiles);
     }
 
     private void chooseTemplate() {
         Ink.Page p = ink.visiblePage();
         if (p == null) return;
-        int current = 0;
-        for (int i = 0; i < BACKGROUNDS.length; i++) if (BACKGROUNDS[i].equals(p.background)) current = i;
-        new AlertDialog.Builder(this)
-                .setTitle("Plantilla de la página " + (index + 1))
-                .setSingleChoiceItems(BACKGROUND_NAMES, current, (d, which) -> {
-                    ink.setBackground(BACKGROUNDS[which]);
-                    d.dismiss();
-                })
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < BACKGROUNDS.length; i++) {
+            String bg = BACKGROUNDS[i];
+            tiles.add(new OptionDock.Tile(new TemplateSample(this, bg), BACKGROUND_NAMES[i], bg.equals(p.background), () -> ink.setBackground(bg)));
+        }
+        dock.tiles("Plantilla de la página " + (index + 1), tiles);
     }
 
     /** Selector de color a medida: tono, saturación y brillo, con muestra. */
@@ -793,7 +875,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = Ui.dp(this, 20);
-        box.setPadding(pad, pad / 2, pad, 0);
+        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
         View preview = new View(this);
         box.addView(preview, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
         String[] names = {"Tono", "Saturación", "Brillo"};
@@ -804,7 +886,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             preview.setBackground(Ui.round(Color.HSVToColor(v), Ui.dp(this, 12)));
         };
         for (int i = 0; i < 3; i++) {
-            box.addView(Ui.text(this, names[i], 14, 0xFF9AA9AE, false));
+            box.addView(Ui.text(this, names[i], 14, Ui.ICON_MUTED, false));
             bars[i] = new SeekBar(this);
             bars[i].setMax(max[i]);
             bars[i].setProgress(Math.round(i == 0 ? hsv[0] : hsv[i] * 100));
@@ -816,18 +898,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             box.addView(bars[i]);
         }
         update.run();
-        new AlertDialog.Builder(this)
-                .setTitle("Color a medida")
-                .setView(box)
-                .setPositiveButton("Usar", (d, w) -> {
-                    float[] v = {bars[0].getProgress(), bars[1].getProgress() / 100f, bars[2].getProgress() / 100f};
-                    customColor = Color.HSVToColor(v);
-                    prefs.edit().putInt("customColor", customColor).apply();
-                    pickColor(customColor, hl);
-                    refreshTools();
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        dock.show("Color a medida", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Usar", true, () -> {
+            float[] v = {bars[0].getProgress(), bars[1].getProgress() / 100f, bars[2].getProgress() / 100f};
+            customColor = Color.HSVToColor(v);
+            prefs.edit().putInt("customColor", customColor).apply();
+            pickColor(customColor, hl);
+            refreshTools();
+        }));
     }
 
     // ---- Texto ----
@@ -898,13 +975,12 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     public void onNoteRequest(int page, Ink.Note item, float x, float y) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        int pad = Ui.dp(this, 20);
-        box.setPadding(pad, pad / 2, pad, 0);
-        EditText field = new EditText(this);
+        int pad = Ui.dp(this, 18);
+        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
+        EditText field = dock.field(item != null ? item.text : "", "Escribe tu nota");
         field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         field.setMinLines(3);
         field.setGravity(Gravity.TOP);
-        if (item != null) field.setText(item.text);
         box.addView(field);
         LinearLayout swatches = new LinearLayout(this);
         swatches.setGravity(Gravity.CENTER);
@@ -915,6 +991,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         for (int c : Ink.NOTE_COLORS) {
             View dot = new View(this);
             dot.setBackground(Ui.round(c, size / 2));
+            dot.setElevation(Ui.dp(this, 2));
             dot.setScaleX(c == chosen[0] ? 1.1f : 0.8f);
             dot.setScaleY(c == chosen[0] ? 1.1f : 0.8f);
             dot.setOnClickListener(v -> {
@@ -928,86 +1005,86 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             swatches.addView(dot, lp);
         }
         box.addView(swatches);
-        AlertDialog.Builder dialog = new AlertDialog.Builder(this)
-                .setTitle(item == null ? "Nota nueva" : "Nota")
-                .setView(box)
-                .setPositiveButton("Guardar", (d, w) -> ink.putNote(page, item, x, y, field.getText().toString(), chosen[0]))
-                .setNegativeButton("Cancelar", null);
-        if (item != null) dialog.setNeutralButton("Borrar", (d, w) -> ink.putNote(page, item, x, y, "", chosen[0]));
-        dialog.show();
-        field.requestFocus();
+        OptionDock.Action save = new OptionDock.Action("Guardar", true, () -> ink.putNote(page, item, x, y, field.getText().toString(), chosen[0]));
+        OptionDock.Action cancel = new OptionDock.Action("Cancelar", false, null);
+        if (item != null) {
+            dock.show("Nota", box, new OptionDock.Action("Borrar", false, () -> ink.putNote(page, item, x, y, "", chosen[0])), cancel, save);
+        } else {
+            dock.show("Nota nueva", box, cancel, save);
+        }
+        dock.focus(field);
     }
 
     @Override
     public void onValueRequest(int page, Ink.Stroke component, String current) {
-        EditText field = new EditText(this);
-        field.setText(current);
-        field.setSelection(current.length());
-        field.setHint("10 kΩ");
+        EditText field = dock.field(current, "10 kΩ");
         field.setSingleLine(true);
+        field.setSelection(current.length());
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        int pad = Ui.dp(this, 20);
-        box.setPadding(pad, pad / 2, pad, 0);
+        int pad = Ui.dp(this, 18);
+        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
         box.addView(field);
         LinearLayout units = new LinearLayout(this);
         units.setGravity(Gravity.CENTER);
+        units.setPadding(0, Ui.dp(this, 8), 0, 0);
         for (String u : new String[] {"Ω", "kΩ", "MΩ", "µF", "nF", "mH", "V", "A"}) {
-            TextView b = Ui.button(this, u);
+            TextView b = dock.chip(u, false);
             b.setOnClickListener(v -> field.getText().insert(field.getSelectionStart(), " " + u));
-            units.addView(b);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(Ui.dp(this, 3), 0, Ui.dp(this, 3), 0);
+            units.addView(b, lp);
         }
         HorizontalScrollView unitScroll = new HorizontalScrollView(this);
         unitScroll.setHorizontalScrollBarEnabled(false);
         unitScroll.addView(units);
         box.addView(unitScroll);
-        new AlertDialog.Builder(this)
-                .setTitle("Valor")
-                .setView(box)
-                .setPositiveButton("Guardar", (d, w) -> ink.setValue(page, component, field.getText().toString()))
-                .setNegativeButton("Cancelar", null)
-                .show();
-        field.requestFocus();
+        dock.show("Valor", box, new OptionDock.Action("Cancelar", false, null),
+                new OptionDock.Action("Guardar", true, () -> ink.setValue(page, component, field.getText().toString())));
+        dock.focus(field);
     }
 
     @Override
     public void onTextRequest(int page, Ink.Item item, float x, float y) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        int pad = Ui.dp(this, 20);
-        box.setPadding(pad, pad / 2, pad, 0);
-        EditText field = new EditText(this);
+        int pad = Ui.dp(this, 18);
+        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
+        EditText field = dock.field(item != null ? item.text : "", "Escribe aquí");
         field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         field.setMinLines(3);
         field.setGravity(Gravity.TOP);
-        if (item != null) field.setText(item.text);
         box.addView(field);
         float[] sizes = {20, 28, 40, 56};
         String[] sizeNames = {"Pequeño", "Normal", "Grande", "Título"};
         final float[] chosen = {item != null ? item.size : 28};
         LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        row.setPadding(0, Ui.dp(this, 8), 0, 0);
         ArrayList<TextView> buttons = new ArrayList<>();
         for (int i = 0; i < sizes.length; i++) {
-            TextView b = Ui.button(this, sizeNames[i]);
+            TextView b = dock.chip(sizeNames[i], false);
             final float s = sizes[i];
             b.setOnClickListener(v -> {
                 chosen[0] = s;
-                for (TextView o : buttons) Ui.setActive(o, o == v);
+                for (TextView o : buttons) dock.setChip(o, o == v);
             });
+            dock.setChip(b, Math.abs(s - chosen[0]) < 1);
             buttons.add(b);
-            Ui.setActive(b, Math.abs(s - chosen[0]) < 1);
-            row.addView(b);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(Ui.dp(this, 3), 0, Ui.dp(this, 3), 0);
+            row.addView(b, lp);
         }
         box.addView(row);
-        AlertDialog.Builder b = new AlertDialog.Builder(this)
-                .setTitle(item == null ? "Texto nuevo" : "Editar texto")
-                .setView(box)
-                .setPositiveButton("Guardar", (d, w) -> ink.putText(page, item, field.getText().toString(), chosen[0],
-                        item != null ? item.color : ink.penColor, x, y))
-                .setNegativeButton("Cancelar", null);
-        if (item != null) b.setNeutralButton("Borrar", (d, w) -> ink.putText(page, item, "", item.size, item.color, x, y));
-        b.show();
-        field.requestFocus();
+        OptionDock.Action save = new OptionDock.Action("Guardar", true, () -> ink.putText(page, item, field.getText().toString(), chosen[0],
+                item != null ? item.color : ink.penColor, x, y));
+        OptionDock.Action cancel = new OptionDock.Action("Cancelar", false, null);
+        if (item != null) {
+            dock.show("Editar texto", box, new OptionDock.Action("Borrar", false, () -> ink.putText(page, item, "", item.size, item.color, x, y)), cancel, save);
+        } else {
+            dock.show("Texto nuevo", box, cancel, save);
+        }
+        dock.focus(field);
     }
 
     // ---- Páginas ----
@@ -1028,20 +1105,14 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private void pageMenu() {
         Ink.Page visible = ink.visiblePage();
         String text = visible == null ? null : visible.bgText;
-        ArrayList<String> items = new ArrayList<>(java.util.Arrays.asList("Página nueva al final", "Páginas (ordenar, duplicar, borrar)",
-                "Plantilla", "Botones del S Pen", "Borrar esta página"));
-        if (text != null) items.add("Copiar el texto de la página");
-        new AlertDialog.Builder(this)
-                .setTitle("Página " + (index + 1) + " de " + notebook.pages.size())
-                .setItems(items.toArray(new String[0]), (d, which) -> {
-                    if (which == 0) addPage();
-                    else if (which == 1) pageManager();
-                    else if (which == 2) chooseTemplate();
-                    else if (which == 3) penButtons();
-                    else if (which == 4) confirmDeletePage(index, null);
-                    else copyText(text);
-                })
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(glyph(IconView.PLUS), "Página nueva", false, this::addPage));
+        tiles.add(new OptionDock.Tile(glyph(IconView.PAGES), "Ordenar páginas", false, this::pageManager).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.PAGE), "Plantilla", false, this::chooseTemplate).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.PEN), "Botones del S Pen", false, this::penButtons).stays());
+        if (text != null) tiles.add(new OptionDock.Tile(glyph(IconView.COPY), "Copiar el texto", false, () -> copyText(text)));
+        tiles.add(new OptionDock.Tile(glyph(IconView.TRASH), "Borrar esta página", false, () -> confirmDeletePage(index, null)).stays());
+        dock.tiles("Página " + (index + 1) + " de " + notebook.pages.size(), tiles);
     }
 
     private void copyText(String text) {
@@ -1055,22 +1126,17 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             Ui.toast(this, "Es la única página del cuaderno");
             return;
         }
-        new AlertDialog.Builder(this)
-                .setTitle("¿Borrar la página " + (i + 1) + "?")
-                .setMessage("Se borra de la tablet y del PC.")
-                .setPositiveButton("Borrar", (d, w) -> {
-                    save();
-                    String id = notebook.pages.get(i);
-                    if (!store.deletePage(notebook, id)) return;
-                    dirty.removeIf(p -> p.id.equals(id));
-                    sync.sendNotebook(notebook);
-                    sync.send("{\"t\":\"delete_page\",\"page\":\"" + id + "\"}");
-                    ink.removePage(i);
-                    showTitle();
-                    if (after != null) after.run();
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        dock.confirm("¿Borrar la página " + (i + 1) + "?", "Se borra de la tablet y del PC.", "Borrar", () -> {
+            save();
+            String id = notebook.pages.get(i);
+            if (!store.deletePage(notebook, id)) return;
+            dirty.removeIf(p -> p.id.equals(id));
+            sync.sendNotebook(notebook);
+            sync.send("{\"t\":\"delete_page\",\"page\":\"" + id + "\"}");
+            ink.removePage(i);
+            showTitle();
+            if (after != null) after.run();
+        });
     }
 
     /** Miniaturas de todas las páginas: tocar una la elige; ir, mover, duplicar o borrar. */
@@ -1100,15 +1166,15 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 if (p != null) img.setImageBitmap(thumbnail(p, tw, th));
                 img.setElevation(Ui.dp(this, 2));
                 cell.addView(img, new LinearLayout.LayoutParams(tw, th));
-                cell.addView(Ui.text(this, String.valueOf(i + 1), 14, 0xFF9AA9AE, false));
+                cell.addView(Ui.text(this, String.valueOf(i + 1), 14, Ui.ICON_MUTED, false));
                 final int at = i;
                 cell.setOnClickListener(v -> {
                     chosen[0] = at;
                     for (int k = 0; k < cells.size(); k++) {
-                        cells.get(k).setBackground(k == at ? Ui.round(0x332DD4BF, Ui.dp(this, 10)) : null);
+                        cells.get(k).setBackground(k == at ? Ui.round(0x331F2937, Ui.dp(this, 10)) : null);
                     }
                 });
-                if (i == chosen[0]) cell.setBackground(Ui.round(0x332DD4BF, Ui.dp(this, 10)));
+                if (i == chosen[0]) cell.setBackground(Ui.round(0x331F2937, Ui.dp(this, 10)));
                 cells.add(cell);
                 grid.addView(cell);
             }
@@ -1118,9 +1184,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         actions.setGravity(Gravity.CENTER);
         String[] names = {"◀ Mover", "Mover ▶", "Duplicar", "Borrar"};
         for (int k = 0; k < names.length; k++) {
-            TextView b = Ui.button(this, names[k]);
-            Ui.setActive(b, false);
-            b.setTextColor(0xFFEEF3F4);
+            TextView b = dock.chip(names[k], false);
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            blp.setMargins(Ui.dp(this, 3), 0, Ui.dp(this, 3), 0);
+            b.setLayoutParams(blp);
             final int action = k;
             b.setOnClickListener(v -> {
                 int i = chosen[0];
@@ -1152,16 +1219,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(actions);
-        box.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 420)));
-        new AlertDialog.Builder(this)
-                .setTitle("Páginas de «" + notebook.title + "»")
-                .setView(box)
-                .setPositiveButton("Ir a la página", (d, w) -> loadPages(chosen[0]))
-                .setOnDismissListener(d -> {
-                    // Orden o páginas cambiados: recargar la vista.
-                    loadPages(Math.min(chosen[0], notebook.pages.size() - 1));
-                })
-                .show();
+        box.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 380)));
+        dock.show("Páginas de «" + notebook.title + "»", box, new OptionDock.Action("Ir a la página", true, null));
+        // Orden o páginas cambiados: recargar la vista.
+        dock.onClose(() -> loadPages(Math.min(chosen[0], notebook.pages.size() - 1)));
     }
 
     private Bitmap thumbnail(Ink.Page p, int w, int h) {
@@ -1176,24 +1237,15 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     // ---- Fotos y PDF ----
 
     private void insertMenu() {
-        ArrayList<String> list = new ArrayList<>(java.util.Arrays.asList("Foto o imagen de la galería", "Hacer una foto con la cámara",
-                "PDF (sus páginas al final del cuaderno)", "Hoja de cálculo", "Archivo de texto o Markdown", "Pegar del portapapeles"));
-        if (Native.available()) list.add("PowerPoint (sus diapositivas al final del cuaderno)");
-        String[] options = list.toArray(new String[0]);
-        new AlertDialog.Builder(this)
-                .setTitle("Insertar")
-                .setItems(options, (d, which) -> {
-                    switch (which) {
-                        case 0: pick("image/*", PICK_IMAGE); break;
-                        case 1: takePhoto(); break;
-                        case 2: pick("application/pdf", PICK_PDF); break;
-                        case 3: askTableSize(); break;
-                        case 4: pick("text/*", PICK_TEXT); break;
-                        case 6: pick(PPTX, PICK_PPTX); break;
-                        default: paste();
-                    }
-                })
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(glyph(IconView.IMAGE), "Foto de la galería", false, () -> pick("image/*", PICK_IMAGE)));
+        tiles.add(new OptionDock.Tile(glyph(IconView.CAMERA), "Hacer una foto", false, this::takePhoto));
+        tiles.add(new OptionDock.Tile(glyph(IconView.FILE), "PDF", false, () -> pick("application/pdf", PICK_PDF)));
+        if (Native.available()) tiles.add(new OptionDock.Tile(glyph(IconView.SLIDES), "PowerPoint", false, () -> pick(PPTX, PICK_PPTX)));
+        tiles.add(new OptionDock.Tile(glyph(IconView.TABLE), "Hoja de cálculo", false, this::askTableSize).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.GRID_DOC), "Texto o Markdown", false, () -> pick("text/*", PICK_TEXT)));
+        tiles.add(new OptionDock.Tile(glyph(IconView.PASTE), "Pegar", false, this::paste));
+        dock.tiles("Insertar", tiles);
     }
 
     private void pick(String type, int request) {
@@ -1217,16 +1269,16 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     private void askTableSize() {
-        String[] sizes = {"3 × 3", "4 × 3", "5 × 4", "8 × 4", "10 × 6"};
         int[][] rc = {{3, 3}, {4, 3}, {5, 4}, {8, 4}, {10, 6}};
-        new AlertDialog.Builder(this)
-                .setTitle("Hoja de cálculo (filas × columnas)")
-                .setItems(sizes, (d, which) -> {
-                    if (ink.tool != InkView.LASSO) setTool(InkView.LASSO);
-                    ink.insertTable(rc[which][0], rc[which][1]);
-                    Ui.toast(this, "Con la herramienta de texto (T) tocas la tabla para escribir en ella");
-                })
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int[] size : rc) {
+            tiles.add(new OptionDock.Tile(new GridSample(this, size[0], size[1]), size[0] + " × " + size[1], false, () -> {
+                if (ink.tool != InkView.LASSO) setTool(InkView.LASSO);
+                ink.insertTable(size[0], size[1]);
+                Ui.toast(this, "Con la herramienta de texto (T) tocas la tabla para escribir en ella");
+            }));
+        }
+        dock.tiles("Hoja de cálculo (filas × columnas)", tiles);
     }
 
     /** Del portapapeles: una imagen se inserta como foto; el texto, como cuadro de texto. */
@@ -1290,14 +1342,14 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             grid.setColumnCount(size[1] + 1);
             grid.addView(new View(this), new GridLayout.LayoutParams());
             for (int c = 0; c < size[1]; c++) {
-                TextView h = Ui.text(this, String.valueOf((char) ('A' + c)), 13, 0xFF9AA9AE, true);
+                TextView h = Ui.text(this, String.valueOf((char) ('A' + c)), 13, Ui.ICON_MUTED, true);
                 h.setGravity(Gravity.CENTER);
                 grid.addView(h);
             }
             for (int r = 0; r < size[0]; r++) {
-                grid.addView(Ui.text(this, String.valueOf(r + 1), 13, 0xFF9AA9AE, true));
+                grid.addView(Ui.text(this, String.valueOf(r + 1), 13, Ui.ICON_MUTED, true));
                 for (int c = 0; c < size[1]; c++) {
-                    EditText e = new EditText(this);
+                    EditText e = dock.field("", "");
                     e.setSingleLine(true);
                     e.setMinWidth(Ui.dp(this, 110));
                     e.setTextSize(14);
@@ -1312,8 +1364,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         LinearLayout actions = new LinearLayout(this);
         String[] names = {"+ Fila", "− Fila", "+ Columna", "− Columna"};
         for (int k = 0; k < names.length; k++) {
-            TextView b = Ui.button(this, names[k]);
-            b.setTextColor(0xFFEEF3F4);
+            TextView b = dock.chip(names[k], false);
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            blp.setMargins(Ui.dp(this, 3), 0, Ui.dp(this, 3), Ui.dp(this, 6));
+            b.setLayoutParams(blp);
             final int a = k;
             b.setOnClickListener(v -> {
                 collect.run();
@@ -1331,19 +1385,14 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             actions.addView(b);
         }
         box.addView(actions);
-        box.addView(Ui.text(this, "Fórmulas: =A1+B2, =SUMA(A1:A5), =PROMEDIO(…), =MIN, =MAX, =CONTAR", 12, 0xFF9AA9AE, false));
+        box.addView(Ui.text(this, "Fórmulas: =A1+B2, =SUMA(A1:A5), =PROMEDIO(…), =MIN, =MAX, =CONTAR", 12, Ui.ICON_MUTED, false));
         box.addView(grid);
         hs.addView(box);
         scroll.addView(hs);
-        new AlertDialog.Builder(this)
-                .setTitle("Hoja de cálculo")
-                .setView(scroll)
-                .setPositiveButton("Guardar", (d, w) -> {
-                    collect.run();
-                    ink.putTable(page, table, cells[0], size[0], size[1]);
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        dock.show("Hoja de cálculo", scroll, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Guardar", true, () -> {
+            collect.run();
+            ink.putTable(page, table, cells[0], size[0], size[1]);
+        }));
     }
 
     @Override
@@ -1554,22 +1603,12 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     private void exportMenu() {
-        new AlertDialog.Builder(this)
-                .setTitle("Exportar")
-                .setItems(exportOptions(), (d, which) -> {
-                    if (which == 0) exportPdf();
-                    else if (which == 1) exportPng();
-                    else if (which == 2) exportMarkdown();
-                    else exportPptx();
-                })
-                .show();
-    }
-
-    private String[] exportOptions() {
-        ArrayList<String> list = new ArrayList<>(java.util.Arrays.asList("Cuaderno entero en PDF", "Esta página como imagen (PNG)",
-                "Los textos del cuaderno (Markdown)"));
-        if (Native.available()) list.add("Cuaderno entero en PowerPoint");
-        return list.toArray(new String[0]);
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(glyph(IconView.FILE), "Cuaderno en PDF", false, this::exportPdf));
+        tiles.add(new OptionDock.Tile(glyph(IconView.IMAGE), "Esta página como imagen", false, this::exportPng));
+        tiles.add(new OptionDock.Tile(glyph(IconView.GRID_DOC), "Textos en Markdown", false, this::exportMarkdown));
+        if (Native.available()) tiles.add(new OptionDock.Tile(glyph(IconView.SLIDES), "Cuaderno en PowerPoint", false, this::exportPptx));
+        dock.tiles("Exportar", tiles);
     }
 
     /** Una diapositiva por página, con lo escrito encima, en Descargas/SyncTablet. */
@@ -1781,6 +1820,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     public void onPageVisible(int i) {
         index = i;
         showTitle();
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if (dock.isOpen()) dock.close();
+        else super.onBackPressed();
     }
 
     @Override
