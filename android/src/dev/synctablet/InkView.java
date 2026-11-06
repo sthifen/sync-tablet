@@ -781,7 +781,11 @@ final class InkView extends View {
             n = new PageNode();
             nodes.put(page, n);
         }
-        if (n.dirty || n.scale == 0 || (n.scale != scale && !zooming)) record(n, i);
+        // Una página que sale de pantalla pierde su grabación: Android la borra para
+        // ahorrar memoria. Hay que preguntar, no suponer que sigue ahí. Lo mismo la
+        // capa de lo reciente, si quedaban trazos sólo en ella.
+        boolean lost = !n.node.hasDisplayList() || (n.baked != page.strokes.size() && !n.recent.hasDisplayList());
+        if (lost || n.dirty || n.scale == 0 || (n.scale != scale && !zooming)) record(n, i);
         return n;
     }
 
@@ -837,6 +841,24 @@ final class InkView extends View {
             if (e.getValue().baked != e.getKey().strokes.size()) e.getValue().dirty = true;
         }
         invalidate();
+    }
+
+    /**
+     * Android libera las texturas al ir la app al fondo o bloquear la tablet, y una
+     * grabación suelta no se entera: se vería el escritorio sin hojas. Se tiran y
+     * se graban de nuevo.
+     */
+    void redrawPages() {
+        if (!GPU) return;
+        for (PageNode n : nodes.values()) n.discard();
+        nodes.clear();
+        invalidate();
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        if (visibility == VISIBLE) redrawPages();
     }
 
     /** Lo que se ve detrás del cristal: las mismas texturas, sin lo que flota encima. */

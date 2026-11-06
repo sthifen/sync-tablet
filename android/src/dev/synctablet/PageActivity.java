@@ -217,6 +217,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     protected void onResume() {
         super.onResume();
         if (sync != null) sync.addListener(this);
+        if (ink != null) ink.redrawPages();
     }
 
     @Override
@@ -1780,6 +1781,12 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     public void onPageVisible(int i) {
         index = i;
         showTitle();
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= TRIM_MEMORY_UI_HIDDEN) ink.redrawPages();
     }
 
     @Override
