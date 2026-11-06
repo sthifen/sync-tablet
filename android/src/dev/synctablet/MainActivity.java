@@ -850,7 +850,9 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         if (note != null) {
             pm.getMenu().add(0, 1, 1, "Cambiar icono");
             pm.getMenu().add(0, 2, 2, "Eliminar esta nota");
+            if (Native.available()) pm.getMenu().add(0, 6, 6, "Exportar a Word");
         }
+        if (Native.available()) pm.getMenu().add(0, 5, 5, "Importar Word (.docx)");
         pm.getMenu().add(0, 3, 3, t.dark ? "Modo claro" : "Modo oscuro");
         pm.getMenu().add(0, 4, 4, "Conectar por WiFi…");
         pm.setOnMenuItemClickListener(item -> {
@@ -858,11 +860,82 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 case 1: pickIcon(); break;
                 case 2: confirmDeleteNote(noteId); break;
                 case 3: toggleTheme(); break;
+                case 5: pickDocx(); break;
+                case 6: saveDocx(); break;
                 default: askWifi();
             }
             return true;
         });
         pm.show();
+    }
+
+    // ---------------------------------------------------------------- Word
+
+    private static final int PICK_DOCX = 41, SAVE_DOCX = 42;
+    private static final String DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    private void pickDocx() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(DOCX);
+        startActivityForResult(i, PICK_DOCX);
+    }
+
+    private void saveDocx() {
+        String title = note == null ? "" : note.optString("title").trim();
+        String name = (title.isEmpty() ? "Nota" : title.replaceAll("[\\\\/:*?\"<>|]", "-")) + ".docx";
+        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(DOCX)
+                .putExtra(Intent.EXTRA_TITLE, name);
+        startActivityForResult(i, SAVE_DOCX);
+    }
+
+    @Override
+    protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (result != RESULT_OK || data == null || data.getData() == null) return;
+        if (request == PICK_DOCX) importDocx(data.getData());
+        else if (request == SAVE_DOCX) exportDocx(data.getData());
+    }
+
+    private void importDocx(android.net.Uri uri) {
+        Ui.toast(this, "Importando…");
+        new Thread(() -> {
+            String json = null;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[1 << 16];
+                for (int k; (k = in.read(buf)) > 0; ) bytes.write(buf, 0, k);
+                json = Native.docxToNote(bytes.toByteArray());
+            } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "importar Word", e);
+            }
+            String doc = json;
+            runOnUiThread(() -> {
+                try {
+                    if (doc == null) throw new org.json.JSONException("sin contenido");
+                    openNote(Notes.get(this).createFrom(doc, "Documento de Word").optString("id"));
+                } catch (org.json.JSONException e) {
+                    Ui.toast(this, "No se pudo leer ese documento");
+                }
+            });
+        }, "docx").start();
+    }
+
+    private void exportDocx(android.net.Uri uri) {
+        String json = note == null ? null : note.toString();
+        if (json == null) return;
+        new Thread(() -> {
+            boolean ok = false;
+            try (java.io.OutputStream out = getContentResolver().openOutputStream(uri)) {
+                byte[] docx = Native.noteToDocx(json);
+                if (docx != null && out != null) {
+                    out.write(docx);
+                    ok = true;
+                }
+            } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "exportar Word", e);
+            }
+            boolean done = ok;
+            runOnUiThread(() -> Ui.toast(this, done ? "Guardado en Word" : "No se pudo exportar"));
+        }, "docx").start();
     }
 
     // ---------------------------------------------------------------- páginas de la tablet dentro de una nota

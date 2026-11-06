@@ -28,5 +28,10 @@ final class Native {
     static native String pdfText(long handle, int page);
     static native void pdfClose(long handle);
 
+    /** Un .docx como JSON {title, blocks}; null si no se pudo leer. */
+    static native String docxToNote(byte[] data);
+    /** Una nota como .docx; null si no se pudo. */
+    static native byte[] noteToDocx(String note);
+
     private Native() {}
 }

@@ -4,11 +4,12 @@
 //! un PDF raro no debe hacerlo. Si algo falla, Java usa su camino de siempre.
 
 pub mod pdf;
+pub mod word;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JIntArray};
+use jni::objects::{JByteArray, JClass, JIntArray, JString};
 use jni::sys::{jbyteArray, jfloat, jint, jlong, jstring};
 
 fn guarded<T>(fallback: T, f: impl FnOnce() -> Option<T>) -> T {
@@ -63,6 +64,26 @@ pub extern "system" fn Java_dev_synctablet_Native_pdfClose<'l>(_: JNIEnv<'l>, _:
         // SAFETY: viene de Box::into_raw en pdfOpen y Java lo cierra una sola vez.
         drop(unsafe { Box::from_raw(handle as *mut pdf::Doc) });
     }
+}
+
+/// Un `.docx` como JSON de nota; null si no se pudo leer.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_docxToNote<'l>(env: JNIEnv<'l>, _: JClass<'l>, data: JByteArray<'l>) -> jstring {
+    guarded(std::ptr::null_mut(), || {
+        let bytes = env.convert_byte_array(&data).ok()?;
+        let json = word::docx_to_note(&bytes)?;
+        Some(env.new_string(json).ok()?.into_raw())
+    })
+}
+
+/// Una nota (JSON) como `.docx`; null si no se pudo.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_noteToDocx<'l>(mut env: JNIEnv<'l>, _: JClass<'l>, note: JString<'l>) -> jbyteArray {
+    guarded(std::ptr::null_mut(), || {
+        let note: String = env.get_string(&note).ok()?.into();
+        let docx = word::note_to_docx(&note)?;
+        Some(env.byte_array_from_slice(&docx).ok()?.into_raw())
+    })
 }
 
 fn doc<'a>(handle: jlong) -> Option<&'a mut pdf::Doc> {

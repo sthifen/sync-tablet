@@ -129,6 +129,25 @@ final class Notes {
         return n;
     }
 
+    /** Nota nueva con el contenido de un documento: JSON {title, blocks}. */
+    JSONObject createFrom(String json, String fallbackTitle) throws JSONException {
+        JSONObject doc = new JSONObject(json);
+        JSONArray from = doc.getJSONArray("blocks"), blocks = new JSONArray();
+        for (int i = 0; i < from.length(); i++) {
+            JSONObject b = from.getJSONObject(i);
+            JSONObject made = block(b.optString("type", "text"), b.optString("text"));
+            made.put("checked", b.optBoolean("checked"));
+            blocks.put(made);
+        }
+        if (blocks.length() == 0) blocks.put(block("text", ""));
+        JSONObject n = create();
+        String title = doc.optString("title").trim();
+        n.put("title", title.isEmpty() ? fallbackTitle : title);
+        n.put("blocks", blocks);
+        edited(n);
+        return n;
+    }
+
     /** La nota cambió (título, icono o bloques): guardarla y subirla. */
     void edited(JSONObject n) {
         try {
