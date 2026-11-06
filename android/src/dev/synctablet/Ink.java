@@ -245,7 +245,7 @@ final class Ink {
         String background = LINES;
         /** Página de un PDF importado como fondo (id de la imagen). */
         String bgAsset;
-        /** Texto de esa página del PDF. */
+        /** Texto de esa página del PDF o diapositiva. */
         String bgText;
         final ArrayList<Stroke> strokes = new ArrayList<>();
         final ArrayList<Item> items = new ArrayList<>();

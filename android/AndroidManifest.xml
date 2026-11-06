@@ -31,5 +31,11 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustNothing|stateHidden" />
+
+        <activity
+            android:name=".PresentActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
     </application>
 </manifest>

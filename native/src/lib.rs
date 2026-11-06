@@ -3,13 +3,14 @@
 //! Ninguna función deja salir un pánico: cruzar JNI con uno cerraría la app, y
 //! un PDF raro no debe hacerlo. Si algo falla, Java usa su camino de siempre.
 
+pub mod deck;
 pub mod pdf;
 pub mod word;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JIntArray, JString};
+use jni::objects::{JByteArray, JClass, JIntArray, JObjectArray, JString};
 use jni::sys::{jbyteArray, jfloat, jint, jlong, jstring};
 
 fn guarded<T>(fallback: T, f: impl FnOnce() -> Option<T>) -> T {
@@ -84,6 +85,79 @@ pub extern "system" fn Java_dev_synctablet_Native_noteToDocx<'l>(mut env: JNIEnv
         let docx = word::note_to_docx(&note)?;
         Some(env.byte_array_from_slice(&docx).ok()?.into_raw())
     })
+}
+
+/// Abre un `.pptx` y devuelve su asa, o 0 si no se puede leer.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_deckOpen<'l>(env: JNIEnv<'l>, _: JClass<'l>, data: JByteArray<'l>) -> jlong {
+    guarded(0, || {
+        let bytes = env.convert_byte_array(&data).ok()?;
+        Some(Box::into_raw(Box::new(deck::Deck::open(&bytes)?)) as jlong)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_deckSlides<'l>(_: JNIEnv<'l>, _: JClass<'l>, handle: jlong) -> jint {
+    guarded(0, || Some(deck(handle)?.slides() as jint))
+}
+
+/// Dibuja una diapositiva: RGBA premultiplicado, y en `size` ancho y alto.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_deckRender<'l>(
+    env: JNIEnv<'l>,
+    _: JClass<'l>,
+    handle: jlong,
+    slide: jint,
+    width: jfloat,
+    size: JIntArray<'l>,
+) -> jbyteArray {
+    guarded(std::ptr::null_mut(), || {
+        let image = deck(handle)?.render(usize::try_from(slide).ok()?, f64::from(width))?;
+        env.set_int_array_region(&size, 0, &[image.width as jint, image.height as jint]).ok()?;
+        Some(env.byte_array_from_slice(&image.rgba).ok()?.into_raw())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_deckText<'l>(env: JNIEnv<'l>, _: JClass<'l>, handle: jlong, slide: jint) -> jstring {
+    guarded(std::ptr::null_mut(), || {
+        let text = deck(handle)?.text(usize::try_from(slide).ok()?);
+        Some(env.new_string(text).ok()?.into_raw())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_deckClose<'l>(_: JNIEnv<'l>, _: JClass<'l>, handle: jlong) {
+    if handle != 0 {
+        // SAFETY: viene de Box::into_raw en deckOpen y Java lo cierra una sola vez.
+        drop(unsafe { Box::from_raw(handle as *mut deck::Deck) });
+    }
+}
+
+/// Un `.pptx` con una imagen JPEG por diapositiva; null si no se pudo.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_imagesToPptx<'l>(
+    mut env: JNIEnv<'l>,
+    _: JClass<'l>,
+    images: JObjectArray<'l>,
+    width: jfloat,
+    height: jfloat,
+) -> jbyteArray {
+    guarded(std::ptr::null_mut(), || {
+        let count = env.get_array_length(&images).ok()?;
+        let mut jpegs = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let item = JByteArray::from(env.get_object_array_element(&images, i).ok()?);
+            jpegs.push(env.convert_byte_array(&item).ok()?);
+        }
+        let pptx = deck::images_to_pptx(jpegs, f64::from(width), f64::from(height))?;
+        Some(env.byte_array_from_slice(&pptx).ok()?.into_raw())
+    })
+}
+
+fn deck<'a>(handle: jlong) -> Option<&'a deck::Deck> {
+    // SAFETY: el asa es de deckOpen y sigue abierta.
+    unsafe { (handle as *const deck::Deck).as_ref() }
 }
 
 fn doc<'a>(handle: jlong) -> Option<&'a mut pdf::Doc> {

@@ -10,6 +10,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.pdf.PdfDocument;
 import android.graphics.pdf.PdfRenderer;
@@ -65,7 +66,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private static final String[] PEN_NAMES = {"Pluma", "Lápiz", "Pincel", "Caligrafía"};
     private static final String[] BACKGROUNDS = {Ink.LINES, Ink.GRID, Ink.DOTS, Ink.CORNELL, Ink.TODO, Ink.MUSIC, Ink.PLAIN};
     private static final String[] BACKGROUND_NAMES = {"Rayas", "Cuadros", "Puntos", "Cornell (apuntes)", "Lista de tareas", "Pentagrama", "Lisa"};
-    private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4;
+    private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4, PICK_PPTX = 5;
+    private static final String PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     /** Acciones para el botón del S Pen (clic y doble clic con el lápiz en el aire). */
     private static final String[] PEN_ACTIONS = {"Cambiar entre pluma y goma", "Deshacer", "Lazo", "Puntero láser", "Resaltador", "Nada"};
     private Uri photoUri;
@@ -271,6 +273,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         row.addView(icon(IconView.PAGE, "Plantilla de la hoja", v -> chooseTemplate()));
         row.addView(icon(IconView.IMAGE, "Insertar foto o PDF", v -> insertMenu()));
         row.addView(icon(IconView.EXPORT, "Exportar", v -> exportMenu()));
+        row.addView(icon(IconView.PLAY, "Presentar desde esta página", v -> present()));
         row.addView(sep(false));
         finger = icon(IconView.HAND, "Dibujar con el dedo", v -> {
             ink.fingerDraws = !ink.fingerDraws;
@@ -740,7 +743,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         String text = visible == null ? null : visible.bgText;
         ArrayList<String> items = new ArrayList<>(java.util.Arrays.asList("Página nueva al final", "Páginas (ordenar, duplicar, borrar)",
                 "Plantilla", "Botones del S Pen", "Borrar esta página"));
-        if (text != null) items.add("Copiar el texto del PDF");
+        if (text != null) items.add("Copiar el texto de la página");
         new AlertDialog.Builder(this)
                 .setTitle("Página " + (index + 1) + " de " + notebook.pages.size())
                 .setItems(items.toArray(new String[0]), (d, which) -> {
@@ -886,8 +889,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     // ---- Fotos y PDF ----
 
     private void insertMenu() {
-        String[] options = {"Foto o imagen de la galería", "Hacer una foto con la cámara", "PDF (sus páginas al final del cuaderno)",
-            "Hoja de cálculo", "Archivo de texto o Markdown", "Pegar del portapapeles"};
+        ArrayList<String> list = new ArrayList<>(java.util.Arrays.asList("Foto o imagen de la galería", "Hacer una foto con la cámara",
+                "PDF (sus páginas al final del cuaderno)", "Hoja de cálculo", "Archivo de texto o Markdown", "Pegar del portapapeles"));
+        if (Native.available()) list.add("PowerPoint (sus diapositivas al final del cuaderno)");
+        String[] options = list.toArray(new String[0]);
         new AlertDialog.Builder(this)
                 .setTitle("Insertar")
                 .setItems(options, (d, which) -> {
@@ -897,6 +902,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                         case 2: pick("application/pdf", PICK_PDF); break;
                         case 3: askTableSize(); break;
                         case 4: pick("text/*", PICK_TEXT); break;
+                        case 6: pick(PPTX, PICK_PPTX); break;
                         default: paste();
                     }
                 })
@@ -1066,6 +1072,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         Uri uri = data.getData();
         if (request == PICK_IMAGE) insertImage(uri);
         else if (request == PICK_PDF) importPdf(uri);
+        else if (request == PICK_PPTX) importDeck(uri);
         else if (request == PICK_TEXT) importText(uri);
     }
 
@@ -1132,23 +1139,75 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                     return;
                 }
             }
-            main.post(() -> {
-                int first = notebook.pages.size();
-                for (int i = 0; i < assets.size(); i++) {
-                    String a = assets.get(i);
-                    Ink.Page p = store.addPage(notebook);
-                    p.bgAsset = a;
-                    p.bgText = texts.get(i);
-                    p.background = Ink.PLAIN;
-                    store.savePage(p);
-                    sync.sendAsset(a);
-                    sync.sendPage(p);
+            main.post(() -> addImportedPages(assets, texts, " página importada", " páginas importadas"));
+        }).start();
+    }
+
+    /** Cada imagen, como página nueva al final y con su texto. */
+    private void addImportedPages(ArrayList<String> assets, ArrayList<String> texts, String one, String many) {
+        int first = notebook.pages.size();
+        for (int i = 0; i < assets.size(); i++) {
+            String a = assets.get(i);
+            Ink.Page p = store.addPage(notebook);
+            p.bgAsset = a;
+            p.bgText = texts.get(i);
+            p.background = Ink.PLAIN;
+            store.savePage(p);
+            sync.sendAsset(a);
+            sync.sendPage(p);
+        }
+        sync.sendNotebook(notebook);
+        loadPages(first);
+        Ui.toast(this, assets.size() + (assets.size() == 1 ? one : many));
+    }
+
+    /** Cada diapositiva, como página con su imagen y sitio para escribir alrededor. */
+    private void importDeck(Uri uri) {
+        Ui.toast(this, "Importando la presentación…");
+        save();
+        new Thread(() -> {
+            ArrayList<String> assets = new ArrayList<>(), texts = new ArrayList<>();
+            long deck = 0;
+            boolean ok = false;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                byte[] buf = new byte[1 << 16];
+                for (int k; (k = in.read(buf)) > 0; ) bytes.write(buf, 0, k);
+                deck = Native.deckOpen(bytes.toByteArray());
+                if (deck != 0) {
+                    int[] size = new int[2];
+                    ok = true;
+                    for (int i = 0, n = Native.deckSlides(deck); i < n && ok; i++) {
+                        byte[] rgba = Native.deckRender(deck, i, PDF_WIDTH, size);
+                        if (rgba == null) {
+                            ok = false;
+                            break;
+                        }
+                        Bitmap b = Bitmap.createBitmap(size[0], size[1], Bitmap.Config.ARGB_8888);
+                        b.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(rgba));
+                        assets.add(store.putAsset(b));
+                        b.recycle();
+                        String text = Native.deckText(deck, i);
+                        texts.add(text == null || text.trim().isEmpty() ? null : text);
+                    }
                 }
-                sync.sendNotebook(notebook);
-                loadPages(first);
-                Ui.toast(this, assets.size() + (assets.size() == 1 ? " página importada" : " páginas importadas"));
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "importar PowerPoint", e);
+                ok = false;
+            } finally {
+                if (deck != 0) Native.deckClose(deck);
+            }
+            boolean done = ok;
+            main.post(() -> {
+                if (done) addImportedPages(assets, texts, " diapositiva importada", " diapositivas importadas");
+                else Ui.toast(this, "No se pudo abrir la presentación");
             });
         }).start();
+    }
+
+    private void present() {
+        save();
+        startActivity(new Intent(this, PresentActivity.class).putExtra("notebook", notebook.id).putExtra("index", index));
     }
 
     /** Con el motor propio: páginas más fieles y, además, su texto. Falso si no se pudo. */
@@ -1202,12 +1261,76 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private void exportMenu() {
         new AlertDialog.Builder(this)
                 .setTitle("Exportar")
-                .setItems(new String[] {"Cuaderno entero en PDF", "Esta página como imagen (PNG)", "Los textos del cuaderno (Markdown)"}, (d, which) -> {
+                .setItems(exportOptions(), (d, which) -> {
                     if (which == 0) exportPdf();
                     else if (which == 1) exportPng();
-                    else exportMarkdown();
+                    else if (which == 2) exportMarkdown();
+                    else exportPptx();
                 })
                 .show();
+    }
+
+    private String[] exportOptions() {
+        ArrayList<String> list = new ArrayList<>(java.util.Arrays.asList("Cuaderno entero en PDF", "Esta página como imagen (PNG)",
+                "Los textos del cuaderno (Markdown)"));
+        if (Native.available()) list.add("Cuaderno entero en PowerPoint");
+        return list.toArray(new String[0]);
+    }
+
+    /** Una diapositiva por página, con lo escrito encima, en Descargas/SyncTablet. */
+    private void exportPptx() {
+        save();
+        Ui.toast(this, "Creando la presentación…");
+        new Thread(() -> {
+            PageRenderer renderer = new PageRenderer(this);
+            ArrayList<byte[]> jpegs = new ArrayList<>();
+            float shape = 0;
+            int w = PDF_WIDTH, h = 0;
+            try {
+                for (String id : notebook.pages) {
+                    Ink.Page p = store.page(id);
+                    if (p == null) continue;
+                    RectF area = renderer.contentRect(p);
+                    // La forma de la primera página manda; las demás caben dentro.
+                    if (shape == 0) {
+                        shape = area.width() / area.height();
+                        h = Math.round(w / shape);
+                    }
+                    Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                    b.eraseColor(Color.WHITE);
+                    Canvas c = new Canvas(b);
+                    float k = Math.min(w / area.width(), h / area.height());
+                    c.translate((w - area.width() * k) / 2, (h - area.height() * k) / 2);
+                    c.clipRect(0, 0, area.width() * k, area.height() * k);
+                    c.scale(k, k);
+                    c.translate(-area.left, -area.top);
+                    renderer.drawPage(c, p, k, null, null);
+                    ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+                    b.compress(Bitmap.CompressFormat.JPEG, 88, jpeg);
+                    b.recycle();
+                    jpegs.add(jpeg.toByteArray());
+                }
+                byte[] pptx = Native.imagesToPptx(jpegs.toArray(new byte[0][]), w, h);
+                if (pptx == null) throw new IOException("sin presentación");
+                String name = notebook.title.replaceAll("[\\\\/:*?\"<>|]", " ").trim() + ".pptx";
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                v.put(MediaStore.MediaColumns.MIME_TYPE, PPTX);
+                if (Build.VERSION.SDK_INT >= 29) v.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/SyncTablet");
+                Uri uri = getContentResolver().insert(MediaStore.Files.getContentUri("external"), v);
+                if (uri == null) throw new IOException("sin acceso a Descargas");
+                try (OutputStream out = getContentResolver().openOutputStream(uri)) {
+                    out.write(pptx);
+                }
+                main.post(() -> {
+                    Ui.toast(this, "Guardado en Descargas/SyncTablet/" + name);
+                    share(uri, PPTX);
+                });
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "exportar PowerPoint", e);
+                main.post(() -> Ui.toast(this, "No se pudo crear la presentación"));
+            }
+        }).start();
     }
 
     /** La página que se ve, a 2000 px de ancho, en Imágenes/SyncTablet; y compartirla. */

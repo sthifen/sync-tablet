@@ -12,12 +12,20 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 jni = { version = "0.21", default-features = false }
+deckcraft-fonts = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
+deckcraft-geom = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
+deckcraft-model = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
+deckcraft-pptx = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
+deckcraft-render = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
 serde_json = "1"
 wordcraft-docx = { git = "https://github.com/storytold/wordcraft", rev = "edfea68101220c9bdc4b2b0ccf4acd9612bedb6e" }
 wordcraft-formats = { git = "https://github.com/storytold/wordcraft", rev = "edfea68101220c9bdc4b2b0ccf4acd9612bedb6e" }
 pdfcraft-render = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
 
 # PdfCraft usa sus propias copias de estas librerías; hay que repetirlo aquí.
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
 [patch.crates-io]
 hayro = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
 hayro-cmap = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }

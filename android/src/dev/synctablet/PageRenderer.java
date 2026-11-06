@@ -71,6 +71,15 @@ final class PageRenderer {
         return b;
     }
 
+    /** Lo que importa de la página: la imagen de fondo si la tiene, o la hoja. */
+    RectF contentRect(Ink.Page p) {
+        Bitmap bg = asset(p.bgAsset);
+        if (bg == null) return new RectF(0, 0, Ink.W, Ink.H);
+        float k = Math.min(Ink.W / bg.getWidth(), Ink.H / bg.getHeight());
+        float w = bg.getWidth() * k, h = bg.getHeight() * k;
+        return new RectF((Ink.W - w) / 2, (Ink.H - h) / 2, (Ink.W + w) / 2, (Ink.H + h) / 2);
+    }
+
     /**
      * Página entera. `hidden`: trazos e imágenes que no se pintan (los que se
      * están moviendo); `revealed`: cintas destapadas.
