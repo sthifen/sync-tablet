@@ -1324,8 +1324,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     public void onTableRequest(int page, Ink.Item table) {
         final int[] size = {table.rows, table.cols};
         final String[][] cells = {table.cells.clone()};
-        ScrollView scroll = new ScrollView(this);
         HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = Ui.dp(this, 14);
@@ -1356,7 +1356,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                     int i = r * size[1] + c;
                     e.setText(i < cells[0].length && cells[0][i] != null ? cells[0][i] : "");
                     fields.add(e);
-                    grid.addView(e);
+                    GridLayout.LayoutParams cell = new GridLayout.LayoutParams();
+                    cell.setMargins(Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3));
+                    grid.addView(e, cell);
                 }
             }
         };
@@ -1386,10 +1388,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         }
         box.addView(actions);
         box.addView(Ui.text(this, "Fórmulas: =A1+B2, =SUMA(A1:A5), =PROMEDIO(…), =MIN, =MAX, =CONTAR", 12, Ui.ICON_MUTED, false));
-        box.addView(grid);
-        hs.addView(box);
-        scroll.addView(hs);
-        dock.show("Hoja de cálculo", scroll, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Guardar", true, () -> {
+        hs.addView(grid);
+        box.addView(hs);
+        dock.show("Hoja de cálculo", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Guardar", true, () -> {
             collect.run();
             ink.putTable(page, table, cells[0], size[0], size[1]);
         }));

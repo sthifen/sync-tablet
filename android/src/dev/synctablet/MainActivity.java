@@ -327,9 +327,14 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         pageBox = new LinearLayout(this);
         pageBox.setOrientation(LinearLayout.VERTICAL);
         pageBox.setClipChildren(false);
+        pageBox.setPadding(t.dp(GUTTER), 0, 0, 0);
+        pageBox.setClipToPadding(false);
         column.addView(pageBox);
         return col;
     }
+
+    /** Margen a la izquierda de la página, donde van las asas de los bloques. */
+    private static final int GUTTER = 30;
 
     /** Centra la página con un ancho máximo, como en el visor del PC. */
     private final class ColumnLayout extends ViewGroup {
@@ -344,7 +349,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             int w = MeasureSpec.getSize(ws), h = 0;
             if (getChildCount() > 0) {
                 View c = getChildAt(0);
-                c.measure(MeasureSpec.makeMeasureSpec(inner(w), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+                c.measure(MeasureSpec.makeMeasureSpec(inner(w) + t.dp(GUTTER), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
                 h = c.getMeasuredHeight();
             }
             setMeasuredDimension(w, h);
@@ -354,7 +359,9 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             if (getChildCount() == 0) return;
             int w = r - l, in = inner(w), x = (w - in) / 2;
             View c = getChildAt(0);
-            c.layout(x, 0, x + in, c.getMeasuredHeight());
+            // La caja llega hasta el margen: si no, las asas de los bloques se verían
+            // pero no recibirían toques.
+            c.layout(x - t.dp(GUTTER), 0, x + in, c.getMeasuredHeight());
         }
     }
 
@@ -548,7 +555,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     /** Galería de cuadernos: vista previa de la primera página, título y datos. */
     private void gallery() {
         GridLayout grid = new GridLayout(this);
-        int width = pageBox.getWidth();
+        int width = pageBox.getWidth() - pageBox.getPaddingLeft();
         if (width <= 0) width = getResources().getDisplayMetrics().widthPixels - t.dp(sidebar.getVisibility() == View.VISIBLE ? 400 : 130);
         int gap = t.dp(16);
         int cols = Math.max(2, Math.min(5, (width + gap) / (t.dp(190) + gap)));
