@@ -84,10 +84,22 @@ final class OptionDock {
     private Object backCallback;
     private int bottom, keyboard;
     private boolean open;
+    private final int text, muted, soft, picked, strong, onStrong;
 
     OptionDock(Activity activity, FrameLayout root, View behind) {
+        this(activity, root, behind, Ui.GLASS_LIGHT, false);
+    }
+
+    /** `behind` puede ser null: entonces el cristal no difumina nada y `tint` debe tapar. */
+    OptionDock(Activity activity, FrameLayout root, View behind, int tint, boolean dark) {
         this.activity = activity;
         this.root = root;
+        text = dark ? 0xFFE3E2E0 : Ui.ICON;
+        muted = dark ? 0xFF9B9A97 : Ui.ICON_MUTED;
+        soft = dark ? 0x14FFFFFF : 0x12111827;
+        picked = dark ? 0x38FFFFFF : 0x331F2937;
+        strong = dark ? 0xFFE3E2E0 : Ui.ACCENT_DEEP;
+        onStrong = dark ? 0xFF191919 : 0xFFFFFFFF;
         scrim = new View(activity);
         scrim.setBackgroundColor(0x1F000000);
         scrim.setAlpha(0);
@@ -97,12 +109,12 @@ final class OptionDock {
         scrim.setElevation(dp(20));
         scrim.setOutlineProvider(null);
         root.addView(scrim, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        glass = new GlassLayout(activity, behind, Ui.GLASS_LIGHT, dp(28));
+        glass = new GlassLayout(activity, behind, tint, dp(28));
         glass.setOrientation(LinearLayout.VERTICAL);
         glass.setElevation(dp(24));
         glass.setClickable(true);
         glass.setVisibility(View.GONE);
-        title = Ui.text(activity, "", 15, Ui.ICON, true);
+        title = Ui.text(activity, "", 15, text, true);
         title.setGravity(Gravity.CENTER);
         title.setPadding(dp(20), dp(16), dp(20), dp(6));
         title.setSingleLine(true);
@@ -185,9 +197,9 @@ final class OptionDock {
             item.setOrientation(LinearLayout.VERTICAL);
             item.setGravity(Gravity.CENTER_HORIZONTAL);
             item.setPadding(dp(6), dp(8), dp(6), dp(8));
-            item.setBackground(Ui.round(t.active ? 0x331F2937 : 0x12111827, dp(16)));
+            item.setBackground(Ui.round(t.active ? picked : soft, dp(16)));
             item.addView(t.preview, new LinearLayout.LayoutParams(dp(64), dp(64)));
-            TextView name = Ui.text(activity, t.label, 12, Ui.ICON, t.active);
+            TextView name = Ui.text(activity, t.label, 12, text, t.active);
             name.setGravity(Gravity.CENTER);
             name.setMaxLines(2);
             name.setEllipsize(TextUtils.TruncateAt.END);
@@ -215,10 +227,16 @@ final class OptionDock {
 
     /** Una pregunta de sí o no. */
     void confirm(String heading, String message, String yes, Runnable run) {
-        TextView text = Ui.text(activity, message, 14, Ui.ICON_MUTED, false);
-        text.setGravity(Gravity.CENTER);
-        text.setPadding(dp(24), dp(2), dp(24), dp(12));
-        show(heading, text, new Action("Cancelar", false, null), new Action(yes, true, run));
+        TextView line = message(message);
+        show(heading, line, new Action("Cancelar", false, null), new Action(yes, true, run));
+    }
+
+    /** Un texto explicativo. */
+    TextView message(String message) {
+        TextView line = Ui.text(activity, message, 14, muted, false);
+        line.setGravity(Gravity.CENTER);
+        line.setPadding(dp(24), dp(2), dp(24), dp(12));
+        return line;
     }
 
     /** Cualquier contenido, con sus botones. */
@@ -366,20 +384,59 @@ final class OptionDock {
 
     /** Un botón de texto para el cristal. */
     TextView chip(String label, boolean strong) {
-        TextView t = Ui.text(activity, label, 14, strong ? 0xFFFFFFFF : Ui.ICON, strong);
+        TextView t = Ui.text(activity, label, 14, strong ? onStrong : text, strong);
         t.setGravity(Gravity.CENTER);
         t.setMinHeight(dp(42));
         t.setPadding(dp(14), 0, dp(14), 0);
-        t.setBackground(Ui.round(strong ? Ui.ACCENT_DEEP : 0x14111827, dp(14)));
+        t.setBackground(Ui.round(strong ? this.strong : soft, dp(14)));
         t.setClickable(true);
         t.setFocusable(true);
         return t;
     }
 
     void setChip(TextView t, boolean on) {
-        t.setTextColor(on ? 0xFFFFFFFF : Ui.ICON);
+        t.setTextColor(on ? onStrong : text);
         t.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-        t.setBackground(Ui.round(on ? Ui.ACCENT_DEEP : 0x14111827, dp(14)));
+        t.setBackground(Ui.round(on ? strong : soft, dp(14)));
+    }
+
+    /** El dibujo de una tarjeta: un icono de la app. */
+    View glyph(int icon) {
+        IconView v = new IconView(activity, icon, text, "");
+        v.setClickable(false);
+        v.setFocusable(false);
+        v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        v.setScaleX(1.3f);
+        v.setScaleY(1.3f);
+        return v;
+    }
+
+    /** El dibujo de una tarjeta: unas letras o un emoji. */
+    View letter(String sample) {
+        TextView v = Ui.text(activity, sample, 24, text, false);
+        v.setGravity(Gravity.CENTER);
+        return v;
+    }
+
+    /** El dibujo de una tarjeta: un color. */
+    View swatch(int color) {
+        View v = new View(activity);
+        v.setBackground(Ui.round(color, dp(32)));
+        v.setScaleX(0.74f);
+        v.setScaleY(0.74f);
+        return v;
+    }
+
+    /** Una línea que se toca, como en una lista de resultados. */
+    TextView row(String label, View.OnClickListener click) {
+        TextView v = Ui.text(activity, label, 15, text, false);
+        v.setSingleLine(true);
+        v.setEllipsize(TextUtils.TruncateAt.END);
+        v.setPadding(dp(14), dp(12), dp(14), dp(12));
+        v.setBackground(Ui.round(0, dp(12)));
+        v.setClickable(true);
+        v.setOnClickListener(click);
+        return v;
     }
 
     /** Un campo de texto para el cristal. */
@@ -387,10 +444,10 @@ final class OptionDock {
         EditText e = new EditText(activity);
         e.setText(text);
         e.setHint(hint);
-        e.setTextColor(Ui.ICON);
-        e.setHintTextColor(0x88111827);
+        e.setTextColor(this.text);
+        e.setHintTextColor(muted);
         e.setTextSize(16);
-        e.setBackground(Ui.round(0x14111827, dp(14)));
+        e.setBackground(Ui.round(soft, dp(14)));
         e.setPadding(dp(14), dp(12), dp(14), dp(12));
         return e;
     }

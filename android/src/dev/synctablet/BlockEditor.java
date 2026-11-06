@@ -17,7 +17,6 @@ import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -39,6 +38,8 @@ final class BlockEditor {
         View tabletBlock(JSONObject b);
         /** Elegir qué página de la tablet poner en el bloque (luego llamar a setTablet). */
         void pickTabletPage(JSONObject b);
+        /** Muestra las opciones de un bloque: dibujo y nombre de cada una, y qué elegir. */
+        void blockOptions(String[] samples, String[] names, int current, java.util.function.IntConsumer pick);
     }
 
     static final String[][] TYPES = {
@@ -400,31 +401,31 @@ final class BlockEditor {
     }
 
     private void blockMenu(View anchor, final JSONObject b) {
-        PopupMenu pm = new PopupMenu(ctx, anchor);
-        Menu m = pm.getMenu();
+        String[] samples = {"Aa", "H1", "H2", "H3", "•", "1.", "☐", "❝", "💡", "—", "✏️", "🗑"};
+        String[] names = new String[TYPES.length + 1];
+        int current = -1;
         for (int k = 0; k < TYPES.length; k++) {
             boolean same = TYPES[k][0].equals(type(b));
-            m.add(0, k, k, "tablet".equals(TYPES[k][0]) && same ? "Cambiar de página" : TYPES[k][1]);
+            if (same) current = k;
+            names[k] = "tablet".equals(TYPES[k][0]) && same ? "Cambiar de página" : TYPES[k][1];
         }
-        m.add(0, 100, 100, "Eliminar bloque");
-        pm.setOnMenuItemClickListener(item -> {
+        names[TYPES.length] = "Eliminar bloque";
+        host.blockOptions(samples, names, current, which -> {
             String id = b.optString("id");
-            if (item.getItemId() == 100) {
+            if (which == TYPES.length) {
                 int i = indexOf(id);
                 if (i >= 0) blocks.remove(i);
                 if (blocks.isEmpty()) blocks.add(Notes.block("text", ""));
                 changed();
                 render(null, 0);
-            } else if ("tablet".equals(TYPES[item.getItemId()][0])) {
+            } else if ("tablet".equals(TYPES[which][0])) {
                 host.pickTabletPage(b);
             } else {
-                setType(b, TYPES[item.getItemId()][0]);
+                setType(b, TYPES[which][0]);
                 changed();
                 render(isText(b) ? id : null, b.optString("text").length());
             }
-            return true;
         });
-        pm.show();
     }
 
     private TextView text(String s, float sp) {

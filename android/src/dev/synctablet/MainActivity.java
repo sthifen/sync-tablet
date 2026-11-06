@@ -1,7 +1,6 @@
 package dev.synctablet;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -26,7 +25,6 @@ import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -73,6 +71,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     /** Nota abierta (null = Inicio). */
     private String noteId;
     private JSONObject note;
+    private OptionDock dock;
     private BlockEditor editor;
     private TextView iconView;
     private EditText titleView;
@@ -178,14 +177,25 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         edge.setVisibility(open ? View.VISIBLE : View.GONE);
         // De borde a borde (Android 15+): sitio para las barras del sistema y el teclado.
         root.setOnApplyWindowInsetsListener((v, in) -> {
-            android.graphics.Insets s = in.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime());
-            v.setPadding(s.left, s.top, s.right, s.bottom);
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets s = in.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime());
+                v.setPadding(s.left, s.top, s.right, s.bottom);
+                dock.setInsets(in.getInsets(android.view.WindowInsets.Type.systemBars()).bottom, in.getInsets(android.view.WindowInsets.Type.ime()).bottom);
+            } else {
+                // Antes de Android 11 la ventana ya se encoge con el teclado.
+                v.setPadding(in.getSystemWindowInsetLeft(), in.getSystemWindowInsetTop(), in.getSystemWindowInsetRight(), in.getSystemWindowInsetBottom());
+                dock.setInsets(in.getSystemWindowInsetBottom(), 0);
+            }
             return in;
         });
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((o, n) -> {
             if (pendingRemote && !isEditing()) main.postDelayed(() -> onNotesChanged(noteId), 400);
         });
-        setContentView(root);
+        // El dock de opciones flota sobre todo.
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(root, new FrameLayout.LayoutParams(-1, -1));
+        dock = new OptionDock(this, frame, null, t.dark ? 0xF7262626 : 0xF7FFFFFF, t.dark);
+        setContentView(frame);
     }
 
     private View buildSidebar() {
@@ -806,67 +816,51 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(8);
         grid.setPadding(t.dp(12), t.dp(8), t.dp(12), t.dp(8));
-        final AlertDialog[] dlg = new AlertDialog[1];
         for (String em : EMOJIS) {
             TextView e = new TextView(this);
             e.setText(em);
             e.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
             e.setGravity(Gravity.CENTER);
+            e.setTextColor(t.text);
             e.setOnClickListener(v -> {
                 try { note.put("icon", em); } catch (JSONException ignored) { }
                 iconView.setText(em);
                 paintCrumb();
                 changed();
                 renderSidebar();
-                dlg[0].dismiss();
+                dock.close();
             });
             grid.addView(e, new ViewGroup.LayoutParams(t.dp(48), t.dp(48)));
         }
-        dlg[0] = new AlertDialog.Builder(this).setTitle("Elige un icono").setView(grid).show();
+        dock.show("Elige un icono", grid);
     }
 
     private void confirmDeleteNote(String id) {
         JSONObject n = notes.note(id);
         if (n == null) return;
         String name = n.optString("title");
-        new AlertDialog.Builder(this)
-                .setTitle("¿Eliminar «" + (name.isEmpty() ? "Sin título" : name) + "»?")
-                .setMessage("Se borra de la tablet y del PC.")
-                .setPositiveButton("Eliminar", (d, w) -> {
-                    if (id.equals(noteId)) {
-                        main.removeCallbacks(save);
-                        note = null;
-                        noteId = null;
-                    }
-                    notes.delete(id);
-                    showHome();
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        dock.confirm("¿Eliminar «" + (name.isEmpty() ? "Sin título" : name) + "»?", "Se borra de la tablet y del PC.", "Eliminar", () -> {
+            if (id.equals(noteId)) {
+                main.removeCallbacks(save);
+                note = null;
+                noteId = null;
+            }
+            notes.delete(id);
+            showHome();
+        });
     }
 
     private void moreMenu(View anchor) {
-        PopupMenu pm = new PopupMenu(this, anchor);
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         if (note != null) {
-            pm.getMenu().add(0, 1, 1, "Cambiar icono");
-            pm.getMenu().add(0, 2, 2, "Eliminar esta nota");
-            if (Native.available()) pm.getMenu().add(0, 6, 6, "Exportar a Word");
+            tiles.add(new OptionDock.Tile(dock.letter(note.optString("icon", "📄")), "Cambiar icono", false, this::pickIcon).stays());
+            if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPORT), "Exportar a Word", false, this::saveDocx));
         }
-        if (Native.available()) pm.getMenu().add(0, 5, 5, "Importar Word (.docx)");
-        pm.getMenu().add(0, 3, 3, t.dark ? "Modo claro" : "Modo oscuro");
-        pm.getMenu().add(0, 4, 4, "Conectar por WiFi…");
-        pm.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case 1: pickIcon(); break;
-                case 2: confirmDeleteNote(noteId); break;
-                case 3: toggleTheme(); break;
-                case 5: pickDocx(); break;
-                case 6: saveDocx(); break;
-                default: askWifi();
-            }
-            return true;
-        });
-        pm.show();
+        if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Importar Word", false, this::pickDocx));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, this::toggleTheme));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.WIFI), "Conectar por WiFi", false, this::askWifi).stays());
+        if (note != null) tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Eliminar esta nota", false, () -> confirmDeleteNote(noteId)).stays());
+        dock.tiles("Opciones", tiles);
     }
 
     // ---------------------------------------------------------------- Word
@@ -995,22 +989,31 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             Ui.toast(this, "Todavía no tienes cuadernos con páginas");
             return;
         }
-        String[] names = new String[list.size()];
-        for (int i = 0; i < names.length; i++) names[i] = list.get(i).title + "  ·  " + list.get(i).pages.size() + " pág.";
-        new AlertDialog.Builder(this)
-                .setTitle("¿De qué cuaderno?")
-                .setItems(names, (d, which) -> {
-                    Ink.Notebook nb = list.get(which);
-                    String[] pages = new String[nb.pages.size()];
-                    for (int i = 0; i < pages.length; i++) pages[i] = "Página " + (i + 1);
-                    new AlertDialog.Builder(this)
-                            .setTitle(nb.title)
-                            .setItems(pages, (d2, i) -> editor.setTablet(b, nb.pages.get(i), nb.title + " · Página " + (i + 1)))
-                            .setNegativeButton("Cancelar", null)
-                            .show();
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (Ink.Notebook nb : list) {
+            tiles.add(new OptionDock.Tile(dock.swatch(nb.color), nb.title + " · " + nb.pages.size() + " pág.", false, () -> {
+                ArrayList<OptionDock.Tile> pages = new ArrayList<>();
+                for (int i = 0; i < nb.pages.size(); i++) {
+                    int page = i;
+                    pages.add(new OptionDock.Tile(dock.glyph(IconView.PAGE), "Página " + (i + 1), false,
+                            () -> editor.setTablet(b, nb.pages.get(page), nb.title + " · Página " + (page + 1))));
+                }
+                dock.tiles(nb.title, pages);
+            }).stays());
+        }
+        dock.tiles("¿De qué cuaderno?", tiles);
+    }
+
+    @Override
+    public void blockOptions(String[] samples, String[] names, int current, java.util.function.IntConsumer pick) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < names.length; i++) {
+            int which = i;
+            // Elegir página sigue en el dock; lo demás lo cierra.
+            OptionDock.Tile tile = new OptionDock.Tile(dock.letter(samples[i]), names[i], i == current, () -> pick.accept(which));
+            tiles.add("✏️".equals(samples[i]) ? tile.stays() : tile);
+        }
+        dock.tiles("Bloque", tiles);
     }
 
     // ---------------------------------------------------------------- búsqueda
@@ -1018,9 +1021,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private void openSearch() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(t.dp(16), t.dp(8), t.dp(16), 0);
-        EditText q = new EditText(this);
-        q.setHint("Busca notas y cuadernos…");
+        box.setPadding(t.dp(18), 0, t.dp(18), t.dp(8));
+        EditText q = dock.field("", "Busca notas y cuadernos…");
         q.setSingleLine(true);
         box.addView(q);
         LinearLayout results = new LinearLayout(this);
@@ -1028,7 +1030,6 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         ScrollView sv = new ScrollView(this);
         sv.addView(results);
         box.addView(sv, new LinearLayout.LayoutParams(-1, t.dp(360)));
-        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).create();
         Runnable fill = () -> {
             results.removeAllViews();
             String s = q.getText().toString().trim().toLowerCase();
@@ -1036,11 +1037,11 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 String ti = n.optString("title");
                 if (!s.isEmpty() && !ti.toLowerCase().contains(s) && !Notes.text(n).toLowerCase().contains(s)) continue;
                 String ic = n.optString("icon");
-                results.addView(result((ic.isEmpty() ? "📄" : ic) + "  " + (ti.isEmpty() ? "Sin título" : ti), v -> { dlg.dismiss(); openNote(n.optString("id")); }));
+                results.addView(dock.row((ic.isEmpty() ? "📄" : ic) + "  " + (ti.isEmpty() ? "Sin título" : ti), v -> { dock.close(); openNote(n.optString("id")); }));
             }
             for (Ink.Notebook n : store.notebooks()) {
                 if (!s.isEmpty() && !n.title.toLowerCase().contains(s) && !n.folder.toLowerCase().contains(s)) continue;
-                results.addView(result("✏️  " + n.title + "  ·  " + n.pages.size() + " pág.", v -> { dlg.dismiss(); openNotebook(n, null); }));
+                results.addView(dock.row("✏️  " + n.title + "  ·  " + n.pages.size() + " pág.", v -> { dock.close(); openNotebook(n, null); }));
             }
             if (results.getChildCount() == 0) results.addView(sideHint("Nada coincide con «" + s + "»"));
         };
@@ -1050,120 +1051,103 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             @Override public void afterTextChanged(Editable s) { fill.run(); }
         });
         fill.run();
-        dlg.show();
-        q.requestFocus();
-        dlg.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
-    }
-
-    private View result(String label, View.OnClickListener l) {
-        TextView tv = new TextView(this);
-        tv.setText(label);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        tv.setSingleLine(true);
-        tv.setEllipsize(TextUtils.TruncateAt.END);
-        tv.setPadding(t.dp(8), t.dp(12), t.dp(8), t.dp(12));
-        tv.setOnClickListener(l);
-        return tv;
+        dock.show("Buscar", box);
+        dock.focus(q);
     }
 
     // ---------------------------------------------------------------- cuadernos
 
     private EditText field(String value) {
-        EditText e = new EditText(this);
+        EditText e = dock.field(value, "");
         e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        e.setText(value);
+        e.setSingleLine(true);
         e.setSelectAllOnFocus(true);
         return e;
     }
 
+    /** Un formulario de un campo: se escribe y se confirma. */
+    private void ask(String heading, EditText e, String yes, Runnable run) {
+        LinearLayout box = new LinearLayout(this);
+        box.setPadding(t.dp(18), 0, t.dp(18), t.dp(10));
+        box.addView(e, new LinearLayout.LayoutParams(-1, -2));
+        dock.show(heading, box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action(yes, true, run));
+        dock.focus(e);
+    }
+
     private void askNewNotebook() {
         EditText e = field("Cuaderno " + (store.notebooks().size() + 1));
-        new AlertDialog.Builder(this)
-                .setTitle("Nuevo cuaderno")
-                .setView(e)
-                .setPositiveButton("Crear", (d, w) -> {
-                    String title = e.getText().toString().trim();
-                    int color = Ui.COVERS[store.notebooks().size() % Ui.COVERS.length];
-                    Ink.Notebook n = store.createNotebook(title.isEmpty() ? "Cuaderno" : title, color);
-                    sync.sendNotebook(n);
-                    sync.sendPage(store.page(n.pages.get(0)));
-                    openNotebook(n, null);
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        ask("Nuevo cuaderno", e, "Crear", () -> {
+            String title = e.getText().toString().trim();
+            int color = Ui.COVERS[store.notebooks().size() % Ui.COVERS.length];
+            Ink.Notebook n = store.createNotebook(title.isEmpty() ? "Cuaderno" : title, color);
+            sync.sendNotebook(n);
+            sync.sendPage(store.page(n.pages.get(0)));
+            openNotebook(n, null);
+        });
     }
 
     private void notebookMenu(Ink.Notebook n) {
-        new AlertDialog.Builder(this)
-                .setTitle(n.title)
-                .setItems(new String[] {"Abrir", "Renombrar", "Cambiar color", n.favorite ? "Quitar de favoritos" : "Marcar como favorito",
-                        "Mover a carpeta…", "Borrar"}, (d, which) -> {
-                    if (which == 0) openNotebook(n, null);
-                    else if (which == 1) rename(n);
-                    else if (which == 2) {
-                        int i = 0;
-                        while (i < Ui.COVERS.length && Ui.COVERS[i] != n.color) i++;
-                        n.color = Ui.COVERS[(i + 1) % Ui.COVERS.length];
-                        changed(n);
-                    } else if (which == 3) {
-                        n.favorite = !n.favorite;
-                        changed(n);
-                    } else if (which == 4) moveToFolder(n);
-                    else confirmDelete(n);
-                })
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGE), "Abrir", false, () -> openNotebook(n, null)));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Renombrar", false, () -> rename(n)).stays());
+        tiles.add(new OptionDock.Tile(dock.swatch(n.color), "Cambiar color", false, () -> chooseCover(n)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.STAR), n.favorite ? "Quitar de favoritos" : "Marcar favorito", n.favorite, () -> {
+            n.favorite = !n.favorite;
+            changed(n);
+        }));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Mover a carpeta", false, () -> moveToFolder(n)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> confirmDelete(n)).stays());
+        dock.tiles(n.title, tiles);
+    }
+
+    private void chooseCover(Ink.Notebook n) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int c : Ui.COVERS) {
+            tiles.add(new OptionDock.Tile(dock.swatch(c), "", c == n.color, () -> {
+                n.color = c;
+                changed(n);
+            }));
+        }
+        dock.tiles("Color de «" + n.title + "»", tiles);
     }
 
     private void rename(Ink.Notebook n) {
         EditText e = field(n.title);
-        new AlertDialog.Builder(this)
-                .setTitle("Renombrar")
-                .setView(e)
-                .setPositiveButton("Guardar", (d, w) -> {
-                    String title = e.getText().toString().trim();
-                    if (!title.isEmpty()) {
-                        n.title = title;
-                        changed(n);
-                    }
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        ask("Renombrar", e, "Guardar", () -> {
+            String title = e.getText().toString().trim();
+            if (!title.isEmpty()) {
+                n.title = title;
+                changed(n);
+            }
+        });
     }
 
     private void moveToFolder(Ink.Notebook n) {
         java.util.TreeSet<String> folders = new java.util.TreeSet<>();
         for (Ink.Notebook o : store.notebooks()) if (!o.folder.isEmpty()) folders.add(o.folder);
-        ArrayList<String> items = new ArrayList<>(folders);
-        items.add("Nueva carpeta…");
-        items.add("Sin carpeta");
-        new AlertDialog.Builder(this)
-                .setTitle("Mover «" + n.title + "» a")
-                .setItems(items.toArray(new String[0]), (d, which) -> {
-                    String choice = items.get(which);
-                    if (choice.equals("Sin carpeta")) {
-                        n.folder = "";
-                        changed(n);
-                    } else if (choice.equals("Nueva carpeta…")) {
-                        EditText e = field("");
-                        e.setHint("Universidad, Proyectos…");
-                        new AlertDialog.Builder(this)
-                                .setTitle("Carpeta nueva")
-                                .setView(e)
-                                .setPositiveButton("Mover", (d2, w) -> {
-                                    String name = e.getText().toString().trim();
-                                    if (!name.isEmpty()) {
-                                        n.folder = name;
-                                        changed(n);
-                                    }
-                                })
-                                .setNegativeButton("Cancelar", null)
-                                .show();
-                    } else {
-                        n.folder = choice;
-                        changed(n);
-                    }
-                })
-                .show();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (String folder : folders) {
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), folder, folder.equals(n.folder), () -> {
+                n.folder = folder;
+                changed(n);
+            }));
+        }
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PLUS), "Nueva carpeta", false, () -> {
+            EditText e = field("");
+            e.setHint("Universidad, Proyectos…");
+            ask("Carpeta nueva", e, "Mover", () -> {
+                String name = e.getText().toString().trim();
+                if (!name.isEmpty()) {
+                    n.folder = name;
+                    changed(n);
+                }
+            });
+        }).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.HOME), "Sin carpeta", n.folder.isEmpty(), () -> {
+            n.folder = "";
+            changed(n);
+        }));
+        dock.tiles("Mover «" + n.title + "» a", tiles);
     }
 
     private void changed(Ink.Notebook n) {
@@ -1174,17 +1158,12 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     }
 
     private void confirmDelete(Ink.Notebook n) {
-        new AlertDialog.Builder(this)
-                .setTitle("¿Borrar «" + n.title + "»?")
-                .setMessage("Se borra de la tablet y del PC. No se puede deshacer.")
-                .setPositiveButton("Borrar", (d, w) -> {
-                    store.deleteNotebook(n);
-                    sync.send("{\"t\":\"delete_notebook\",\"notebook\":\"" + n.id + "\"}");
-                    renderSidebar();
-                    if (noteId == null) showHome();
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        dock.confirm("¿Borrar «" + n.title + "»?", "Se borra de la tablet y del PC. No se puede deshacer.", "Borrar", () -> {
+            store.deleteNotebook(n);
+            sync.send("{\"t\":\"delete_notebook\",\"notebook\":\"" + n.id + "\"}");
+            renderSidebar();
+            if (noteId == null) showHome();
+        });
     }
 
     private void askWifi() {
@@ -1196,23 +1175,22 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         code.setInputType(InputType.TYPE_CLASS_NUMBER);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(e);
-        box.addView(code);
-        new AlertDialog.Builder(this)
-                .setTitle("Conectar por WiFi")
-                .setMessage("Si ya conectaste la tablet por cable, basta la IP. Si no, escribe también el código: "
-                        + "los dos salen en el PC, en «Conectar por WiFi».")
-                .setView(box)
-                .setPositiveButton("Guardar", (d, w) -> {
-                    String host = e.getText().toString().trim(), digits = code.getText().toString().trim();
-                    sync.setWifiHost(host);
-                    if (digits.isEmpty()) return;
-                    new Thread(() -> {
-                        boolean ok = sync.pair(host, digits);
-                        runOnUiThread(() -> Ui.toast(this, ok ? "Tablet vinculada" : "No se pudo vincular: revisa la IP y el código"));
-                    }, "pair").start();
-                })
-                .setNegativeButton("Cancelar", null)
-                .show();
+        box.setPadding(t.dp(18), 0, t.dp(18), t.dp(10));
+        box.addView(dock.message("Si ya conectaste la tablet por cable, basta la IP. Si no, escribe también el código: "
+                + "los dos salen en el PC, en «Conectar por WiFi»."));
+        box.addView(e, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(-1, -2);
+        gap.topMargin = t.dp(8);
+        box.addView(code, gap);
+        dock.show("Conectar por WiFi", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Guardar", true, () -> {
+            String host = e.getText().toString().trim(), digits = code.getText().toString().trim();
+            sync.setWifiHost(host);
+            if (digits.isEmpty()) return;
+            new Thread(() -> {
+                boolean ok = sync.pair(host, digits);
+                runOnUiThread(() -> Ui.toast(this, ok ? "Tablet vinculada" : "No se pudo vincular: revisa la IP y el código"));
+            }, "pair").start();
+        }));
+        dock.focus(e);
     }
 }

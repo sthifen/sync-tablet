@@ -432,6 +432,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         return g;
     }
 
+    /** Un aviso que sólo hace falta la primera vez. */
+    private void hintOnce(String key, String text) {
+        if (prefs.getBoolean(key, false)) return;
+        prefs.edit().putBoolean(key, true).apply();
+        Ui.toast(this, text);
+    }
+
     /** El complemento de circuitos: el dock pasa a tener componentes. */
     private void setCircuitMode(boolean on) {
         closeDockNow();
@@ -444,7 +451,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         circuitDock.setVisibility(on ? View.VISIBLE : View.GONE);
         ink.shapeKind = on ? ShapeTools.CIRCUIT_FREE : ShapeTools.RECT;
         prefs.edit().putInt("shapeKind", ink.shapeKind).apply();
-        if (on) Ui.toast(this, "Dibuja: zigzag, resistencia · círculo, fuente · espiral, bobina · línea, cable. Toca un componente para su valor");
+        if (on) hintOnce("circuitHint", "Dibuja: zigzag, resistencia · círculo, fuente · espiral, bobina · triángulo, operacional · línea, cable. Toca un componente para su valor");
         refreshTools();
     }
 
@@ -553,7 +560,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private void setTool(int t) {
         if (t == InkView.NOTE && ink.tool != InkView.NOTE) {
             ink.roomForNotes(true);
-            Ui.toast(this, "Toca para poner una nota, dentro o fuera de la hoja. Su punto oscuro saca una flecha");
+            hintOnce("noteHint", "Toca para poner una nota, dentro o fuera de la hoja. Su punto oscuro saca una flecha");
         } else if (t != InkView.NOTE && ink.tool == InkView.NOTE) {
             ink.roomForNotes(false);
         }
@@ -662,14 +669,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     private View glyph(int icon) {
-        IconView v = new IconView(this, icon, Ui.ICON, "");
-        v.setClickable(false);
-        v.setFocusable(false);
-        v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        // El icono de la barra, a la medida de una tarjeta.
-        v.setScaleX(1.3f);
-        v.setScaleY(1.3f);
-        return v;
+        return dock.glyph(icon);
     }
 
     /** Muestra de cada lápiz: su trazo de verdad. */
