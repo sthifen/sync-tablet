@@ -56,6 +56,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             IconView.S_ELLIPSE, IconView.S_TRIANGLE, IconView.S_AXES, IconView.S_CROSS};
     private static final String[] SHAPE_NAMES = {"Línea", "Flecha", "Flecha doble", "Rectángulo", "Elipse", "Triángulo",
             "Ejes", "Ejes cruzados"};
+    private static final String BOX_HINT = "Lados: estirar · esquinas: agrandar · arriba: girar";
     /** Ancho en píxeles de las páginas de un PDF importado. */
     private static final int PDF_WIDTH = 1600;
     private static final int[] PEN_COLORS = {0xFF111827, 0xFF2563EB, 0xFFDC2626, 0xFF16A34A, 0xFF7C3AED, 0xFFEA580C};
@@ -84,7 +85,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private InkView ink;
     private GlassLayout bar, palette, selectionBar, shapeBar;
-    private IconView autoShapeButton, editImage, editText;
+    private IconView autoShapeButton, editImage, editText, editLine, dockMore;
+    private TextView selectionHint;
+    private ScrollView dockPanel;
+    private android.animation.ValueAnimator dockAnimator;
+    private boolean dockOpen;
+    private float dockProgress;
+    private int dockCollapsedWidth;
     private final IconView[] shapeButtons = new IconView[SHAPE_KINDS.length];
     private TextView title;
     private IconView pen, highlighter, eraser, lasso, shapes, text, tape, laser, undo, redo, finger;
@@ -138,7 +145,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         root.addView(selectionBar, selLp);
         selectionBar.setVisibility(View.GONE);
         shapeBar = shapeBar();
-        root.addView(shapeBar, selLp);
+        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        root.addView(shapeBar, dockLp);
         shapeBar.setVisibility(View.GONE);
         root.setOnApplyWindowInsetsListener((v, in) -> {
             @SuppressWarnings("deprecation") int top = in.getSystemWindowInsetTop();
@@ -151,7 +160,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             bar.setLayoutParams(barLp);
             palette.setLayoutParams(palLp);
             selectionBar.setLayoutParams(selLp);
-            shapeBar.setLayoutParams(selLp);
+            dockLp.bottomMargin = selLp.bottomMargin;
+            shapeBar.setLayoutParams(dockLp);
             bar.maxWidth = getResources().getDisplayMetrics().widthPixels - 2 * gap;
             ink.topInset = top + gap + Ui.dp(this, 56);
             return in;
@@ -251,7 +261,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         });
         lasso = icon(IconView.LASSO, "Lazo: toca una palabra, rodea o pasa por encima", v -> setTool(InkView.LASSO));
         shapes = icon(IconView.SHAPES, "Figuras (toca otra vez para la galería)", v -> {
-            if (ink.tool == InkView.SHAPE) shapeGallery();
+            if (ink.tool == InkView.SHAPE) toggleDock();
             else setTool(InkView.SHAPE);
         });
         text = icon(IconView.TEXT, "Texto: toca la hoja para escribir", v -> setTool(InkView.TEXT));
@@ -317,9 +327,11 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         GlassLayout g = new GlassLayout(this, ink, Ui.GLASS_LIGHT, Ui.dp(this, 28));
         g.setGravity(Gravity.CENTER_VERTICAL);
         g.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), 0);
-        TextView hint = Ui.text(this, "Lados: estirar · esquinas: agrandar · arriba: girar", 13, Ui.ICON_MUTED, false);
-        hint.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 8), 0);
-        g.addView(hint);
+        selectionHint = Ui.text(this, BOX_HINT, 13, Ui.ICON_MUTED, false);
+        selectionHint.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 8), 0);
+        g.addView(selectionHint);
+        editLine = icon(IconView.S_ARROW, "Línea, flecha o flecha doble", v -> ink.cycleSelectedLine());
+        g.addView(editLine);
         editImage = icon(IconView.SLIDERS, "Editar la imagen", v -> {
             Ink.Item it = ink.selectedImage();
             if (it != null) {
@@ -335,34 +347,151 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         return g;
     }
 
-    /** Barra de la herramienta de figuras: un toque elige qué se arrastra. */
+    /**
+     * Dock de la herramienta de figuras: un toque elige qué se arrastra. El botón
+     * de más lo hace crecer, con el mismo cristal, hasta enseñar toda la galería.
+     */
     private GlassLayout shapeBar() {
         GlassLayout g = new GlassLayout(this, ink, Ui.GLASS_LIGHT, Ui.dp(this, 28));
-        g.setGravity(Gravity.CENTER_VERTICAL);
-        g.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), 0);
+        g.setOrientation(LinearLayout.VERTICAL);
+        g.setGravity(Gravity.CENTER_HORIZONTAL);
+        dockPanel = new ScrollView(this);
+        dockPanel.setVerticalScrollBarEnabled(false);
+        dockPanel.setAlpha(0);
+        dockPanel.setVisibility(View.GONE);
+        g.addView(dockPanel, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0));
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), 0);
         for (int i = 0; i < SHAPE_KINDS.length; i++) {
             int kind = SHAPE_KINDS[i];
             shapeButtons[i] = icon(SHAPE_ICONS[i], SHAPE_NAMES[i], v -> {
                 ink.shapeKind = kind;
                 prefs.edit().putInt("shapeKind", kind).apply();
                 refreshTools();
+                if (dockOpen) toggleDock();
             });
-            g.addView(shapeButtons[i]);
+            row.addView(shapeButtons[i]);
         }
-        g.addView(sep(false));
+        row.addView(sep(false));
         autoShapeButton = icon(IconView.WAND, "Convertir mis trazos en figuras", v -> {
             ink.autoShapes = !ink.autoShapes;
             prefs.edit().putBoolean("shapes", ink.autoShapes).apply();
             refreshTools();
             Ui.toast(this, ink.autoShapes ? "Tus trazos se convierten en figuras" : "Deja el lápiz quieto al final del trazo para convertirlo");
         });
-        g.addView(autoShapeButton);
-        g.addView(icon(IconView.MORE, "Galería de figuras", v -> shapeGallery()));
+        row.addView(autoShapeButton);
+        dockMore = icon(IconView.MORE, "Más figuras", v -> toggleDock());
+        row.addView(dockMore);
+        g.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 56)));
         return g;
+    }
+
+    /** Abre o cierra el dock, con el mismo gesto de ida y de vuelta. */
+    private void toggleDock() {
+        if (dockAnimator != null) dockAnimator.cancel();
+        dockOpen = !dockOpen;
+        dockMore.setActive(dockOpen);
+        int gap = Ui.dp(this, 24);
+        ViewGroup root = (ViewGroup) shapeBar.getParent();
+        if (dockCollapsedWidth == 0) dockCollapsedWidth = shapeBar.getWidth();
+        int openWidth = Math.max(dockCollapsedWidth, Math.min(root.getWidth() - 2 * gap, Ui.dp(this, 860)));
+        if (dockOpen && dockPanel.getChildCount() == 0) dockPanel.addView(dockGallery(openWidth));
+        int openHeight = Math.min(root.getHeight() * 11 / 20, Ui.dp(this, 460));
+        ViewGroup.LayoutParams glass = shapeBar.getLayoutParams();
+        LinearLayout.LayoutParams panel = (LinearLayout.LayoutParams) dockPanel.getLayoutParams();
+        float from = dockProgress, to = dockOpen ? 1 : 0;
+        dockPanel.setVisibility(View.VISIBLE);
+        dockAnimator = android.animation.ValueAnimator.ofFloat(from, to);
+        dockAnimator.setDuration(dockOpen ? 380 : 280);
+        dockAnimator.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0.9f, 0.2f, 1f));
+        dockAnimator.addUpdateListener(a -> {
+            dockProgress = (float) a.getAnimatedValue();
+            glass.width = Math.round(dockCollapsedWidth + (openWidth - dockCollapsedWidth) * dockProgress);
+            panel.height = Math.round(openHeight * dockProgress);
+            // El contenido llega un poco después que el cristal.
+            float content = Math.max(0, (dockProgress - 0.35f) / 0.65f);
+            dockPanel.setAlpha(content);
+            dockPanel.setTranslationY((1 - content) * Ui.dp(this, 18));
+            shapeBar.requestLayout();
+        });
+        dockAnimator.addListener(new android.animation.AnimatorListenerAdapter() {
+            private boolean cancelled;
+
+            @Override
+            public void onAnimationCancel(android.animation.Animator a) {
+                cancelled = true;
+            }
+
+            @Override
+            public void onAnimationEnd(android.animation.Animator a) {
+                if (cancelled || dockOpen) return;
+                dockPanel.setVisibility(View.GONE);
+                glass.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                shapeBar.requestLayout();
+            }
+        });
+        dockAnimator.start();
+    }
+
+    /** Cierra el dock de golpe: se va con la herramienta. */
+    private void closeDockNow() {
+        if (!dockOpen && dockProgress == 0) return;
+        if (dockAnimator != null) dockAnimator.cancel();
+        dockOpen = false;
+        dockProgress = 0;
+        dockMore.setActive(false);
+        dockPanel.setVisibility(View.GONE);
+        dockPanel.setAlpha(0);
+        dockPanel.getLayoutParams().height = 0;
+        shapeBar.getLayoutParams().width = ViewGroup.LayoutParams.WRAP_CONTENT;
+        shapeBar.requestLayout();
+    }
+
+    /** La galería entera, por grupos. */
+    private View dockGallery(int width) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 20);
+        box.setPadding(pad, Ui.dp(this, 16), pad, Ui.dp(this, 6));
+        int cell = Ui.dp(this, 72), space = Ui.dp(this, 4);
+        int cols = Math.max(4, (width - 2 * pad) / (cell + 2 * space));
+        for (int g = 0; g < ShapeLibrary.GROUPS.length; g++) {
+            TextView head = Ui.text(this, ShapeLibrary.GROUPS[g], 13, Ui.ICON_MUTED, true);
+            head.setPadding(Ui.dp(this, 4), g == 0 ? 0 : Ui.dp(this, 14), 0, Ui.dp(this, 4));
+            box.addView(head);
+            GridLayout grid = new GridLayout(this);
+            grid.setColumnCount(cols);
+            for (ShapeLibrary.Shape s : ShapeLibrary.group(g)) {
+                LinearLayout item = new LinearLayout(this);
+                item.setOrientation(LinearLayout.VERTICAL);
+                item.setGravity(Gravity.CENTER_HORIZONTAL);
+                item.setBackground(Ui.round(0x14111827, Ui.dp(this, 14)));
+                item.addView(new ShapePreview(this, s), new LinearLayout.LayoutParams(cell, cell));
+                TextView name = Ui.text(this, s.name, 10, Ui.ICON_MUTED, false);
+                name.setGravity(Gravity.CENTER);
+                name.setSingleLine(true);
+                name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                name.setMaxWidth(cell);
+                item.addView(name);
+                item.setPadding(0, 0, 0, Ui.dp(this, 5));
+                item.setContentDescription(s.name);
+                item.setOnClickListener(v -> {
+                    if (ink.tool != InkView.LASSO) setTool(InkView.LASSO);
+                    ink.insertShape(s);
+                });
+                GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+                lp.setMargins(space, space, space, space);
+                grid.addView(item, lp);
+            }
+            box.addView(grid);
+        }
+        return box;
     }
 
     private void setTool(int t) {
         ink.tool = t;
+        if (t != InkView.SHAPE) closeDockNow();
         if (t != InkView.LASSO) ink.clearSelection();
         refreshTools();
     }
@@ -505,7 +634,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             float w = shape.aspect >= 1 ? box : box * shape.aspect, h = w / shape.aspect;
             float x0 = (getWidth() - w) / 2, y0 = (getHeight() - h) / 2;
             for (int pass = 0; pass < 2; pass++) {
-                paint.setColor(pass == 0 ? 0x66FFFFFF : 0xFFFFFFFF);
+                paint.setColor(pass == 0 ? 0x66111827 : Ui.ICON);
                 paint.setStrokeWidth(pass == 0 ? 1.5f : 3);
                 for (float[] l : pass == 0 ? shape.faint : shape.lines) {
                     android.graphics.Path p = new android.graphics.Path();
@@ -517,61 +646,6 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 }
             }
         }
-    }
-
-    /** Galería: geométricas, cartesianas, 3D y ondas; y convertir trazos solos. */
-    private void shapeGallery() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int pad = Ui.dp(this, 18);
-        box.setPadding(pad, pad / 2, pad, pad);
-        android.widget.CheckBox auto = new android.widget.CheckBox(this);
-        auto.setText("Convertir mis trazos en figuras al dibujarlos");
-        auto.setChecked(ink.autoShapes);
-        auto.setOnCheckedChangeListener((b, on) -> {
-            ink.autoShapes = on;
-            prefs.edit().putBoolean("shapes", on).apply();
-            refreshTools();
-        });
-        box.addView(auto);
-        box.addView(Ui.text(this, "Sin activarlo: deja el lápiz quieto al final de un trazo y se convierte; sin soltar, lo ajustas. "
-                + "Varias líneas seguidas cierran un polígono, y una «V» en la punta de una línea la hace flecha. "
-                + "O toca una figura para insertarla (después la mueves y cambias de tamaño).", 13, 0xFF9AA9AE, false));
-        AlertDialog[] dialog = new AlertDialog[1];
-        int cell = Ui.dp(this, 86);
-        int cols = Math.max(4, (getResources().getDisplayMetrics().widthPixels * 7 / 10) / (cell + Ui.dp(this, 8)));
-        for (int g = 0; g < ShapeLibrary.GROUPS.length; g++) {
-            TextView head = Ui.text(this, ShapeLibrary.GROUPS[g], 16, 0xFFFFFFFF, true);
-            head.setPadding(0, Ui.dp(this, 16), 0, Ui.dp(this, 6));
-            box.addView(head);
-            GridLayout grid = new GridLayout(this);
-            grid.setColumnCount(cols);
-            for (ShapeLibrary.Shape s : ShapeLibrary.group(g)) {
-                LinearLayout item = new LinearLayout(this);
-                item.setOrientation(LinearLayout.VERTICAL);
-                item.setGravity(Gravity.CENTER_HORIZONTAL);
-                item.setBackground(Ui.round(0x1AFFFFFF, Ui.dp(this, 14)));
-                item.addView(new ShapePreview(this, s), new LinearLayout.LayoutParams(cell, cell));
-                TextView name = Ui.text(this, s.name, 11, 0xCCFFFFFF, false);
-                name.setGravity(Gravity.CENTER);
-                name.setMaxWidth(cell);
-                item.addView(name);
-                item.setPadding(0, 0, 0, Ui.dp(this, 6));
-                item.setContentDescription(s.name);
-                item.setOnClickListener(v -> {
-                    dialog[0].dismiss();
-                    if (ink.tool != InkView.LASSO) setTool(InkView.LASSO);
-                    ink.insertShape(s);
-                });
-                GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
-                lp.setMargins(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
-                grid.addView(item, lp);
-            }
-            box.addView(grid);
-        }
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(box);
-        dialog[0] = new AlertDialog.Builder(this).setTitle("Figuras").setView(scroll).setNegativeButton("Cerrar", null).show();
     }
 
     // ---- Botones del S Pen ----
@@ -1516,6 +1590,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         selectionBar.setVisibility(active ? View.VISIBLE : View.GONE);
         editImage.setVisibility(active && ink.selectedImage() != null && Native.available() ? View.VISIBLE : View.GONE);
         editText.setVisibility(active && ink.selectedText() != null ? View.VISIBLE : View.GONE);
+        boolean line = active && ink.selectedLine() != null;
+        editLine.setVisibility(line ? View.VISIBLE : View.GONE);
+        selectionHint.setText(line ? "Arrastra las puntas · se enganchan a otras figuras" : BOX_HINT);
         refreshTools();
     }
 

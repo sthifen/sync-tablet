@@ -12,7 +12,7 @@ package dev.synctablet;
  */
 final class SelectionMath {
     static final int NONE = 0, MOVE = 1, TOP_LEFT = 2, TOP = 3, TOP_RIGHT = 4, RIGHT = 5, BOTTOM_RIGHT = 6, BOTTOM = 7,
-            BOTTOM_LEFT = 8, LEFT = 9, ROTATE = 10;
+            BOTTOM_LEFT = 8, LEFT = 9, ROTATE = 10, LINE_START = 11, LINE_END = 12;
 
     /** Lo más pequeña que puede quedar la caja. */
     static final float MIN_SIZE = 16;

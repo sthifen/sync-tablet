@@ -291,6 +291,7 @@ mod tests {
             color: "#112233".into(),
             width: 4.0,
             points: vec![0.0, 0.0, 1.0, 10.0, 0.0, 1.0, 20.0, 0.0, 0.0],
+            shape: None,
         };
         let svg = page_svg(&page(vec![st], Background::Plain), "");
         // Presión 1 → 4.0; tramo con presión media 0.5 → 4·(0.35+0.325)=2.7.
@@ -306,13 +307,13 @@ mod tests {
         assert!(thin < 3.0 && thick > 11.0, "{thin} {thick}");
         // El lápiz se aclara con poca presión.
         assert!(segment_opacity(Tool::Pencil, 0.0) < segment_opacity(Tool::Pencil, 1.0));
-        let st = Stroke { id: "l".into(), tool: Tool::Pencil, color: "#000000".into(), width: 4.0, points: vec![0.0, 0.0, 0.2, 5.0, 0.0, 0.2] };
+        let st = Stroke { id: "l".into(), tool: Tool::Pencil, color: "#000000".into(), width: 4.0, points: vec![0.0, 0.0, 0.2, 5.0, 0.0, 0.2], shape: None };
         assert!(page_svg(&page(vec![st], Background::Plain), "").contains("stroke-opacity="));
     }
 
     #[test]
     fn highlighter_tape_and_backgrounds() {
-        let st = Stroke { id: "h".into(), tool: Tool::Highlighter, color: "#FFD60A".into(), width: 20.0, points: vec![5.0, 5.0, 0.3] };
+        let st = Stroke { id: "h".into(), tool: Tool::Highlighter, color: "#FFD60A".into(), width: 20.0, points: vec![5.0, 5.0, 0.3], shape: None };
         let svg = page_svg(&page(vec![st], Background::Grid), "");
         assert!(svg.contains(r#"stroke-opacity="0.35" stroke-width="20.0""#));
         assert!(svg.contains("M5.0 5.0L5.0 5.0"));
@@ -352,7 +353,7 @@ mod tests {
 
     #[test]
     fn rejects_odd_colors() {
-        let st = Stroke { id: "x".into(), tool: Tool::Pen, color: "red\"/><script>".into(), width: 2.0, points: vec![1.0, 1.0, 1.0] };
+        let st = Stroke { id: "x".into(), tool: Tool::Pen, color: "red\"/><script>".into(), width: 2.0, points: vec![1.0, 1.0, 1.0], shape: None };
         let svg = page_svg(&page(vec![st], Background::Plain), "");
         assert!(!svg.contains("script"));
         assert!(svg.contains(r##"stroke="#000000""##));

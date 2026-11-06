@@ -31,6 +31,8 @@ public class ShapeTest {
         if (!ok) fails++;
         System.out.printf("%s %-28s %s%n", ok ? "✓" : "✗", name, got);
     }
+    /** Largo de la barba: del final del trazo a la punta (x, y). */
+    static float barb(float[] xy, float x, float y) { return (float) Math.hypot(xy[xy.length-2]-x, xy[xy.length-1]-y); }
     static float extent(float[] xy, int axis) { float lo = 1e9f, hi = -1e9f; for (int i = axis; i < xy.length; i += 2) { lo = Math.min(lo, xy[i]); hi = Math.max(hi, xy[i]); } return hi - lo; }
     static double angle(float[] xy) { return Math.toDegrees(Math.atan2(xy[xy.length-1]-xy[1], xy[xy.length-2]-xy[0])); }
     /** ¿Las esquinas de este contorno forman ángulos rectos? */
@@ -105,6 +107,40 @@ public class ShapeTest {
         expect("ángulo de arrastre a 45°", Math.abs(angle(la) - 45) < 0.2, "" + angle(la));
         for (int k = 0; k <= ShapeTools.CROSS_AXES; k++) { float[] o = ShapeTools.build(k, 200,200,420,380,0); boolean fin = o.length >= 4; for (float x : o) fin &= !Float.isNaN(x); expect("herramienta " + k, fin, ""); }
         expect("arrastre sin mover no falla", ShapeTools.build(ShapeTools.ARROW,50,50,50,50,0).length >= 4, "");
+        // Figuras editables.
+        ShapeTools.Spec ar = ShapeTools.spec(ShapeTools.ARROW, 100,100,300,100,0);
+        float[] stretch = {3,0,0,1,-200,0}; // el doble y algo a lo ancho
+        float[] st = ar.mapped(stretch, 0).points();
+        float before = barb(ar.points(), 300, 100), after = barb(st, 700, 100);
+        expect("estirar flecha: punta igual", before > 10 && Math.abs(before - after) < 0.5f, before + " → " + after);
+        float[] naive = ar.points().clone();
+        for (int i = 0; i < naive.length; i += 2) naive[i] = 3 * naive[i] - 200;
+        expect("sin Spec se deformaría", Math.abs(barb(naive, 700, 100) - before) > 5, "" + barb(naive, 700, 100));
+        ShapeTools.Spec rc = ShapeTools.spec(ShapeTools.RECT, 100,100,300,200,0);
+        ShapeTools.Spec rc2 = rc.mapped(new float[]{2,0,0,1,0,0}, 0);
+        expect("rectángulo estirado sigue siéndolo", rc2 != null && rc2.x1 == 600 && rc2.y1 == 200, rc2 == null ? "nada" : rc2.x0 + "," + rc2.x1);
+        float c90 = (float) Math.toRadians(90);
+        float[] rot = SelectionMath.affine(new float[]{100,100,300,200}, new float[]{100,100,300,200}, c90);
+        ShapeTools.Spec rr2 = rc.mapped(rot, c90);
+        float[] pts = rr2.points();
+        expect("rectángulo girado 90°: alto y ancho cambian", Math.abs(extent(pts,0) - 100) < 0.5f && Math.abs(extent(pts,1) - 200) < 0.5f, extent(pts,0) + "×" + extent(pts,1));
+        expect("caja girada estirada: dibujo libre", rr2.mapped(new float[]{3,0,0,1,0,0}, 0) == null, "");
+        ShapeTools.Spec moved = rr2.mapped(new float[]{1,0,0,1,50,20}, 0);
+        expect("caja girada se mueve y sigue", moved != null && moved.angle == rr2.angle, "");
+        ShapeTools.Spec dia = ShapeTools.spec(ShapeTools.LINE, 0,0,100,0,0).mapped(rot, c90);
+        expect("una línea se gira por sus puntas", Math.abs(dia.angle) < 0.001f, "");
+        ShapeTools.Spec end = ar.withEnd(false, 300, 300);
+        expect("mover una punta", end.x0 == 100 && end.y1 == 300, "");
+        expect("línea → flecha → doble → línea", ShapeTools.nextLineKind(ShapeTools.nextLineKind(ShapeTools.nextLineKind(ShapeTools.LINE))) == ShapeTools.LINE, "");
+        expect("nombres de ida y vuelta", ShapeTools.Spec.kindOf(ShapeTools.spec(ShapeTools.CROSS_AXES,0,0,1,1,0).name()) == ShapeTools.CROSS_AXES && ShapeTools.Spec.kindOf("futuro") == -1, "");
+        expect("anclas de una caja", rc.anchors().length == 16 && rc.anchors()[0] == 100 && rc.anchors()[1] == 100, "");
+        ShapeRecognizer.Shape rl = ShapeRecognizer.recognize(poly(new float[][]{{100,100},{500,180}},1f), 21);
+        expect("línea reconocida editable", rl != null && rl.spec != null && rl.spec.isLine(), "");
+        ShapeRecognizer.Shape rq = ShapeRecognizer.recognize(poly(new float[][]{{200,100},{450,244},{350,417},{100,273},{198,103}},1.5f), 81);
+        expect("rectángulo girado editable", rq != null && rq.spec != null && rq.spec.angle != 0, rq == null ? "nada" : "" + (rq.spec == null ? "sin" : rq.spec.angle));
+        if (rq != null && rq.spec != null) { float[] sp = rq.spec.points(); expect("sus puntos coinciden", Math.abs(extent(sp,0) - extent(rq.xy,0)) < 2 && Math.abs(extent(sp,1) - extent(rq.xy,1)) < 2, extent(sp,0) + " vs " + extent(rq.xy,0)); }
+        ShapeRecognizer.Shape re = ShapeRecognizer.recognize(tilted, tilted.length/2);
+        if (re != null) { expect("elipse inclinada editable", re.spec != null, ""); if (re.spec != null) { float[] sp = re.spec.points(); expect("sus puntos coinciden", Math.abs(extent(sp,0) - extent(re.xy,0)) < 3, extent(sp,0) + " vs " + extent(re.xy,0)); } }
         System.out.println(fails == 0 ? "TODO BIEN" : fails + " FALLOS");
     }
 }

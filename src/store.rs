@@ -258,7 +258,7 @@ mod tests {
     }
 
     fn stroke() -> Stroke {
-        Stroke { id: "s1".into(), tool: Tool::Pen, color: "#000000".into(), width: 3.0, points: vec![1.0, 1.0, 1.0] }
+        Stroke { id: "s1".into(), tool: Tool::Pen, color: "#000000".into(), width: 3.0, points: vec![1.0, 1.0, 1.0], shape: None }
     }
 
     #[test]

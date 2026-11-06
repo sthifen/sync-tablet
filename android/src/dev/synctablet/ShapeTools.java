@@ -15,11 +15,116 @@ final class ShapeTools {
     /** Separación de la cuadrícula y los puntos de la hoja. */
     static final float GRID = 40;
 
+    private static final String[] NAMES = {"line", "arrow", "double-arrow", "rect", "ellipse", "triangle", "axes", "cross-axes"};
+
+    /**
+     * Lo que hace editable a una figura: de qué tipo es, sus dos puntos y su giro
+     * (radianes, alrededor de su centro). Los puntos del trazo salen de aquí.
+     * No cambia: cada edición da otra.
+     */
+    static final class Spec {
+        final int kind;
+        final float x0, y0, x1, y1, angle;
+
+        Spec(int kind, float x0, float y0, float x1, float y1, float angle) {
+            this.kind = kind;
+            this.x0 = x0;
+            this.y0 = y0;
+            this.x1 = x1;
+            this.y1 = y1;
+            this.angle = angle;
+        }
+
+        /** Se edita por sus puntas, no por una caja. */
+        boolean isLine() {
+            return kind == LINE || kind == ARROW || kind == DOUBLE_ARROW;
+        }
+
+        String name() {
+            return NAMES[kind];
+        }
+
+        static int kindOf(String name) {
+            for (int i = 0; i < NAMES.length; i++) if (NAMES[i].equals(name)) return i;
+            return -1;
+        }
+
+        /** Los ejes cruzados nacen de su origen; lo demás, de la caja. */
+        private float centerX() {
+            return kind == CROSS_AXES ? x0 : (x0 + x1) / 2;
+        }
+
+        private float centerY() {
+            return kind == CROSS_AXES ? y0 : (y0 + y1) / 2;
+        }
+
+        float[] points() {
+            float[] xy = shape(kind, x0, y0, x1, y1);
+            if (angle == 0) return xy;
+            float cx = centerX(), cy = centerY();
+            double cos = Math.cos(angle), sin = Math.sin(angle);
+            for (int i = 0; i + 1 < xy.length; i += 2) {
+                double dx = xy[i] - cx, dy = xy[i + 1] - cy;
+                xy[i] = cx + (float) (dx * cos - dy * sin);
+                xy[i + 1] = cy + (float) (dx * sin + dy * cos);
+            }
+            return xy;
+        }
+
+        /**
+         * La figura tras la transformación afín {a, b, c, d, e, f}, que incluye el
+         * giro `turn`. Null si deja de ser esta figura (estirar una caja girada la
+         * sesgaría): el trazo sigue como dibujo libre.
+         */
+        Spec mapped(float[] m, float turn) {
+            if (isLine() || (angle == 0 && turn == 0)) {
+                return new Spec(kind, m[0] * x0 + m[2] * y0 + m[4], m[1] * x0 + m[3] * y0 + m[5],
+                        m[0] * x1 + m[2] * y1 + m[4], m[1] * x1 + m[3] * y1 + m[5], angle);
+            }
+            float sx = (float) Math.hypot(m[0], m[1]), sy = (float) Math.hypot(m[2], m[3]);
+            if (Math.abs(sx - sy) > 0.001f) return null;
+            float cx = centerX(), cy = centerY();
+            float nx = m[0] * cx + m[2] * cy + m[4], ny = m[1] * cx + m[3] * cy + m[5];
+            return new Spec(kind, nx + (x0 - cx) * sx, ny + (y0 - cy) * sx, nx + (x1 - cx) * sx, ny + (y1 - cy) * sx, angle + turn);
+        }
+
+        Spec withEnd(boolean first, float x, float y) {
+            return first ? new Spec(kind, x, y, x1, y1, angle) : new Spec(kind, x0, y0, x, y, angle);
+        }
+
+        Spec withKind(int other) {
+            return new Spec(other, x0, y0, x1, y1, angle);
+        }
+
+        /** Los puntos donde otra línea se puede enganchar: puntas, o esquinas y lados. */
+        float[] anchors() {
+            if (isLine()) return new float[] {x0, y0, x1, y1};
+            float cx = centerX(), cy = centerY(), hw = Math.abs(x1 - x0) / 2, hh = Math.abs(y1 - y0) / 2;
+            float[] u = {-hw, 0, hw, -hw, hw, hw, 0, -hw}, v = {-hh, -hh, -hh, 0, 0, hh, hh, hh};
+            float[] out = new float[16];
+            double cos = Math.cos(angle), sin = Math.sin(angle);
+            for (int i = 0; i < 8; i++) {
+                out[2 * i] = cx + (float) (u[i] * cos - v[i] * sin);
+                out[2 * i + 1] = cy + (float) (u[i] * sin + v[i] * cos);
+            }
+            return out;
+        }
+    }
+
+    /** Siguiente aspecto de una línea: línea, flecha, flecha doble. */
+    static int nextLineKind(int kind) {
+        return kind == LINE ? ARROW : kind == ARROW ? DOUBLE_ARROW : LINE;
+    }
+
     /**
      * La figura de (x0, y0) a (x1, y1). Con `grid` > 0 los puntos caen en la
      * cuadrícula; si no, se enderezan los ángulos y las proporciones casi exactos.
      */
     static float[] build(int kind, float x0, float y0, float x1, float y1, float grid) {
+        return spec(kind, x0, y0, x1, y1, grid).points();
+    }
+
+    static Spec spec(int kind, float x0, float y0, float x1, float y1, float grid) {
         if (grid > 0) {
             x0 = snap(x0, grid); y0 = snap(y0, grid);
             x1 = snap(x1, grid); y1 = snap(y1, grid);
@@ -34,6 +139,10 @@ final class ShapeTools {
                 y1 = y0 + Math.signum(y1 - y0) * side;
             }
         }
+        return new Spec(kind, x0, y0, x1, y1, 0);
+    }
+
+    private static float[] shape(int kind, float x0, float y0, float x1, float y1) {
         switch (kind) {
             case ARROW: return arrow(x0, y0, x1, y1, false);
             case DOUBLE_ARROW: return arrow(x0, y0, x1, y1, true);

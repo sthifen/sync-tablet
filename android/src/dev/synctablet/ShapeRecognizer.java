@@ -26,10 +26,17 @@ final class ShapeRecognizer {
         final String kind;
         /** x, y seguidos, en orden de dibujo. */
         final float[] xy;
+        /** Si es una figura que se puede editar después. */
+        final ShapeTools.Spec spec;
 
         Shape(String kind, float[] xy) {
+            this(kind, xy, null);
+        }
+
+        Shape(String kind, float[] xy, ShapeTools.Spec spec) {
             this.kind = kind;
             this.xy = xy;
+            this.spec = spec;
         }
     }
 
@@ -88,7 +95,7 @@ final class ShapeRecognizer {
             x1 = end[0];
             y1 = end[1];
         }
-        return new Shape(LINE, ShapeTools.densify(new float[] {x0, y0, x1, y1}));
+        return new Shape(LINE, ShapeTools.densify(new float[] {x0, y0, x1, y1}), new ShapeTools.Spec(ShapeTools.LINE, x0, y0, x1, y1, 0));
     }
 
     /** Elipse ajustada por sus ejes principales, así que puede salir inclinada. */
@@ -113,7 +120,8 @@ final class ShapeRecognizer {
         double dx = p[0] - cx, dy = p[1] - cy, cos = Math.cos(tilt), sin = Math.sin(tilt);
         double start = Math.atan2((-dx * sin + dy * cos) / ry, (dx * cos + dy * sin) / rx);
         double dir = signedArea(p, n) >= 0 ? 1 : -1;
-        return new Shape(kind, ShapeTools.ellipse(cx, cy, rx, ry, tilt, start, dir));
+        ShapeTools.Spec spec = new ShapeTools.Spec(ShapeTools.ELLIPSE, cx - rx, cy - ry, cx + rx, cy + ry, (float) tilt);
+        return new Shape(kind, ShapeTools.ellipse(cx, cy, rx, ry, tilt, start, dir), spec);
     }
 
     /** Las esquinas como x, y seguidos. */
@@ -204,7 +212,9 @@ final class ShapeRecognizer {
             v[2 * i] = (float) (a * cos - b * sin);
             v[2 * i + 1] = (float) (a * sin + b * cos);
         }
-        return closed(RECTANGLE, v);
+        float cx = (float) (mu * cos - mw * sin), cy = (float) (mu * sin + mw * cos);
+        ShapeTools.Spec spec = new ShapeTools.Spec(ShapeTools.RECT, cx - halfU, cy - halfW, cx + halfU, cy + halfW, (float) rot);
+        return new Shape(RECTANGLE, closed(RECTANGLE, v).xy, spec);
     }
 
     // ---- Flechas y figuras de varios trazos ----
@@ -262,7 +272,7 @@ final class ShapeRecognizer {
 
     private static Shape arrowShape(float sx, float sy, float tx, float ty) {
         float[] end = ShapeTools.snapAngle(sx, sy, tx, ty, 4);
-        return new Shape(ARROW, ShapeTools.arrow(sx, sy, end[0], end[1], false));
+        return new Shape(ARROW, ShapeTools.arrow(sx, sy, end[0], end[1], false), new ShapeTools.Spec(ShapeTools.ARROW, sx, sy, end[0], end[1], 0));
     }
 
     /**

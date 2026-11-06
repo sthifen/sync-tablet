@@ -157,6 +157,8 @@ final class Ink {
         final float width;
         float[] pts = new float[3 * 64];
         int n;
+        /** Si es una figura editable (ShapeTools). */
+        ShapeTools.Spec shape;
         /** Caja que lo contiene, para la goma. */
         float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
 
@@ -164,19 +166,33 @@ final class Ink {
         Stroke copy(String newId, int newColor) {
             Stroke s = new Stroke(newId, tool, newColor, width);
             for (int i = 0; i < n; i++) s.add(x(i), y(i), p(i));
+            s.shape = shape;
             return s;
         }
 
         /** Copia movida y escalada: (x, y) → (ax + (x − ax)·k + dx, …). */
         Stroke transformed(float ax, float ay, float k, float dx, float dy) {
-            Stroke s = new Stroke(id, tool, color, width * k);
-            for (int i = 0; i < n; i++) s.add(ax + (x(i) - ax) * k + dx, ay + (y(i) - ay) * k + dy, p(i));
+            return mapped(new float[] {k, 0, 0, k, ax - ax * k + dx, ay - ay * k + dy}, k, 0);
+        }
+
+        /** La misma línea hecha de nuevo con esta figura. */
+        Stroke withShape(ShapeTools.Spec spec) {
+            Stroke s = new Stroke(id, tool, color, width);
+            s.replace(spec.points(), n > 0 ? p(0) : 0.7f);
+            s.shape = spec;
             return s;
         }
 
         /** Copia con la transformación afín {a, b, c, d, e, f} y el grosor multiplicado. */
-        Stroke mapped(float[] m, float widthScale) {
+        Stroke mapped(float[] m, float widthScale, float turn) {
             Stroke s = new Stroke(id, tool, color, width * widthScale);
+            // Una figura se rehace: así una punta de flecha no se deforma.
+            ShapeTools.Spec spec = shape == null ? null : shape.mapped(m, turn);
+            if (spec != null) {
+                s.replace(spec.points(), n > 0 ? p(0) : 0.7f);
+                s.shape = spec;
+                return s;
+            }
             for (int i = 0; i < n; i++) {
                 s.add(m[0] * x(i) + m[2] * y(i) + m[4], m[1] * x(i) + m[3] * y(i) + m[5], p(i));
             }
@@ -233,7 +249,13 @@ final class Ink {
                 if (i > 0) b.append(',');
                 b.append(round(x(i), 10)).append(',').append(round(y(i), 10)).append(',').append(round(p(i), 100));
             }
-            return b.append("]}").toString();
+            b.append(']');
+            if (shape != null) {
+                b.append(",\"shape\":{\"v\":1,\"kind\":\"").append(shape.name()).append("\",\"c\":[").append(round(shape.x0, 100)).append(',')
+                        .append(round(shape.y0, 100)).append(',').append(round(shape.x1, 100)).append(',').append(round(shape.y1, 100))
+                        .append("],\"a\":").append(round(shape.angle, 10000)).append('}');
+            }
+            return b.append('}').toString();
         }
 
         static Stroke fromJson(JSONObject o) throws JSONException {
@@ -242,6 +264,14 @@ final class Ink {
             JSONArray p = o.getJSONArray("points");
             for (int i = 0; i + 2 < p.length(); i += 3) {
                 s.add((float) p.getDouble(i), (float) p.getDouble(i + 1), (float) p.getDouble(i + 2));
+            }
+            JSONObject f = o.optJSONObject("shape");
+            JSONArray c = f == null ? null : f.optJSONArray("c");
+            int kind = f == null ? -1 : ShapeTools.Spec.kindOf(f.optString("kind"));
+            // Un tipo que esta versión no conoce: queda como dibujo libre.
+            if (kind >= 0 && c != null && c.length() == 4) {
+                s.shape = new ShapeTools.Spec(kind, (float) c.getDouble(0), (float) c.getDouble(1), (float) c.getDouble(2), (float) c.getDouble(3),
+                        (float) f.optDouble("a", 0));
             }
             return s;
         }

@@ -75,6 +75,10 @@ pub struct Stroke {
     pub width: f32,
     /// x, y, presión (0–1), seguidos.
     pub points: Vec<f32>,
+    /// Figura editable que dio estos puntos. Sólo la entiende la tablet; aquí se
+    /// guarda tal cual, y los puntos bastan para dibujarla.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<serde_json::Value>,
 }
 
 impl Stroke {
@@ -229,8 +233,19 @@ impl Page {
 mod tests {
     use super::*;
 
+    #[test]
+    fn un_trazo_viejo_y_una_figura_se_leen_y_se_conservan() {
+        let old: Stroke = serde_json::from_str(r##"{"id":"a","color":"#000","width":2,"points":[1,2,1]}"##).unwrap();
+        assert!(old.shape.is_none());
+        assert!(!serde_json::to_string(&old).unwrap().contains("shape"));
+        let shaped = r##"{"id":"b","color":"#000","width":2,"points":[1,2,1],"shape":{"v":1,"kind":"arrow","c":[0,0,9,9],"a":0,"futuro":true}}"##;
+        let s: Stroke = serde_json::from_str(shaped).unwrap();
+        let again = serde_json::to_string(&s).unwrap();
+        assert!(again.contains("\"kind\":\"arrow\"") && again.contains("futuro"), "{again}");
+    }
+
     fn stroke(id: &str) -> Stroke {
-        Stroke { id: id.into(), tool: Tool::Pen, color: "#000000".into(), width: 3.0, points: vec![0.0, 0.0, 0.5, 10.0, 10.0, 1.0] }
+        Stroke { id: id.into(), tool: Tool::Pen, color: "#000000".into(), width: 3.0, points: vec![0.0, 0.0, 0.5, 10.0, 10.0, 1.0], shape: None }
     }
 
     fn page() -> Page {

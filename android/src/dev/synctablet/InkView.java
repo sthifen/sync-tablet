@@ -145,6 +145,7 @@ final class InkView extends View {
     private float shapeX, shapeY;
     /** Figura ya reconocida y con el lápiz aún apoyado: se ajusta hasta soltarlo. */
     private float[] snapBase;
+    private ShapeTools.Spec snapSpec;
     private String snapKind;
     private float snapPressure, snapCx, snapCy, snapReach;
     /** Trazos anteriores que esta figura sustituye al terminar. */
@@ -165,10 +166,14 @@ final class InkView extends View {
     private final ArrayList<Ink.Stroke> selStrokes = new ArrayList<>();
     private final ArrayList<Ink.Item> selItems = new ArrayList<>();
     private final RectF selBox = new RectF();
+    /** Lo seleccionado sin el margen de la caja. */
+    private final RectF selTight = new RectF();
     /** Arrastre de la selección: qué tirador, y a qué caja y ángulo va. */
     private int dragHandle;
     private float dragX, dragY, dragAngle;
     private float[] dragBox = new float[4];
+    /** Punta de línea en movimiento: la línea como va quedando. */
+    private ShapeTools.Spec dragSpec;
 
     // Láser: estelas (en coordenadas del documento) que se desvanecen; no se guardan.
     private final ArrayList<float[]> laserTrails = new ArrayList<>();
@@ -688,7 +693,13 @@ final class InkView extends View {
         onScreenPage(c, selPage);
         if (mode == DRAG) {
             // La selección, movida/escalada en vivo.
-            float[] box = selArray(), m = SelectionMath.affine(box, dragBox, dragAngle);
+            if (dragSpec != null) {
+                renderer.drawStroke(c, selStrokes.get(0).withShape(dragSpec), false);
+                drawLineHandles(c, dragSpec);
+                c.restore();
+                return;
+            }
+            float[] box = selArray(), m = dragAffine();
             // Los textos se dibujan como quedarán: se reacomodan, no se deforman.
             boolean even = SelectionMath.uniform(box, dragBox);
             for (Ink.Item it : selItems) {
@@ -699,9 +710,24 @@ final class InkView extends View {
             c.save();
             android.graphics.Matrix matrix = new android.graphics.Matrix();
             matrix.setValues(new float[] {m[0], m[2], m[4], m[1], m[3], m[5], 0, 0, 1});
-            c.concat(matrix);
-            for (Ink.Stroke s : selStrokes) renderer.drawStroke(c, s, revealed.contains(s.id));
+            for (Ink.Stroke s : selStrokes) {
+                // Una figura se ve ya rehecha; un trazo libre, deformado sobre la marcha.
+                if (s.shape != null) {
+                    renderer.drawStroke(c, s.mapped(m, even ? (dragBox[2] - dragBox[0]) / (box[2] - box[0]) : 1, dragAngle), revealed.contains(s.id));
+                } else {
+                    c.save();
+                    c.concat(matrix);
+                    renderer.drawStroke(c, s, revealed.contains(s.id));
+                    c.restore();
+                }
+            }
             c.restore();
+        }
+        Ink.Stroke line = selectedLine();
+        if (line != null && mode != DRAG) {
+            drawLineHandles(c, line.shape);
+            c.restore();
+            return;
         }
         RectF b = shownBox();
         float cx = b.centerX(), cy = b.centerY(), dot = 7 * density / scale;
@@ -725,6 +751,58 @@ final class InkView extends View {
         }
         c.restore();
         c.restore();
+    }
+
+    private void drawLineHandles(Canvas c, ShapeTools.Spec line) {
+        float dot = 9 * density / scale;
+        c.drawCircle(line.x0, line.y0, dot, handle);
+        c.drawCircle(line.x1, line.y1, dot, handle);
+    }
+
+    /** La línea o flecha seleccionada, si es lo único seleccionado: se edita por sus puntas. */
+    Ink.Stroke selectedLine() {
+        if (!selItems.isEmpty() || selStrokes.size() != 1) return null;
+        Ink.Stroke s = selStrokes.get(0);
+        return s.shape != null && s.shape.isLine() ? s : null;
+    }
+
+    /** Pasa la línea seleccionada a flecha, a flecha doble y otra vez a línea. */
+    void cycleSelectedLine() {
+        Ink.Stroke s = selectedLine();
+        if (s == null) return;
+        replaceSelected(s, s.withShape(s.shape.withKind(ShapeTools.nextLineKind(s.shape.kind))));
+    }
+
+    private void replaceSelected(Ink.Stroke s, Ink.Stroke t) {
+        Ink.Page page = pages.get(selPage);
+        String old = page.toJson();
+        int at = page.strokes.indexOf(s);
+        if (at >= 0) page.strokes.set(at, t);
+        selStrokes.set(0, t);
+        updateSelBox();
+        commitSnapshot(page, old);
+    }
+
+    /** Mueve una punta: se engancha a otra figura cercana, o endereza su ángulo. */
+    private ShapeTools.Spec lineWithEnd(ShapeTools.Spec line, boolean first, float x, float y) {
+        Ink.Stroke self = selStrokes.get(0);
+        float best = ATTACH;
+        float[] hit = null;
+        for (Ink.Stroke s : pages.get(selPage).strokes) {
+            if (s == self || s.shape == null) continue;
+            float[] a = s.shape.anchors();
+            for (int i = 0; i + 1 < a.length; i += 2) {
+                float d = (float) Math.hypot(a[i] - x, a[i + 1] - y);
+                if (d < best) {
+                    best = d;
+                    hit = new float[] {a[i], a[i + 1]};
+                }
+            }
+        }
+        if (hit == null) {
+            hit = ShapeTools.snapAngle(first ? line.x1 : line.x0, first ? line.y1 : line.y0, x, y, 4);
+        }
+        return line.withEnd(first, hit[0], hit[1]);
     }
 
     private float[] selArray() {
@@ -849,6 +927,13 @@ final class InkView extends View {
     private int selectionHit(float sx, float sy) {
         if (selPage < 0) return SelectionMath.NONE;
         float x = (sx - ox) / scale, y = (sy - oy) / scale - pageTop(selPage), k = density / scale;
+        Ink.Stroke line = selectedLine();
+        if (line != null) {
+            ShapeTools.Spec l = line.shape;
+            if (Math.hypot(x - l.x0, y - l.y0) < 26 * k) return SelectionMath.LINE_START;
+            if (Math.hypot(x - l.x1, y - l.y1) < 26 * k) return SelectionMath.LINE_END;
+            return selBox.contains(x, y) ? SelectionMath.MOVE : SelectionMath.NONE;
+        }
         return SelectionMath.hit(selArray(), x, y, 22 * k, 14 * k, stretchesVertically(), rotates(), ROTATE_GAP * k);
     }
 
@@ -1034,6 +1119,7 @@ final class InkView extends View {
         removeCallbacks(holdCheck);
         if (mode == ERASE) finishErase();
         mode = NONE;
+        dragSpec = null;
         current = null;
         lasso.clear();
         renderLayer();
@@ -1156,7 +1242,9 @@ final class InkView extends View {
                 shapeY = y;
                 s.add(x, y, SHAPE_PRESSURE);
             } else {
-                s.replace(ShapeTools.build(shapeKind, shapeX, shapeY, x, y, gridOf(pages.get(currentPage))), SHAPE_PRESSURE);
+                ShapeTools.Spec spec = ShapeTools.spec(shapeKind, shapeX, shapeY, x, y, gridOf(pages.get(currentPage)));
+                s.replace(spec.points(), SHAPE_PRESSURE);
+                s.shape = spec;
             }
             invalidate();
             return;
@@ -1203,6 +1291,7 @@ final class InkView extends View {
     /** Lo que cuenta para ajustar la figura mientras el lápiz sigue apoyado. */
     private void prepareAdjust(Ink.Stroke s) {
         snapBase = null;
+        snapSpec = s.shape;
         if (!absorbed.isEmpty() || s.n < 2) return;
         float[] xy = new float[2 * s.n];
         float cx = 0, cy = 0;
@@ -1223,7 +1312,9 @@ final class InkView extends View {
     private void adjustSnapped(Ink.Stroke s, float x, float y) {
         if (snapBase == null) return;
         if (ShapeRecognizer.LINE.equals(snapKind)) {
-            s.replace(ShapeRecognizer.line(snapBase[0], snapBase[1], x, y).xy, snapPressure);
+            ShapeRecognizer.Shape line = ShapeRecognizer.line(snapBase[0], snapBase[1], x, y);
+            s.replace(line.xy, snapPressure);
+            s.shape = line.spec;
         } else {
             float k = (float) Math.hypot(x - snapCx, y - snapCy) / snapReach;
             k = Math.max(0.2f, Math.min(5, k));
@@ -1233,6 +1324,8 @@ final class InkView extends View {
                 xy[i + 1] = snapCy + (snapBase[i + 1] - snapCy) * k;
             }
             s.replace(xy, snapPressure);
+            float[] grow = {k, 0, 0, k, snapCx - snapCx * k, snapCy - snapCy * k};
+            s.shape = snapSpec == null ? null : snapSpec.mapped(grow, 0);
         }
         invalidate();
     }
@@ -1264,6 +1357,7 @@ final class InkView extends View {
         }
         if (shape == null) return false;
         s.replace(shape.xy, Math.max(0.5f, pressure / s.n));
+        s.shape = shape.spec;
         snapKind = shape.kind;
         return true;
     }
@@ -1303,7 +1397,9 @@ final class InkView extends View {
                 if (Math.hypot(x1 - e[i], y1 - e[i + 1]) < ATTACH) { x1 = e[i]; y1 = e[i + 1]; moved = true; }
             }
         }
-        return moved ? new ShapeRecognizer.Shape(line.kind, ShapeTools.densify(new float[] {x0, y0, x1, y1})) : line;
+        if (!moved) return line;
+        return new ShapeRecognizer.Shape(line.kind, ShapeTools.densify(new float[] {x0, y0, x1, y1}),
+                new ShapeTools.Spec(ShapeTools.LINE, x0, y0, x1, y1, 0));
     }
 
     /** ¿Esta línea cierra un triángulo o un cuadrilátero con las anteriores? */
@@ -1508,16 +1604,27 @@ final class InkView extends View {
 
     private void updateSelBox() {
         float l = Float.MAX_VALUE, t = Float.MAX_VALUE, r = -Float.MAX_VALUE, b = -Float.MAX_VALUE;
+        float tl = l, tt = t, tr = r, tb = b;
         for (Ink.Stroke s : selStrokes) {
             l = Math.min(l, s.minX - s.width); t = Math.min(t, s.minY - s.width);
             r = Math.max(r, s.maxX + s.width); b = Math.max(b, s.maxY + s.width);
+            tl = Math.min(tl, s.minX); tt = Math.min(tt, s.minY);
+            tr = Math.max(tr, s.maxX); tb = Math.max(tb, s.maxY);
         }
         for (Ink.Item it : selItems) {
             float h = renderer.itemHeight(it);
             l = Math.min(l, it.x); t = Math.min(t, it.y);
             r = Math.max(r, it.x + it.w); b = Math.max(b, it.y + h);
+            tl = Math.min(tl, it.x); tt = Math.min(tt, it.y);
+            tr = Math.max(tr, it.x + it.w); tb = Math.max(tb, it.y + h);
         }
         selBox.set(l - 6, t - 6, r + 6, b + 6);
+        selTight.set(tl, tt, tr, tb);
+        // Una figura sola se cuenta por sus puntos: las barbas de unos ejes sobresalen.
+        ShapeTools.Spec one = selStrokes.size() == 1 && selItems.isEmpty() ? selStrokes.get(0).shape : null;
+        if (one != null && one.angle == 0 && one.kind != ShapeTools.CROSS_AXES) {
+            selTight.set(Math.min(one.x0, one.x1), Math.min(one.y0, one.y1), Math.max(one.x0, one.x1), Math.max(one.y0, one.y1));
+        }
     }
 
     /** La imagen seleccionada, si es lo único seleccionado. */
@@ -1558,11 +1665,30 @@ final class InkView extends View {
         dragY = (e.getY(idx) - oy) / scale - pageTop(selPage);
         dragBox = selArray();
         dragAngle = 0;
+        boolean end = hit == SelectionMath.LINE_START || hit == SelectionMath.LINE_END;
+        dragSpec = end ? selStrokes.get(0).shape : null;
         renderLayer();
     }
 
+    /**
+     * La transformación del arrastre. Al estirar en un sentido se cuenta desde el
+     * dibujo y no desde la caja, que tiene margen: si no, el lado que debe quedar
+     * quieto se correría.
+     */
+    private float[] dragAffine() {
+        float[] box = selArray();
+        boolean flat = selTight.width() < 1 || selTight.height() < 1;
+        if (dragAngle != 0 || flat || SelectionMath.uniform(box, dragBox)) return SelectionMath.affine(box, dragBox, dragAngle);
+        float[] from = {selTight.left, selTight.top, selTight.right, selTight.bottom};
+        float[] to = {dragBox[0] + from[0] - box[0], dragBox[1] + from[1] - box[1], dragBox[2] + from[2] - box[2], dragBox[3] + from[3] - box[3]};
+        if (to[2] - to[0] < 1 || to[3] - to[1] < 1) return SelectionMath.affine(box, dragBox, 0);
+        return SelectionMath.affine(from, to, 0);
+    }
+
     private void drag(float x, float y) {
-        if (dragHandle == SelectionMath.ROTATE) {
+        if (dragSpec != null) {
+            dragSpec = lineWithEnd(dragSpec, dragHandle == SelectionMath.LINE_START, x, y);
+        } else if (dragHandle == SelectionMath.ROTATE) {
             double a = Math.atan2(y - selBox.centerY(), x - selBox.centerX()) + Math.PI / 2;
             dragAngle = SelectionMath.snapAngle(Math.atan2(Math.sin(a), Math.cos(a)));
         } else {
@@ -1573,18 +1699,26 @@ final class InkView extends View {
 
     private void finishDrag() {
         Ink.Page page = pages.get(selPage);
+        if (dragSpec != null) {
+            ShapeTools.Spec spec = dragSpec;
+            dragSpec = null;
+            Ink.Stroke s = selStrokes.get(0);
+            if (spec != s.shape) replaceSelected(s, s.withShape(spec));
+            else renderLayer();
+            return;
+        }
         float[] box = selArray();
         if (dragAngle == 0 && java.util.Arrays.equals(box, dragBox)) {
             renderLayer();
             return;
         }
         String old = page.toJson();
-        float[] m = SelectionMath.affine(box, dragBox, dragAngle);
+        float[] m = dragAffine();
         boolean even = SelectionMath.uniform(box, dragBox);
         // Al estirar en un sentido, la línea conserva su grosor.
         float widthScale = even ? (dragBox[2] - dragBox[0]) / (box[2] - box[0]) : 1;
         for (int i = 0; i < selStrokes.size(); i++) {
-            Ink.Stroke s = selStrokes.get(i), t = s.mapped(m, widthScale);
+            Ink.Stroke s = selStrokes.get(i), t = s.mapped(m, widthScale, dragAngle);
             int at = page.strokes.indexOf(s);
             if (at >= 0) page.strokes.set(at, t);
             selStrokes.set(i, t);
