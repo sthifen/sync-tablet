@@ -88,3 +88,8 @@ InkView ── trazo/borrado ──► WebSocket ──USB (adb reverse) / WiFi�
 
 1. Enlaces entre notas; PDFs y fotos dentro de las notas.
 2. Phone Link: notificaciones, fotos y archivos de la tablet en el PC.
+
+## Licencia
+
+Sync Tablet se distribuye bajo la licencia [MIT](LICENSE). Los componentes de terceros
+y sus licencias están en [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

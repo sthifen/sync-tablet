@@ -2,7 +2,7 @@
 # servidor del PC: se compila para Android con android/build-apk.sh.
 [package]
 name = "synctablet-native"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 
