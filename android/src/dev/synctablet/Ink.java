@@ -245,6 +245,8 @@ final class Ink {
         String background = LINES;
         /** Página de un PDF importado como fondo (id de la imagen). */
         String bgAsset;
+        /** Texto de esa página del PDF. */
+        String bgText;
         final ArrayList<Stroke> strokes = new ArrayList<>();
         final ArrayList<Item> items = new ArrayList<>();
 
@@ -252,6 +254,7 @@ final class Ink {
         void copyFrom(Page o) {
             background = o.background;
             bgAsset = o.bgAsset;
+            bgText = o.bgText;
             strokes.clear();
             strokes.addAll(o.strokes);
             items.clear();
@@ -282,6 +285,7 @@ final class Ink {
             }
             b.append(']');
             if (bgAsset != null) b.append(",\"bg_asset\":\"").append(bgAsset).append('"');
+            if (bgText != null) b.append(",\"bg_text\":").append(JSONObject.quote(bgText));
             return b.append('}').toString();
         }
 
@@ -295,6 +299,7 @@ final class Ink {
             JSONArray it = o.optJSONArray("items");
             if (it != null) for (int i = 0; i < it.length(); i++) p.items.add(Item.fromJson(it.getJSONObject(i)));
             if (o.has("bg_asset") && !o.isNull("bg_asset")) p.bgAsset = o.getString("bg_asset");
+            if (o.has("bg_text") && !o.isNull("bg_text")) p.bgText = o.getString("bg_text");
             return p;
         }
     }

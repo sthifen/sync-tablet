@@ -35,6 +35,7 @@ import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -54,6 +55,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             IconView.S_ELLIPSE, IconView.S_TRIANGLE, IconView.S_AXES, IconView.S_CROSS};
     private static final String[] SHAPE_NAMES = {"Línea", "Flecha", "Flecha doble", "Rectángulo", "Elipse", "Triángulo",
             "Ejes", "Ejes cruzados"};
+    /** Ancho en píxeles de las páginas de un PDF importado. */
+    private static final int PDF_WIDTH = 1600;
     private static final int[] PEN_COLORS = {0xFF111827, 0xFF2563EB, 0xFFDC2626, 0xFF16A34A, 0xFF7C3AED, 0xFFEA580C};
     private static final int[] HL_COLORS = {0xFFFFD60A, 0xFF4ADE80, 0xFFF472B6, 0xFF60A5FA};
     private static final float[] PEN_WIDTHS = {2f, 3.5f, 6f};
@@ -733,17 +736,28 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     private void pageMenu() {
+        Ink.Page visible = ink.visiblePage();
+        String text = visible == null ? null : visible.bgText;
+        ArrayList<String> items = new ArrayList<>(java.util.Arrays.asList("Página nueva al final", "Páginas (ordenar, duplicar, borrar)",
+                "Plantilla", "Botones del S Pen", "Borrar esta página"));
+        if (text != null) items.add("Copiar el texto del PDF");
         new AlertDialog.Builder(this)
                 .setTitle("Página " + (index + 1) + " de " + notebook.pages.size())
-                .setItems(new String[] {"Página nueva al final", "Páginas (ordenar, duplicar, borrar)", "Plantilla",
-                        "Botones del S Pen", "Borrar esta página"}, (d, which) -> {
+                .setItems(items.toArray(new String[0]), (d, which) -> {
                     if (which == 0) addPage();
                     else if (which == 1) pageManager();
                     else if (which == 2) chooseTemplate();
                     else if (which == 3) penButtons();
-                    else confirmDeletePage(index, null);
+                    else if (which == 4) confirmDeletePage(index, null);
+                    else copyText(text);
                 })
                 .show();
+    }
+
+    private void copyText(String text) {
+        android.content.ClipboardManager clip = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        clip.setPrimaryClip(android.content.ClipData.newPlainText("PDF", text));
+        Ui.toast(this, "Texto copiado");
     }
 
     private void confirmDeletePage(int i, Runnable after) {
@@ -1107,28 +1121,24 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         Ui.toast(this, "Importando el PDF…");
         save();
         new Thread(() -> {
-            ArrayList<String> assets = new ArrayList<>();
-            try (ParcelFileDescriptor fd = getContentResolver().openFileDescriptor(uri, "r");
-                 PdfRenderer pdf = new PdfRenderer(fd)) {
-                for (int i = 0; i < pdf.getPageCount(); i++) {
-                    try (PdfRenderer.Page page = pdf.openPage(i)) {
-                        int w = 1600, h = Math.round(w * page.getHeight() / (float) page.getWidth());
-                        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-                        b.eraseColor(Color.WHITE);
-                        page.render(b, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
-                        assets.add(store.putAsset(b));
-                        b.recycle();
-                    }
+            ArrayList<String> assets = new ArrayList<>(), texts = new ArrayList<>();
+            if (!importPdfNative(uri, assets, texts)) {
+                assets.clear();
+                texts.clear();
+                try {
+                    importPdfAndroid(uri, assets, texts);
+                } catch (IOException | RuntimeException e) {
+                    main.post(() -> Ui.toast(this, "No se pudo abrir el PDF"));
+                    return;
                 }
-            } catch (IOException | RuntimeException e) {
-                main.post(() -> Ui.toast(this, "No se pudo abrir el PDF"));
-                return;
             }
             main.post(() -> {
                 int first = notebook.pages.size();
-                for (String a : assets) {
+                for (int i = 0; i < assets.size(); i++) {
+                    String a = assets.get(i);
                     Ink.Page p = store.addPage(notebook);
                     p.bgAsset = a;
+                    p.bgText = texts.get(i);
                     p.background = Ink.PLAIN;
                     store.savePage(p);
                     sync.sendAsset(a);
@@ -1139,6 +1149,54 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 Ui.toast(this, assets.size() + (assets.size() == 1 ? " página importada" : " páginas importadas"));
             });
         }).start();
+    }
+
+    /** Con el motor propio: páginas más fieles y, además, su texto. Falso si no se pudo. */
+    private boolean importPdfNative(Uri uri, ArrayList<String> assets, ArrayList<String> texts) {
+        if (!Native.available()) return false;
+        long pdf = 0;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buf = new byte[1 << 16];
+            for (int k; (k = in.read(buf)) > 0; ) bytes.write(buf, 0, k);
+            pdf = Native.pdfOpen(bytes.toByteArray());
+            if (pdf == 0) return false;
+            int[] size = new int[2];
+            for (int i = 0, n = Native.pdfPages(pdf); i < n; i++) {
+                byte[] rgba = Native.pdfRender(pdf, i, PDF_WIDTH, size);
+                if (rgba == null) return false;
+                Bitmap b = Bitmap.createBitmap(size[0], size[1], Bitmap.Config.ARGB_8888);
+                b.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(rgba));
+                assets.add(store.putAsset(b));
+                b.recycle();
+                String text = Native.pdfText(pdf, i);
+                texts.add(text == null || text.trim().isEmpty() ? null : text);
+            }
+            return true;
+        } catch (IOException | RuntimeException | OutOfMemoryError e) {
+            android.util.Log.w("SyncTablet", "PDF con el motor propio", e);
+            return false;
+        } finally {
+            if (pdf != 0) Native.pdfClose(pdf);
+        }
+    }
+
+    /** Con lo que trae Android: sin texto. */
+    private void importPdfAndroid(Uri uri, ArrayList<String> assets, ArrayList<String> texts) throws IOException {
+        try (ParcelFileDescriptor fd = getContentResolver().openFileDescriptor(uri, "r");
+             PdfRenderer pdf = new PdfRenderer(fd)) {
+            for (int i = 0; i < pdf.getPageCount(); i++) {
+                try (PdfRenderer.Page page = pdf.openPage(i)) {
+                    int w = PDF_WIDTH, h = Math.round(w * page.getHeight() / (float) page.getWidth());
+                    Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                    b.eraseColor(Color.WHITE);
+                    page.render(b, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+                    assets.add(store.putAsset(b));
+                    texts.add(null);
+                    b.recycle();
+                }
+            }
+        }
     }
 
     private void exportMenu() {

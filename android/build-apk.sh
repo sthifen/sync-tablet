@@ -6,7 +6,10 @@
 # (por defecto ~/Android/Sdk). Su uso está sujeto a la licencia del Android SDK:
 # https://developer.android.com/studio/terms
 #
-# Uso:  android/build-apk.sh [--install]
+# La librería nativa (native/) necesita rustup, cargo-ndk y el NDK; con
+# --no-native, o si faltan, la app sale sin ella y usa lo que trae Android.
+#
+# Uso:  android/build-apk.sh [--install] [--no-native]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
@@ -58,6 +61,19 @@ echo "→ dex"
   $(find "$OUT/classes" -name '*.class')
 (cd "$OUT/dex" && zip -q "$OUT/base.apk" classes.dex)
 
+NDK="$SDK/ndk/r28c"
+if [[ " $* " != *" --no-native "* && -x "$HOME/.cargo/bin/cargo-ndk" && -d "$NDK" ]]; then
+  echo "→ librería nativa"
+  PATH="$HOME/.cargo/bin:$PATH" ANDROID_NDK_HOME="$NDK" cargo ndk -t arm64-v8a --platform $MIN_SDK \
+    --manifest-path "$HERE/../native/Cargo.toml" build --release --lib
+  mkdir -p "$OUT/lib/arm64-v8a"
+  cp "$HERE/../native/target/aarch64-linux-android/release/libsynctablet.so" "$OUT/lib/arm64-v8a/"
+  # Sin comprimir: Android la usa directamente desde el APK.
+  (cd "$OUT" && zip -q -0 base.apk lib/arm64-v8a/libsynctablet.so)
+else
+  echo "→ sin librería nativa"
+fi
+
 echo "→ firma"
 KEYSTORE="$HERE/debug.keystore"
 if [[ ! -f "$KEYSTORE" ]]; then
@@ -71,7 +87,7 @@ fi
 "$BT/apksigner" verify "$APK"
 echo "✓ $APK ($(du -h "$APK" | cut -f1))"
 
-if [[ "${1:-}" == "--install" ]]; then
+if [[ " $* " == *" --install "* ]]; then
   adb install -r "$APK"
   adb shell am start -n dev.synctablet/.MainActivity
 fi

@@ -104,6 +104,9 @@ pub struct Page {
     /// Imagen de fondo de toda la hoja (una página de un PDF importado).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bg_asset: Option<String>,
+    /// Texto de esa página del PDF, para copiarlo y buscarlo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg_text: Option<String>,
 }
 
 /// Un elemento de la hoja que no es un trazo.
@@ -231,7 +234,7 @@ mod tests {
     }
 
     fn page() -> Page {
-        Page { id: "p".into(), notebook: "n".into(), version: 0, background: Background::Plain, strokes: vec![], items: vec![], bg_asset: None }
+        Page { id: "p".into(), notebook: "n".into(), version: 0, background: Background::Plain, strokes: vec![], items: vec![], bg_asset: None, bg_text: None }
     }
 
     #[test]

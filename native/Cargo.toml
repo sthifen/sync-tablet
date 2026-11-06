@@ -1,0 +1,34 @@
+# Librería nativa de la app de la tablet (libsynctablet.so). Va aparte del
+# servidor del PC: se compila para Android con android/build-apk.sh.
+[package]
+name = "synctablet-native"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "synctablet"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = { version = "0.21", default-features = false }
+pdfcraft-render = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+
+# PdfCraft usa sus propias copias de estas librerías; hay que repetirlo aquí.
+[patch.crates-io]
+hayro = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+hayro-cmap = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+hayro-interpret = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+hayro-jbig2 = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+hayro-postscript = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+hayro-syntax = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+lopdf = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+vello_common = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+vello_cpu = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+strip = true
+
+[workspace]
