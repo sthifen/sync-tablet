@@ -88,6 +88,7 @@ final class InkView extends View {
     static final int HOLD_ERASE = 0, HOLD_LASSO = 1, HOLD_HIGHLIGHTER = 2, HOLD_NOTHING = 3;
 
     private static final int DESK = 0xFFDDE2E8;
+    private int desk = DESK;
     private static final float MARGIN_DP = 24;
     /** Separación entre páginas, en unidades de página. */
     private static final float GAP = 36;
@@ -706,7 +707,7 @@ final class InkView extends View {
         }
         if (layer == null) return;
         Canvas c = layerCanvas;
-        c.drawColor(DESK);
+        c.drawColor(desk);
         layerScale = scale;
         layerOx = ox;
         layerOy = oy;
@@ -733,7 +734,7 @@ final class InkView extends View {
         } else if (layerScale == scale) {
             c.drawBitmap(layer, ox - layerOx, oy - layerOy - pad, null);
         } else {
-            c.drawColor(DESK);
+            c.drawColor(desk);
             float k = scale / layerScale;
             c.save();
             c.translate(ox - layerOx * k, oy - (layerOy + pad) * k);
@@ -758,7 +759,7 @@ final class InkView extends View {
 
     /** Las páginas a la vista, ya en la GPU. Con un zoom en curso se estiran las que hay. */
     private void drawPageNodes(Canvas c) {
-        c.drawColor(DESK);
+        c.drawColor(desk);
         float top = -oy / scale, bottom = (getHeight() - oy) / scale;
         boolean zooming = scaler.isInProgress() || zoomAnimator != null;
         for (int i = 0; i < pages.size(); i++) {
@@ -848,6 +849,29 @@ final class InkView extends View {
      * grabación suelta no se entera: se vería el escritorio sin hojas. Se tiran y
      * se graban de nuevo.
      */
+    /** Hoja oscura: solo cambia lo que se ve aquí, no los colores guardados. */
+    void setDarkPaper(boolean on) {
+        renderer.setDark(on);
+        desk = on ? 0xFF0B0D10 : DESK;
+        handle.setColor(on ? 0xFFE5E7EB : 0xFF1F2937);
+        dashed.setColor(on ? 0xFF9CA3AF : 0xFF6B7280);
+        label.setColor(on ? 0xFFD1D5DB : 0xFF4B5563);
+        setBackgroundColor(desk);
+    }
+
+    /** Deshacer y rehacer sobreviven a recrear la pantalla. */
+    Object history() {
+        return new Object[] {new ArrayDeque<>(undo), new ArrayDeque<>(redo)};
+    }
+
+    @SuppressWarnings("unchecked")
+    void restoreHistory(Object saved) {
+        Object[] both = (Object[]) saved;
+        undo.addAll((ArrayDeque<Object[]>) both[0]);
+        redo.addAll((ArrayDeque<Object[]>) both[1]);
+        notifyUndo();
+    }
+
     void redrawPages() {
         if (!GPU) return;
         for (PageNode n : nodes.values()) n.discard();

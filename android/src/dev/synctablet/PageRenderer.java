@@ -5,6 +5,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -22,9 +24,19 @@ import java.util.Set;
  * unidades de página. Lo usan la hoja, las miniaturas y la exportación a
  * PDF, así las tres se ven igual. Las fórmulas de los lápices están en
  * Ink.segWidth / segAlpha (las mismas que el PC).
+ *
+ * La hoja oscura es solo de este objeto: los colores guardados no cambian y
+ * la exportación usa otro renderizador, en claro, para no gastar tinta.
  */
 final class PageRenderer {
     static final int TAPE_COLOR = 0xFFE9C46A;
+    static final int DARK_SHEET = 0xFF16191E;
+    /** Invierte el brillo sin voltear los tonos, y deja el blanco en el gris de la hoja. */
+    private static final ColorMatrixColorFilter DARK_SCAN = new ColorMatrixColorFilter(new ColorMatrix(new float[] {
+            0.3f, -0.6f, -0.6f, 0, 251,
+            -0.6f, 0.3f, -0.6f, 0, 251,
+            -0.6f, -0.6f, 0.3f, 0, 251,
+            0, 0, 0, 1, 0}));
 
     private final Context context;
     private final Paint ink = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -44,6 +56,30 @@ final class PageRenderer {
                     return value.getAllocationByteCount();
                 }
             };
+
+    private boolean dark;
+
+    /** Solo para la pantalla; nunca en lo que se exporta. */
+    void setDark(boolean on) {
+        dark = on;
+        lines.setColor(on ? 0xFF343B47 : 0xFFC9D3E3);
+        dots.setColor(on ? 0xFF475062 : 0xFFB8C4D6);
+        margin.setColor(on ? 0xFF8A4B4B : 0xFFE28B8B);
+        sheet.setColor(on ? DARK_SHEET : Color.WHITE);
+    }
+
+    /** Cómo se ve un color de tinta sobre la hoja oscura: lo negro pasa a blanco y lo oscuro se aclara. */
+    static int onDark(int c) {
+        int r = c >> 16 & 0xFF, g = c >> 8 & 0xFF, b = c & 0xFF;
+        int luma = (30 * r + 59 * g + 11 * b) / 100;
+        if (luma < 60) return c & 0xFF000000 | 0xF3F4F6;
+        if (luma >= 130) return c;
+        return c & 0xFF000000 | (r + (255 - r) * 2 / 5) << 16 | (g + (255 - g) * 2 / 5) << 8 | (b + (255 - b) * 2 / 5);
+    }
+
+    private int shown(int c) {
+        return dark ? onDark(c) : c;
+    }
 
     PageRenderer(Context c) {
         context = c.getApplicationContext();
@@ -91,7 +127,10 @@ final class PageRenderer {
         if (bg != null) {
             float k = Math.min(Ink.W / bg.getWidth(), Ink.H / bg.getHeight());
             float w = bg.getWidth() * k, h = bg.getHeight() * k;
+            // Un PDF blanco bajo tinta blanca no dejaría ver nada.
+            bitmap.setColorFilter(dark ? DARK_SCAN : null);
             c.drawBitmap(bg, null, new RectF((Ink.W - w) / 2, (Ink.H - h) / 2, (Ink.W + w) / 2, (Ink.H + h) / 2), bitmap);
+            bitmap.setColorFilter(null);
         } else if (p.bgAsset == null) {
             drawBackground(c, p.background, lineScale);
         }
@@ -192,14 +231,14 @@ final class PageRenderer {
     private void drawTable(Canvas c, Ink.Item it) {
         int rows = Math.max(1, it.rows), cols = Math.max(1, it.cols);
         float cw = it.w / cols, ch = it.h / rows;
-        header.setColor(0xFFF1F5F9);
+        header.setColor(dark ? 0xFF262B33 : 0xFFF1F5F9);
         c.drawRect(it.x, it.y, it.x + it.w, it.y + ch, header);
         grid.setStyle(Paint.Style.STROKE);
-        grid.setColor(0xFF94A3B8);
+        grid.setColor(dark ? 0xFF566072 : 0xFF94A3B8);
         grid.setStrokeWidth(1.2f);
         for (int r = 0; r <= rows; r++) c.drawLine(it.x, it.y + r * ch, it.x + it.w, it.y + r * ch, grid);
         for (int k = 0; k <= cols; k++) c.drawLine(it.x + k * cw, it.y, it.x + k * cw, it.y + it.h, grid);
-        text.setColor(0xFF111827);
+        text.setColor(shown(0xFF111827));
         text.setTextSize(Math.min(32, Math.max(10, ch * 0.5f)));
         for (int r = 0; r < rows; r++) {
             text.setFakeBoldText(r == 0);
@@ -225,13 +264,14 @@ final class PageRenderer {
             RectF r = new RectF(it.x, it.y, it.x + it.w, it.y + it.h);
             if (b != null) c.drawBitmap(b, null, r, bitmap);
             else {
-                dots.setColor(0xFFEEF2F7);
+                int was = dots.getColor();
+                dots.setColor(dark ? 0xFF262B33 : 0xFFEEF2F7);
                 c.drawRect(r, dots);
-                dots.setColor(0xFFB8C4D6);
+                dots.setColor(was);
             }
             return;
         }
-        text.setColor(it.color);
+        text.setColor(shown(it.color));
         text.setTextSize(it.size);
         String s = it.text == null ? "" : it.text;
         StaticLayout layout = StaticLayout.Builder.obtain(s, 0, s.length(), text, Math.max(1, (int) it.w))
@@ -252,8 +292,9 @@ final class PageRenderer {
 
     void drawStroke(Canvas c, Ink.Stroke s, boolean revealed) {
         if (s.n == 0) return;
-        ink.setColor(s.color);
+        ink.setColor(shown(s.color));
         if (Ink.HIGHLIGHTER.equals(s.tool) || Ink.TAPE.equals(s.tool)) {
+            ink.setColor(s.color);
             boolean tape = Ink.TAPE.equals(s.tool);
             ink.setAlpha(tape ? (revealed ? 60 : 255) : 90);
             ink.setStrokeCap(tape ? Paint.Cap.SQUARE : Paint.Cap.ROUND);
@@ -282,7 +323,7 @@ final class PageRenderer {
         // Presión negativa: aquí se levantó el lápiz.
         if (s.p(i) < 0) return;
         float p = (Math.max(s.p(i - 1), s.p(i)) + s.p(i)) / 2;
-        ink.setColor(s.color);
+        ink.setColor(shown(s.color));
         ink.setAlpha(Ink.segAlpha(s.tool, p));
         ink.setStrokeWidth(Ink.segWidth(s.tool, s.width, p, s.x(i) - s.x(i - 1), s.y(i) - s.y(i - 1)));
         c.drawLine(s.x(i - 1), s.y(i - 1), s.x(i), s.y(i), ink);

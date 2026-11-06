@@ -21,6 +21,13 @@ final class IconView extends View {
     private final Path path;
     private boolean active;
     private int color;
+    private int activeIcon = 0xFFFFFFFF;
+
+    /** Colores del círculo activo sobre una barra oscura. */
+    void activeColors(int circle, int glyph) {
+        disc.setColor(circle);
+        activeIcon = glyph;
+    }
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint disc = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -68,7 +75,7 @@ final class IconView extends View {
         c.save();
         c.translate((w - 24 * s) / 2, (h - 24 * s) / 2);
         c.scale(s, s);
-        stroke.setColor(active ? 0xFFFFFFFF : color);
+        stroke.setColor(active ? activeIcon : color);
         c.drawPath(path, stroke);
         c.restore();
     }
