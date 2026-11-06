@@ -221,6 +221,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         }
         loadPages(index);
         // Después de cargar: cargar páginas vacía el historial.
+        ink.setDesk(Looks.bitmap(this, Looks.DESK), Looks.dim(this, Looks.DESK));
         Object history = getLastNonConfigurationInstance();
         if (history != null) ink.restoreHistory(history);
         refreshTools();

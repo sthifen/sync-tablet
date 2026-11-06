@@ -52,6 +52,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private SharedPreferences prefs;
     /** La carpeta abierta en la página principal; null es Inicio. */
     private String folderView;
+    private ImageView wall, coverPhoto;
+    private LinearLayout rootBox, mainCol;
+    private String lookKey, lookTitle;
+    private boolean lookGlass;
     private Object folderBack;
     private Store store;
     private Notes notes;
@@ -169,6 +173,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         getWindow().setNavigationBarColor(t.bg);
         if (!t.dark) getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         LinearLayout root = new LinearLayout(this);
+        rootBox = root;
         root.setBackgroundColor(t.bg);
         root.addView(buildSidebar(), new LinearLayout.LayoutParams(t.dp(270), -1));
         edge = new View(this);
@@ -196,9 +201,13 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         });
         // El dock de opciones flota sobre todo.
         FrameLayout frame = new FrameLayout(this);
+        wall = new ImageView(this);
+        wall.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        frame.addView(wall, new FrameLayout.LayoutParams(-1, -1));
         frame.addView(root, new FrameLayout.LayoutParams(-1, -1));
         dock = new OptionDock(this, frame, null, t.dark ? 0xF7262626 : 0xF7FFFFFF, t.dark);
         setContentView(frame);
+        applyLooks();
     }
 
     private View buildSidebar() {
@@ -229,6 +238,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         sidebar.addView(navItem(IconView.PEN, "Nuevo cuaderno", v -> askNewNotebook()));
         sidebar.addView(navItem(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null)));
         sidebar.addView(navItem(IconView.MOON, t.dark ? "Modo claro" : "Modo oscuro", v -> toggleTheme()));
+        sidebar.addView(navItem(IconView.WAND, "Personalizar", v -> personalize()));
 
         ScrollView sv = new ScrollView(this);
         LinearLayout lists = new LinearLayout(this);
@@ -292,6 +302,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private View buildMain() {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
+        mainCol = col;
 
         LinearLayout top = row();
         top.setPadding(t.dp(8), 0, t.dp(8), 0);
@@ -324,7 +335,12 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         col.addView(scroller, new LinearLayout.LayoutParams(-1, 0, 1));
 
         cover = new AuroraView(this, t);
-        content.addView(cover, new LinearLayout.LayoutParams(-1, t.dp(170)));
+        FrameLayout coverBox = new FrameLayout(this);
+        coverBox.addView(cover, new FrameLayout.LayoutParams(-1, -1));
+        coverPhoto = new ImageView(this);
+        coverPhoto.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        coverBox.addView(coverPhoto, new FrameLayout.LayoutParams(-1, -1));
+        content.addView(coverBox, new LinearLayout.LayoutParams(-1, t.dp(170)));
         ColumnLayout column = new ColumnLayout();
         column.setClipChildren(false);
         content.addView(column, new LinearLayout.LayoutParams(-1, -2));
@@ -656,7 +672,14 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private View folderCard(String folder) {
         ArrayList<Ink.Notebook> inside = notebooksIn(folder);
         LinearLayout c = cardBox();
-        c.addView(new FolderArt(this, inside.isEmpty() ? t.faint : inside.get(0).color), new LinearLayout.LayoutParams(-1, 0, 1));
+        if (Looks.has(this, "folder:" + folder)) {
+            ImageView photo = new ImageView(this);
+            photo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            showLook(photo, "folder:" + folder);
+            c.addView(photo, new LinearLayout.LayoutParams(-1, 0, 1));
+        } else {
+            c.addView(new FolderArt(this, inside.isEmpty() ? t.faint : inside.get(0).color), new LinearLayout.LayoutParams(-1, 0, 1));
+        }
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
         info.setPadding(t.dp(12), t.dp(10), t.dp(12), t.dp(12));
@@ -731,8 +754,9 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         c.addView(prev, new LinearLayout.LayoutParams(-1, 0, 1));
         if (!n.pages.isEmpty()) {
             Ink.Page p = store.page(n.pages.get(0));
-            if (p != null) thumbnail(p, t.dp(200), img);
+            if (p != null && !Looks.has(this, "nb:" + n.id)) thumbnail(p, t.dp(200), img);
         }
+        showLook(img, "nb:" + n.id);
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
         info.setPadding(t.dp(12), t.dp(10), t.dp(12), t.dp(12));
@@ -997,7 +1021,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     // ---------------------------------------------------------------- Word
 
-    private static final int PICK_DOCX = 41, SAVE_DOCX = 42;
+    private static final int PICK_DOCX = 41, SAVE_DOCX = 42, PICK_LOOK = 43;
     private static final String DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     private void pickDocx() {
@@ -1017,7 +1041,20 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) return;
-        if (request == PICK_DOCX) importDocx(data.getData());
+        if (request == PICK_LOOK) {
+            android.net.Uri uri = data.getData();
+            String key = lookKey, title = lookTitle;
+            boolean glass = lookGlass;
+            new Thread(() -> {
+                boolean ok = Looks.save(this, uri, key);
+                main.post(() -> {
+                    if (!ok) Ui.toast(this, "No se pudo leer esa imagen");
+                    applyLooks();
+                    if (noteId == null) showHome();
+                    editLook(key, title, glass);
+                });
+            }).start();
+        } else if (request == PICK_DOCX) importDocx(data.getData());
         else if (request == SAVE_DOCX) exportDocx(data.getData());
     }
 
@@ -1227,6 +1264,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGE), "Abrir", false, () -> openNotebook(n, null)));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Renombrar", false, () -> rename(n)).stays());
         tiles.add(new OptionDock.Tile(dock.swatch(n.color), "Cambiar color", false, () -> chooseCover(n)).stays());
+        tiles.add(new OptionDock.Tile(lookTile("nb:" + n.id), "Portada", false, () -> editLook("nb:" + n.id, "Portada de «" + n.title + "»", false)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.STAR), n.favorite ? "Quitar de favoritos" : "Marcar favorito", n.favorite, () -> {
             n.favorite = !n.favorite;
             changed(n);
@@ -1272,6 +1310,120 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             changed(n);
         }));
         dock.tiles("Mover «" + n.title + "» a", tiles);
+    }
+
+    // ---- Personalizar ----
+
+    /** Fondo de la app y portada de Inicio; los paneles dejan ver la foto como un cristal. */
+    private void applyLooks() {
+        android.graphics.Bitmap photo = Looks.bitmap(this, Looks.APP);
+        wall.setImageBitmap(photo);
+        int alpha = Math.round(255 * (0.3f + 0.65f * Looks.dim(this, Looks.APP) / 100f)) << 24;
+        rootBox.setBackgroundColor(photo == null ? t.bg : 0);
+        sidebar.setBackgroundColor(photo == null ? t.bar : t.bar & 0xFFFFFF | alpha);
+        mainCol.setBackgroundColor(photo == null ? 0 : t.bg & 0xFFFFFF | alpha);
+        coverPhoto.setVisibility(Looks.has(this, Looks.HOME) ? View.VISIBLE : View.GONE);
+        showLook(coverPhoto, Looks.HOME);
+    }
+
+    private void showLook(ImageView v, String key) {
+        android.graphics.Bitmap b = Looks.bitmap(this, key);
+        if (b == null) {
+            if (!(v == coverPhoto)) return;
+            v.setImageDrawable(null);
+            return;
+        }
+        v.setImageBitmap(b);
+        v.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        shade(v, Looks.dim(this, key));
+    }
+
+    private static void shade(ImageView v, int dim) {
+        if (dim <= 0) v.clearColorFilter();
+        else v.setColorFilter(Math.round(dim * 2.2f) << 24, android.graphics.PorterDuff.Mode.SRC_ATOP);
+    }
+
+    private View lookTile(String key) {
+        if (!Looks.has(this, key)) return dock.glyph(IconView.IMAGE);
+        ImageView v = new ImageView(this);
+        v.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        v.setImageBitmap(Looks.bitmap(this, key));
+        v.setBackground(rounded(t.card, 10));
+        v.setClipToOutline(true);
+        return v;
+    }
+
+    private void personalize() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(lookTile(Looks.APP), "Fondo de la app", false, () -> editLook(Looks.APP, "Fondo de la app", true)).stays());
+        tiles.add(new OptionDock.Tile(lookTile(Looks.HOME), "Portada de Inicio", false, () -> editLook(Looks.HOME, "Portada de Inicio", false)).stays());
+        tiles.add(new OptionDock.Tile(lookTile(Looks.DESK), "Detrás de las hojas", false, () -> editLook(Looks.DESK, "Detrás de las hojas", false)).stays());
+        dock.tiles("Personalizar", tiles);
+    }
+
+    /** Foto, difuminado y oscurecido de un sitio; los cambios se ven al momento. */
+    private void editLook(String key, String title, boolean glass) {
+        lookKey = key;
+        lookTitle = title;
+        lookGlass = glass;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(t.dp(20), 0, t.dp(20), t.dp(8));
+        boolean has = Looks.has(this, key);
+        ImageView shot = new ImageView(this);
+        shot.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        shot.setBackground(rounded(t.hover, 12));
+        shot.setClipToOutline(true);
+        shot.setContentDescription("Vista previa");
+        if (has) {
+            shot.setImageBitmap(Looks.bitmap(this, key));
+            if (!glass) shade(shot, Looks.dim(this, key));
+        }
+        box.addView(shot, new LinearLayout.LayoutParams(-1, t.dp(170)));
+        LinearLayout actions = row();
+        actions.setPadding(0, t.dp(8), 0, t.dp(4));
+        actions.addView(pill(has ? "Cambiar foto" : "Elegir foto", v -> {
+            Intent pick = new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
+            startActivityForResult(pick, PICK_LOOK);
+        }));
+        if (has) actions.addView(pill("Quitar", v -> {
+            Looks.remove(this, key);
+            applyLooks();
+            if (noteId == null) showHome();
+            editLook(key, title, glass);
+        }));
+        box.addView(actions);
+        if (has) {
+            android.widget.SeekBar blur = lookBar(box, "Difuminado", Looks.blur(this, key));
+            android.widget.SeekBar dim = lookBar(box, glass ? "Paneles más sólidos" : "Oscurecer", Looks.dim(this, key));
+            android.widget.SeekBar.OnSeekBarChangeListener live = new android.widget.SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(android.widget.SeekBar s, int v, boolean user) {
+                    if (user && s == dim && !glass) shade(shot, v);
+                }
+                @Override public void onStartTrackingTouch(android.widget.SeekBar s) { }
+                @Override public void onStopTrackingTouch(android.widget.SeekBar s) {
+                    Looks.set(MainActivity.this, key, blur.getProgress(), dim.getProgress());
+                    shot.setImageBitmap(Looks.bitmap(MainActivity.this, key));
+                    applyLooks();
+                    if (noteId == null) showHome();
+                }
+            };
+            blur.setOnSeekBarChangeListener(live);
+            dim.setOnSeekBarChangeListener(live);
+        }
+        dock.show(title, box, new OptionDock.Action("Listo", true, null));
+    }
+
+    private android.widget.SeekBar lookBar(LinearLayout box, String label, int value) {
+        TextView tv = text(label, 14, t.muted, t.regular);
+        tv.setPadding(0, t.dp(8), 0, t.dp(2));
+        box.addView(tv);
+        android.widget.SeekBar bar = new android.widget.SeekBar(this);
+        bar.setMax(100);
+        bar.setProgress(value);
+        bar.setContentDescription(label);
+        box.addView(bar);
+        return bar;
     }
 
     // ---- Carpetas ----
@@ -1348,6 +1500,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Abrir", false, () -> { flushSave(); setFolderView(folder); showHome(); }));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Agregar cuadernos", false, () -> addNotebooks(folder)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Renombrar", false, () -> renameFolder(folder)).stays());
+        tiles.add(new OptionDock.Tile(lookTile("folder:" + folder), "Portada", false, () -> editLook("folder:" + folder, "Portada de «" + folder + "»", false)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar carpeta", false, () -> confirmDeleteFolder(folder)).stays());
         dock.tiles(folder, tiles);
     }
@@ -1383,6 +1536,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             all.remove(folder);
             all.add(name);
             keepFolders(all);
+            Looks.rename(this, "folder:" + folder, "folder:" + name);
             for (Ink.Notebook n : notebooksIn(folder)) {
                 n.folder = name;
                 sync.sendNotebook(n);
@@ -1406,6 +1560,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             java.util.TreeSet<String> all = folders();
             all.remove(folder);
             keepFolders(all);
+            Looks.remove(this, "folder:" + folder);
             if (folder.equals(folderView)) setFolderView(null);
             renderSidebar();
             if (noteId == null) showHome();
@@ -1422,6 +1577,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private void confirmDelete(Ink.Notebook n) {
         dock.confirm("¿Borrar «" + n.title + "»?", "Se borra de la tablet y del PC. No se puede deshacer.", "Borrar", () -> {
             store.deleteNotebook(n);
+            Looks.remove(this, "nb:" + n.id);
             sync.send("{\"t\":\"delete_notebook\",\"notebook\":\"" + n.id + "\"}");
             renderSidebar();
             if (noteId == null) showHome();

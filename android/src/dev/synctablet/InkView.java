@@ -707,7 +707,7 @@ final class InkView extends View {
         }
         if (layer == null) return;
         Canvas c = layerCanvas;
-        c.drawColor(desk);
+        drawDesk(c);
         layerScale = scale;
         layerOx = ox;
         layerOy = oy;
@@ -734,7 +734,7 @@ final class InkView extends View {
         } else if (layerScale == scale) {
             c.drawBitmap(layer, ox - layerOx, oy - layerOy - pad, null);
         } else {
-            c.drawColor(desk);
+            drawDesk(c);
             float k = scale / layerScale;
             c.save();
             c.translate(ox - layerOx * k, oy - (layerOy + pad) * k);
@@ -759,7 +759,7 @@ final class InkView extends View {
 
     /** Las páginas a la vista, ya en la GPU. Con un zoom en curso se estiran las que hay. */
     private void drawPageNodes(Canvas c) {
-        c.drawColor(desk);
+        drawDesk(c);
         float top = -oy / scale, bottom = (getHeight() - oy) / scale;
         boolean zooming = scaler.isInProgress() || zoomAnimator != null;
         for (int i = 0; i < pages.size(); i++) {
@@ -857,6 +857,30 @@ final class InkView extends View {
         dashed.setColor(on ? 0xFF9CA3AF : 0xFF6B7280);
         label.setColor(on ? 0xFFD1D5DB : 0xFF4B5563);
         setBackgroundColor(desk);
+    }
+
+    private Bitmap deskPhoto;
+    private int deskShade;
+    private final Paint deskPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final android.graphics.Rect deskCrop = new android.graphics.Rect(), deskAll = new android.graphics.Rect();
+
+    /** Foto de fondo alrededor de las hojas, ya difuminada. `dim`: 0–100. */
+    void setDesk(Bitmap photo, int dim) {
+        deskPhoto = photo;
+        deskShade = Math.round(dim * 2.2f) << 24;
+    }
+
+    /** Lo que hay detrás de las hojas; la foto llena la pantalla sin deformarse. */
+    private void drawDesk(Canvas c) {
+        c.drawColor(desk);
+        if (deskPhoto == null) return;
+        int w = getWidth(), h = getHeight(), pw = deskPhoto.getWidth(), ph = deskPhoto.getHeight();
+        float k = Math.max((float) w / pw, (float) h / ph);
+        int cw = Math.round(w / k), ch = Math.round(h / k);
+        deskCrop.set((pw - cw) / 2, (ph - ch) / 2, (pw + cw) / 2, (ph + ch) / 2);
+        deskAll.set(0, 0, w, h);
+        c.drawBitmap(deskPhoto, deskCrop, deskAll, deskPaint);
+        if (deskShade != 0) c.drawColor(deskShade);
     }
 
     /** Deshacer y rehacer sobreviven a recrear la pantalla. */
