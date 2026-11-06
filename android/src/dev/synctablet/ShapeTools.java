@@ -94,7 +94,7 @@ final class ShapeTools {
         /** Dónde va su valor: al lado del componente. */
         float[] labelPosition() {
             float mx = (x0 + x1) / 2, my = (y0 + y1) / 2, dx = x1 - x0, dy = y1 - y0;
-            float len = Math.max(1, (float) Math.hypot(dx, dy)), off = isThreeTerminal() ? 0.62f * len + 18 : 46;
+            float len = Math.max(1, (float) Math.hypot(dx, dy)), off = isThreeTerminal() ? 0.62f * len + 18 : kind == VOLTAGE || kind == CURRENT || kind == AC ? 62 : 46;
             // Del lado de arriba, o del derecho si va vertical.
             float nx = -dy / len, ny = dx / len;
             if (ny > 0 || (ny == 0 && nx < 0)) { nx = -nx; ny = -ny; }
@@ -197,8 +197,21 @@ final class ShapeTools {
         if (grid > 0) {
             x0 = snap(x0, grid); y0 = snap(y0, grid);
             x1 = snap(x1, grid); y1 = snap(y1, grid);
-        } else if (kind == LINE || kind == ARROW || kind == DOUBLE_ARROW || kind >= RESISTOR) {
-            float[] end = snapAngle(x0, y0, x1, y1, kind >= RESISTOR ? 8 : 4);
+        }
+        if ((kind >= NPN && kind <= OPAMP) || kind == VOLTAGE || kind == CURRENT || kind == AC) {
+            // Un arrastre en diagonal es «de esta esquina a esta otra»: el símbolo queda derecho.
+            if (1.25f * Math.abs(x1 - x0) >= Math.abs(y1 - y0)) y1 = y0;
+            else x1 = x0;
+        } else if (grid > 0) {
+            return new Spec(kind, x0, y0, x1, y1, 0);
+        } else if (kind >= RESISTOR && kind <= SWITCH) {
+            // En un esquema solo se usan estas ocho direcciones.
+            double len = Math.hypot(x1 - x0, y1 - y0);
+            double r = Math.round(Math.atan2(y1 - y0, x1 - x0) / (Math.PI / 4)) * (Math.PI / 4);
+            x1 = x0 + (float) (len * Math.cos(r));
+            y1 = y0 + (float) (len * Math.sin(r));
+        } else if (kind == LINE || kind == ARROW || kind == DOUBLE_ARROW) {
+            float[] end = snapAngle(x0, y0, x1, y1, 4);
             x1 = end[0]; y1 = end[1];
         } else if (kind == RECT || kind == ELLIPSE) {
             float w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
@@ -340,7 +353,7 @@ final class ShapeTools {
                 p.up().to(0, -in).to(base, -in);
                 p.up().to(0, in).to(base, in);
                 p.up().to(tip, 0).to(len, 0);
-                float sx = base + 0.09f * len;
+                float sx = base + 0.15f * len;
                 p.up().to(sx - s, -in).to(sx + s, -in);
                 p.up().to(sx - s, in).to(sx + s, in);
                 p.up().to(sx, in - s).to(sx, in + s);

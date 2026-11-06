@@ -1044,6 +1044,19 @@ final class InkView extends View {
         s.shape = spec;
     }
 
+    /** Un cable o componente colocado desde el dock se une a los terminales que tiene cerca. */
+    private void hookEnds(Ink.Page page, Ink.Stroke s) {
+        ShapeTools.Spec spec = s.shape;
+        if (spec == null || (spec.kind != ShapeTools.LINE && (!spec.isComponent() || spec.isThreeTerminal()))) return;
+        float[] a = nearestAnchor(page, s, spec.x0, spec.y0, CIRCUIT_REACH);
+        float[] b = spec.kind == ShapeTools.GROUND ? null : nearestAnchor(page, s, spec.x1, spec.y1, CIRCUIT_REACH);
+        if (a == null && b == null) return;
+        if (a != null) spec = spec.withEnd(true, a[0], a[1]);
+        if (b != null) spec = spec.withEnd(false, b[0], b[1]);
+        s.replace(spec.points(), SHAPE_PRESSURE);
+        s.shape = spec;
+    }
+
     /** Una fuente se tumba si los cables cercanos le llegan por los lados. */
     private ShapeTools.Spec orientSource(Ink.Page page, ShapeTools.Spec v) {
         float cx = (v.x0 + v.x1) / 2, cy = (v.y0 + v.y1) / 2, r = Math.abs(v.y1 - v.y0) / 2;
@@ -1443,7 +1456,9 @@ final class InkView extends View {
         } else {
             mode = STROKE;
             boolean hl = tool == HIGHLIGHTER || (button(e) && buttonHold == HOLD_HIGHLIGHTER);
-            String kind = hl ? Ink.HIGHLIGHTER : tool == TAPE ? Ink.TAPE : penKind;
+            // La plumilla de caligrafía deforma las figuras, y un esquema pide trazo parejo.
+            boolean even = tool == SHAPE && (Ink.CALLIGRAPHY.equals(penKind) || shapeKind >= ShapeTools.RESISTOR);
+            String kind = hl ? Ink.HIGHLIGHTER : tool == TAPE ? Ink.TAPE : even ? Ink.PEN : penKind;
             int color = hl ? highlighterColor : tool == TAPE ? PageRenderer.TAPE_COLOR : penColor;
             float width = hl ? highlighterWidth : tool == TAPE ? 34 : penWidth;
             current = new Ink.Stroke(Ink.newId(), kind, color, width);
@@ -1895,6 +1910,7 @@ final class InkView extends View {
             return;
         }
         Ink.Page page = pages.get(currentPage);
+        if (dragged) hookEnds(page, s);
         if (snapped && !absorbed.isEmpty()) {
             // Sustituye a los trazos sueltos: deshacer los devuelve.
             String old = page.toJson();

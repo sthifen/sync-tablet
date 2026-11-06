@@ -188,6 +188,20 @@ public class ShapeTest {
         float[] lb = new ShapeTools.Spec(ShapeTools.RESISTOR,100,300,300,300,0).labelPosition(); expect("valor encima", lb[1] < 300 && Math.abs(lb[0]-200) < 1, lb[0] + "," + lb[1]);
         ShapeTools.Spec lab = new ShapeTools.Spec(ShapeTools.RESISTOR,0,0,10,0,0).withLabel("a");
         expect("el valor sigue al componente", "a".equals(lab.mapped(new float[]{1,0,0,1,5,5},0).label) && "a".equals(lab.withEnd(true,1,1).label), "");
+        ShapeTools.Spec up = ShapeTools.spec(ShapeTools.NPN, 100, 100, 360, 360, 0);
+        expect("transistor en diagonal queda derecho", up.y0 == up.y1 && up.x1 == 360, up.x1 + "," + up.y1);
+        ShapeTools.Spec tall = ShapeTools.spec(ShapeTools.OPAMP, 100, 100, 150, 400, 0);
+        expect("operacional casi vertical queda vertical", tall.x0 == tall.x1 && tall.y1 == 400, tall.x1 + "," + tall.y1);
+        ShapeTools.Spec onGrid = ShapeTools.spec(ShapeTools.NMOS, 41, 39, 322, 300, ShapeTools.GRID);
+        expect("transistor derecho también en cuadrícula", onGrid.y0 == onGrid.y1 && onGrid.x0 == 40 && onGrid.x1 == 320, onGrid.x0 + "," + onGrid.x1);
+        ShapeTools.Spec src = ShapeTools.spec(ShapeTools.VOLTAGE, 100, 100, 350, 350, 0);
+        expect("fuente en diagonal queda derecha", src.y0 == src.y1, src.x1 + "," + src.y1);
+        ShapeTools.Spec tie = ShapeTools.spec(ShapeTools.VOLTAGE, 100, 100, 349, 350, 0);
+        expect("diagonal casi exacta: horizontal", tie.y0 == tie.y1, tie.x1 + "," + tie.y1);
+        ShapeTools.Spec off = ShapeTools.spec(ShapeTools.RESISTOR, 100, 100, 300, 130, 0);
+        expect("resistencia casi horizontal", Math.abs(off.y1 - 100) < 0.01f, "" + off.y1);
+        ShapeTools.Spec cross = ShapeTools.spec(ShapeTools.RESISTOR, 100, 100, 300, 280, 0);
+        expect("resistencia a 45°", Math.abs((cross.x1 - 100) - (cross.y1 - 100)) < 0.01f, cross.x1 + "," + cross.y1);
         System.out.println(fails == 0 ? "TODO BIEN" : fails + " FALLOS");
     }
 }
