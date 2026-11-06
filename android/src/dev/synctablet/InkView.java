@@ -44,7 +44,17 @@ import java.util.Map;
  * página antes y después.
  */
 final class InkView extends View {
-    static final int PEN = 0, HIGHLIGHTER = 1, ERASER = 2, LASSO = 3, TEXT = 4, LASER = 5, TAPE = 6;
+    /** Presión fija de las figuras arrastradas. */
+    private static final float SHAPE_PRESSURE = 0.7f;
+    /** Tamaño mínimo (ancho + alto) para convertir sola una figura. */
+    private static final float MIN_AUTO_SHAPE = 70;
+    /** Lo más largo que mide una letra alta: una línea de más ya no lo es. */
+    private static final float MIN_AUTO_LINE = 45;
+    /** Cuánto recuerda las líneas para unirlas, y a qué distancia las pega. */
+    private static final long LINE_MEMORY_MS = 15000;
+    private static final float ATTACH = 16;
+
+    static final int PEN = 0, HIGHLIGHTER = 1, ERASER = 2, LASSO = 3, TEXT = 4, LASER = 5, TAPE = 6, SHAPE = 7;
 
     interface Listener {
         /** Un mensaje para el PC (trazo, borrado, página entera, láser). */
@@ -90,6 +100,8 @@ final class InkView extends View {
     boolean fingerDraws;
     /** Convertir cada trazo en figura si lo parece (sin tener que esperar). */
     boolean autoShapes;
+    /** Qué dibuja la herramienta de figuras (ShapeTools). */
+    int shapeKind = ShapeTools.RECT;
     /** Alto de la barra flotante: la primera página empieza debajo. */
     float topInset;
     /** Tras cada fotograma (para que el cristal de encima se actualice). */
@@ -126,6 +138,17 @@ final class InkView extends View {
     private int currentPage;
     private Ink.Stroke current;
     private boolean snapped;
+    /** Se está arrastrando una figura con la herramienta: de (shapeX, shapeY) al lápiz. */
+    private boolean shaping;
+    private float shapeX, shapeY;
+    /** Figura ya reconocida y con el lápiz aún apoyado: se ajusta hasta soltarlo. */
+    private float[] snapBase;
+    private String snapKind;
+    private float snapPressure, snapCx, snapCy, snapReach;
+    /** Trazos anteriores que esta figura sustituye al terminar. */
+    private final ArrayList<Ink.Stroke> absorbed = new ArrayList<>();
+    /** Líneas recién reconocidas: pueden cerrar un polígono o recibir una punta de flecha. */
+    private final ArrayDeque<RecentLine> recentLines = new ArrayDeque<>();
     private float holdX, holdY;
     private final Runnable holdCheck = this::snapIfHeld;
     private final LinkedHashMap<Ink.Page, ArrayList<Ink.Stroke>> erased = new LinkedHashMap<>();
@@ -632,7 +655,7 @@ final class InkView extends View {
             c.restore();
         }
         if (mode == STROKE && current != null && current.n > 0
-                && (Ink.HIGHLIGHTER.equals(current.tool) || Ink.TAPE.equals(current.tool))) {
+                && (Ink.HIGHLIGHTER.equals(current.tool) || Ink.TAPE.equals(current.tool) || shaping || snapped)) {
             onScreenPage(c, currentPage);
             renderer.drawStroke(c, current, false);
             c.restore();
@@ -852,6 +875,9 @@ final class InkView extends View {
             float width = hl ? highlighterWidth : tool == TAPE ? 34 : penWidth;
             current = new Ink.Stroke(Ink.newId(), kind, color, width);
             snapped = false;
+            shaping = tool == SHAPE && !hl;
+            snapBase = null;
+            absorbed.clear();
             holdX = holdY = Float.NaN;
         }
         move(e, idx, -1);
@@ -1058,9 +1084,24 @@ final class InkView extends View {
 
     private void addPoint(float docX, float y, float pressure) {
         Ink.Stroke s = current;
-        if (s == null || snapped) return;
+        if (s == null) return;
         float x = Math.max(0, Math.min(Ink.W, docX));
         y = Math.max(0, Math.min(Ink.H, y));
+        if (snapped) {
+            adjustSnapped(s, x, y);
+            return;
+        }
+        if (shaping) {
+            if (s.n == 0) {
+                shapeX = x;
+                shapeY = y;
+                s.add(x, y, SHAPE_PRESSURE);
+            } else {
+                s.replace(ShapeTools.build(shapeKind, shapeX, shapeY, x, y, gridOf(pages.get(currentPage))), SHAPE_PRESSURE);
+            }
+            invalidate();
+            return;
+        }
         if (Ink.TAPE.equals(s.tool)) {
             // La cinta va recta del principio al punto actual.
             if (s.n == 0) s.add(x, y, 1);
@@ -1090,12 +1131,56 @@ final class InkView extends View {
     }
 
     private void snapIfHeld() {
-        if (current == null || mode != STROKE || snapped || Ink.TAPE.equals(current.tool)) return;
+        if (current == null || mode != STROKE || snapped || shaping || Ink.TAPE.equals(current.tool)) return;
         if (toShape(current)) {
             snapped = true;
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-            redrawCurrent();
+            prepareAdjust(current);
+            renderLayer();
+            invalidate();
         }
+    }
+
+    /** Lo que cuenta para ajustar la figura mientras el lápiz sigue apoyado. */
+    private void prepareAdjust(Ink.Stroke s) {
+        snapBase = null;
+        if (!absorbed.isEmpty() || s.n < 2) return;
+        float[] xy = new float[2 * s.n];
+        float cx = 0, cy = 0;
+        for (int i = 0; i < s.n; i++) {
+            xy[2 * i] = s.x(i);
+            xy[2 * i + 1] = s.y(i);
+            cx += s.x(i) / s.n;
+            cy += s.y(i) / s.n;
+        }
+        snapBase = xy;
+        snapPressure = s.p(0);
+        snapCx = cx;
+        snapCy = cy;
+        snapReach = (float) Math.max(1, Math.hypot(holdX - cx, holdY - cy));
+    }
+
+    /** Una línea sigue al lápiz; lo demás crece o encoge desde su centro. */
+    private void adjustSnapped(Ink.Stroke s, float x, float y) {
+        if (snapBase == null) return;
+        if (ShapeRecognizer.LINE.equals(snapKind)) {
+            s.replace(ShapeRecognizer.line(snapBase[0], snapBase[1], x, y).xy, snapPressure);
+        } else {
+            float k = (float) Math.hypot(x - snapCx, y - snapCy) / snapReach;
+            k = Math.max(0.2f, Math.min(5, k));
+            float[] xy = new float[snapBase.length];
+            for (int i = 0; i < xy.length; i += 2) {
+                xy[i] = snapCx + (snapBase[i] - snapCx) * k;
+                xy[i + 1] = snapCy + (snapBase[i + 1] - snapCy) * k;
+            }
+            s.replace(xy, snapPressure);
+        }
+        invalidate();
+    }
+
+    /** Separación a la que ajustar las figuras en esta hoja; 0 si no tiene cuadrícula. */
+    private static float gridOf(Ink.Page page) {
+        return Ink.GRID.equals(page.background) || Ink.DOTS.equals(page.background) ? ShapeTools.GRID : 0;
     }
 
     private boolean toShape(Ink.Stroke s) {
@@ -1107,32 +1192,121 @@ final class InkView extends View {
             xy[2 * i + 1] = s.y(i);
             pressure += s.p(i);
         }
+        absorbed.clear();
         ShapeRecognizer.Shape shape = ShapeRecognizer.recognize(xy, s.n);
+        Ink.Page page = pages.get(currentPage);
+        dropStaleLines(page);
+        if (shape == null) {
+            shape = headOfLastLine(xy, s.n);
+        } else if (ShapeRecognizer.LINE.equals(shape.kind)) {
+            shape = attachLine(shape);
+            ShapeRecognizer.Shape closed = closeWithRecentLines(shape);
+            if (closed != null) shape = closed;
+        }
         if (shape == null) return false;
         s.replace(shape.xy, Math.max(0.5f, pressure / s.n));
+        snapKind = shape.kind;
         return true;
     }
 
-    private void redrawCurrent() {
-        renderLayer();
-        Ink.Stroke s = current;
-        if (s != null && !Ink.HIGHLIGHTER.equals(s.tool)) {
-            onLayerPage(currentPage);
-            renderer.drawStroke(layerCanvas, s, false);
-            layerCanvas.restore();
+    // ---- Figuras de varios trazos ----
+
+    /** Una línea reconocida y dónde empieza y acaba. */
+    private static final class RecentLine {
+        final Ink.Stroke stroke;
+        final long time;
+
+        RecentLine(Ink.Stroke s, long time) {
+            stroke = s;
+            this.time = time;
         }
-        invalidate();
+
+        float[] ends() {
+            return new float[] {stroke.x(0), stroke.y(0), stroke.x(stroke.n - 1), stroke.y(stroke.n - 1)};
+        }
+    }
+
+    /** Sólo valen las líneas recientes, de esta hoja y que sigan tal cual. */
+    private void dropStaleLines(Ink.Page page) {
+        long now = android.os.SystemClock.uptimeMillis();
+        recentLines.removeIf(l -> now - l.time > LINE_MEMORY_MS || !page.strokes.contains(l.stroke));
+    }
+
+    /** Pega las puntas de la línea nueva a las de las líneas recientes si casi se tocan. */
+    private ShapeRecognizer.Shape attachLine(ShapeRecognizer.Shape line) {
+        float[] xy = line.xy;
+        float x0 = xy[0], y0 = xy[1], x1 = xy[xy.length - 2], y1 = xy[xy.length - 1];
+        boolean moved = false;
+        for (RecentLine l : recentLines) {
+            float[] e = l.ends();
+            for (int i = 0; i < 4; i += 2) {
+                if (Math.hypot(x0 - e[i], y0 - e[i + 1]) < ATTACH) { x0 = e[i]; y0 = e[i + 1]; moved = true; }
+                if (Math.hypot(x1 - e[i], y1 - e[i + 1]) < ATTACH) { x1 = e[i]; y1 = e[i + 1]; moved = true; }
+            }
+        }
+        return moved ? new ShapeRecognizer.Shape(line.kind, ShapeTools.densify(new float[] {x0, y0, x1, y1})) : line;
+    }
+
+    /** ¿Esta línea cierra un triángulo o un cuadrilátero con las anteriores? */
+    private ShapeRecognizer.Shape closeWithRecentLines(ShapeRecognizer.Shape line) {
+        ArrayList<RecentLine> all = new ArrayList<>(recentLines);
+        float[] mine = {line.xy[0], line.xy[1], line.xy[line.xy.length - 2], line.xy[line.xy.length - 1]};
+        for (int count = 3; count >= 2; count--) {
+            if (all.size() < count) continue;
+            List<RecentLine> last = all.subList(all.size() - count, all.size());
+            float[][] lines = new float[count + 1][];
+            for (int i = 0; i < count; i++) lines[i] = last.get(i).ends();
+            lines[count] = mine;
+            ShapeRecognizer.Shape closed = ShapeRecognizer.closeLines(lines);
+            if (closed == null) continue;
+            for (RecentLine l : last) absorbed.add(l.stroke);
+            return closed;
+        }
+        return null;
+    }
+
+    /** ¿Este trazo es la punta de flecha de la última línea? */
+    private ShapeRecognizer.Shape headOfLastLine(float[] xy, int n) {
+        RecentLine last = recentLines.peekLast();
+        if (last == null) return null;
+        float[] e = last.ends();
+        ShapeRecognizer.Shape arrow = ShapeRecognizer.arrowHead(e[0], e[1], e[2], e[3], xy, n);
+        if (arrow != null) absorbed.add(last.stroke);
+        return arrow;
     }
 
     private void finishStroke() {
         Ink.Stroke s = current;
         current = null;
-        if (s != null && !snapped && autoShapes && !Ink.TAPE.equals(s.tool) && toShape(s)) renderLayer();
-        if (s == null || s.n == 0 || (Ink.TAPE.equals(s.tool) && s.n < 2)) {
+        boolean dragged = shaping;
+        shaping = false;
+        // Una letra no es una figura: la conversión automática pide cierto tamaño.
+        boolean bigEnough = s != null && ((s.maxX - s.minX) + (s.maxY - s.minY) >= MIN_AUTO_SHAPE
+                || Math.max(s.maxX - s.minX, s.maxY - s.minY) >= MIN_AUTO_LINE);
+        if (s != null && !dragged && !snapped && autoShapes && bigEnough && !Ink.TAPE.equals(s.tool) && toShape(s)) {
+            snapped = true;
+            renderLayer();
+        }
+        boolean tiny = dragged && s != null && (s.maxX - s.minX) + (s.maxY - s.minY) < 6;
+        if (s == null || s.n == 0 || tiny || (Ink.TAPE.equals(s.tool) && s.n < 2)) {
             renderLayer();
             return;
         }
         Ink.Page page = pages.get(currentPage);
+        if (snapped && !absorbed.isEmpty()) {
+            // Sustituye a los trazos sueltos: deshacer los devuelve.
+            String old = page.toJson();
+            page.strokes.removeAll(absorbed);
+            absorbed.clear();
+            recentLines.clear();
+            page.strokes.add(s);
+            commitSnapshot(page, old);
+            return;
+        }
+        if (snapped && ShapeRecognizer.LINE.equals(snapKind)) {
+            recentLines.addLast(new RecentLine(s, android.os.SystemClock.uptimeMillis()));
+            while (recentLines.size() > 3) recentLines.removeFirst();
+        }
         page.strokes.add(s);
         onLayerPage(currentPage);
         renderer.drawStroke(layerCanvas, s, false);

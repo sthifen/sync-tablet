@@ -48,6 +48,12 @@ import java.util.LinkedHashSet;
  * acciones (abajo).
  */
 public final class PageActivity extends Activity implements InkView.Listener, SyncClient.Listener {
+    private static final int[] SHAPE_KINDS = {ShapeTools.LINE, ShapeTools.ARROW, ShapeTools.DOUBLE_ARROW, ShapeTools.RECT,
+            ShapeTools.ELLIPSE, ShapeTools.TRIANGLE, ShapeTools.AXES, ShapeTools.CROSS_AXES};
+    private static final int[] SHAPE_ICONS = {IconView.S_LINE, IconView.S_ARROW, IconView.S_ARROW2, IconView.S_RECT,
+            IconView.S_ELLIPSE, IconView.S_TRIANGLE, IconView.S_AXES, IconView.S_CROSS};
+    private static final String[] SHAPE_NAMES = {"Línea", "Flecha", "Flecha doble", "Rectángulo", "Elipse", "Triángulo",
+            "Ejes", "Ejes cruzados"};
     private static final int[] PEN_COLORS = {0xFF111827, 0xFF2563EB, 0xFFDC2626, 0xFF16A34A, 0xFF7C3AED, 0xFFEA580C};
     private static final int[] HL_COLORS = {0xFFFFD60A, 0xFF4ADE80, 0xFFF472B6, 0xFF60A5FA};
     private static final float[] PEN_WIDTHS = {2f, 3.5f, 6f};
@@ -72,7 +78,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private int index;
 
     private InkView ink;
-    private GlassLayout bar, palette, selectionBar;
+    private GlassLayout bar, palette, selectionBar, shapeBar;
+    private IconView autoShapeButton;
+    private final IconView[] shapeButtons = new IconView[SHAPE_KINDS.length];
     private TextView title;
     private IconView pen, highlighter, eraser, lasso, shapes, text, tape, laser, undo, redo, finger;
     private View dot;
@@ -104,6 +112,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         ink.highlighterWidth = prefs.getFloat("hlWidth", HL_WIDTHS[1]);
         ink.fingerDraws = prefs.getBoolean("finger", false);
         ink.autoShapes = prefs.getBoolean("shapes", false);
+        ink.shapeKind = prefs.getInt("shapeKind", ShapeTools.RECT);
         ink.eraseMode = prefs.getInt("eraseMode", InkView.ERASE_STROKES);
         ink.buttonHold = prefs.getInt("buttonHold", InkView.HOLD_ERASE);
         customColor = prefs.getInt("customColor", 0xFF0EA5E9);
@@ -123,6 +132,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 Ui.dp(this, 56), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         root.addView(selectionBar, selLp);
         selectionBar.setVisibility(View.GONE);
+        shapeBar = shapeBar();
+        root.addView(shapeBar, selLp);
+        shapeBar.setVisibility(View.GONE);
         root.setOnApplyWindowInsetsListener((v, in) -> {
             @SuppressWarnings("deprecation") int top = in.getSystemWindowInsetTop();
             @SuppressWarnings("deprecation") int left = in.getSystemWindowInsetLeft();
@@ -134,6 +146,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             bar.setLayoutParams(barLp);
             palette.setLayoutParams(palLp);
             selectionBar.setLayoutParams(selLp);
+            shapeBar.setLayoutParams(selLp);
             bar.maxWidth = getResources().getDisplayMetrics().widthPixels - 2 * gap;
             ink.topInset = top + gap + Ui.dp(this, 56);
             return in;
@@ -143,6 +156,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             bar.postInvalidateOnAnimation();
             palette.postInvalidateOnAnimation();
             if (selectionBar.getVisibility() == View.VISIBLE) selectionBar.postInvalidateOnAnimation();
+            if (shapeBar.getVisibility() == View.VISIBLE) shapeBar.postInvalidateOnAnimation();
         };
         setContentView(root);
         loadPages(index);
@@ -231,7 +245,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             else setTool(InkView.ERASER);
         });
         lasso = icon(IconView.LASSO, "Lazo: seleccionar, mover y cambiar tamaño", v -> setTool(InkView.LASSO));
-        shapes = icon(IconView.SHAPES, "Figuras", v -> shapeGallery());
+        shapes = icon(IconView.SHAPES, "Figuras (toca otra vez para la galería)", v -> {
+            if (ink.tool == InkView.SHAPE) shapeGallery();
+            else setTool(InkView.SHAPE);
+        });
         text = icon(IconView.TEXT, "Texto: toca la hoja para escribir", v -> setTool(InkView.TEXT));
         tape = icon(IconView.TAPE, "Cinta: tapa algo; tócala con el dedo para destaparla", v -> setTool(InkView.TAPE));
         laser = icon(IconView.LASER, "Puntero láser (también en el PC)", v -> setTool(InkView.LASER));
@@ -303,6 +320,32 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         return g;
     }
 
+    /** Barra de la herramienta de figuras: un toque elige qué se arrastra. */
+    private GlassLayout shapeBar() {
+        GlassLayout g = new GlassLayout(this, ink, Ui.GLASS_LIGHT, Ui.dp(this, 28));
+        g.setGravity(Gravity.CENTER_VERTICAL);
+        g.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), 0);
+        for (int i = 0; i < SHAPE_KINDS.length; i++) {
+            int kind = SHAPE_KINDS[i];
+            shapeButtons[i] = icon(SHAPE_ICONS[i], SHAPE_NAMES[i], v -> {
+                ink.shapeKind = kind;
+                prefs.edit().putInt("shapeKind", kind).apply();
+                refreshTools();
+            });
+            g.addView(shapeButtons[i]);
+        }
+        g.addView(sep(false));
+        autoShapeButton = icon(IconView.WAND, "Convertir mis trazos en figuras", v -> {
+            ink.autoShapes = !ink.autoShapes;
+            prefs.edit().putBoolean("shapes", ink.autoShapes).apply();
+            refreshTools();
+            Ui.toast(this, ink.autoShapes ? "Tus trazos se convierten en figuras" : "Deja el lápiz quieto al final del trazo para convertirlo");
+        });
+        g.addView(autoShapeButton);
+        g.addView(icon(IconView.MORE, "Galería de figuras", v -> shapeGallery()));
+        return g;
+    }
+
     private void setTool(int t) {
         ink.tool = t;
         if (t != InkView.LASSO) ink.clearSelection();
@@ -317,12 +360,15 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         text.setActive(ink.tool == InkView.TEXT);
         tape.setActive(ink.tool == InkView.TAPE);
         laser.setActive(ink.tool == InkView.LASER);
-        shapes.setActive(ink.autoShapes);
+        shapes.setActive(ink.tool == InkView.SHAPE);
+        shapeBar.setVisibility(ink.tool == InkView.SHAPE ? View.VISIBLE : View.GONE);
+        for (int i = 0; i < SHAPE_KINDS.length; i++) shapeButtons[i].setActive(ink.shapeKind == SHAPE_KINDS[i]);
+        autoShapeButton.setActive(ink.autoShapes);
         finger.setActive(ink.fingerDraws);
         colors.removeAllViews();
         widths.removeAllViews();
         boolean hl = ink.tool == InkView.HIGHLIGHTER;
-        boolean coloring = ink.tool == InkView.PEN || hl || ink.tool == InkView.TEXT || ink.hasSelection();
+        boolean coloring = ink.tool == InkView.PEN || ink.tool == InkView.SHAPE || hl || ink.tool == InkView.TEXT || ink.hasSelection();
         palette.setVisibility(coloring ? View.VISIBLE : View.GONE);
         if (!coloring) return;
         int currentColor = hl ? ink.highlighterColor : ink.penColor;
@@ -473,7 +519,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             refreshTools();
         });
         box.addView(auto);
-        box.addView(Ui.text(this, "Sin activarlo: deja el lápiz quieto al final de un trazo y se convierte. "
+        box.addView(Ui.text(this, "Sin activarlo: deja el lápiz quieto al final de un trazo y se convierte; sin soltar, lo ajustas. "
+                + "Varias líneas seguidas cierran un polígono, y una «V» en la punta de una línea la hace flecha. "
                 + "O toca una figura para insertarla (después la mueves y cambias de tamaño).", 13, 0xFF9AA9AE, false));
         AlertDialog[] dialog = new AlertDialog[1];
         int cell = Ui.dp(this, 86);

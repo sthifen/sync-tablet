@@ -4,20 +4,23 @@ import java.util.ArrayList;
 
 /**
  * Reconoce figuras dibujadas a mano y devuelve su versión perfecta: línea,
- * círculo, elipse, rectángulo, triángulo o polígono de 4 lados.
+ * flecha, círculo, elipse (también inclinada), rectángulo, triángulo y polígonos.
+ * También une trazos seguidos: líneas que cierran un polígono, o una línea y
+ * la «V» de su punta.
  *
  * Java puro (sin Android) para poder probarlo en el PC.
  *
  * 1. Se remuestrea el trazo a puntos equidistantes.
- * 2. Abierto y casi recto → línea (horizontal/vertical si está a menos de 6°).
+ * 2. Abierto: con cabeza → flecha; casi recto → línea (ángulos de 15° exactos).
  * 3. Cerrado: se buscan las esquinas (Douglas-Peucker sobre el contorno).
  *    Contorno suave que se ajusta a una elipse → círculo o elipse;
  *    3 esquinas → triángulo; 4 → rectángulo (si los ángulos son rectos) o
- *    cuadrilátero.
+ *    cuadrilátero; 5 o 6 → polígono.
  */
 final class ShapeRecognizer {
     static final String LINE = "línea", CIRCLE = "círculo", ELLIPSE = "elipse",
-            RECTANGLE = "rectángulo", TRIANGLE = "triángulo", QUAD = "cuadrilátero";
+            RECTANGLE = "rectángulo", TRIANGLE = "triángulo", QUAD = "cuadrilátero",
+            POLYGON = "polígono", ARROW = "flecha";
 
     static final class Shape {
         final String kind;
@@ -40,6 +43,10 @@ final class ShapeRecognizer {
         float[] p = resample(xy, n, N);
         float gap = dist(p[0], p[1], p[2 * N - 2], p[2 * N - 1]);
 
+        // Flecha de un solo trazo: la cabeza va después de la línea.
+        Shape arrow = gap > 0.5f * length ? singleArrow(p, length) : null;
+        if (arrow != null) return arrow;
+
         // Línea: casi recta y abierta.
         float dev = maxDeviation(p, N, 0, N - 1);
         if (gap > 0.6f * length && dev < 0.05f * length) return line(p[0], p[1], p[2 * N - 2], p[2 * N - 1]);
@@ -48,13 +55,18 @@ final class ShapeRecognizer {
         // Contorno cerrado: esquinas por Douglas-Peucker.
         ArrayList<Integer> corners = closedCorners(p, N, 0.045f * length);
         float ellipseError = ellipseError(p, N);
+        // Un hexágono se parece a un círculo: gana lo que mejor se ajuste al trazo.
+        if ((corners.size() == 5 || corners.size() == 6) && evenSides(p, corners, length)
+                && polygonError(p, corners) < 0.95f * ellipseDistance(p, ellipseError)) {
+            return closed(POLYGON, vertices(p, corners));
+        }
         if (ellipseError < 0.11f && corners.size() >= 5) return ellipse(p, N);
         // Polígono sólo si sus esquinas son afiladas: los extremos de una
         // elipse alargada también salen como «esquinas», pero suaves.
         boolean sharp = true;
         for (int c : corners) sharp &= turn(p, N, c) < 125;
-        if (sharp && corners.size() == 3) return polygon(TRIANGLE, p, corners);
-        if (sharp && corners.size() == 4) return quad(p, corners);
+        if (sharp && corners.size() == 3) return triangle(vertices(p, corners));
+        if (sharp && corners.size() == 4) return quad(vertices(p, corners));
         // Con 3 o 4 esquinas dudosas, elipse sólo si lo es claramente; si no,
         // mejor no tocar el trazo que convertirlo en otra cosa.
         boolean fewCorners = corners.size() == 3 || corners.size() == 4;
@@ -64,82 +76,232 @@ final class ShapeRecognizer {
 
     // ---- Figuras ----
 
-    private static Shape line(float x0, float y0, float x1, float y1) {
+    /** Línea recta; casi a un múltiplo de 15°, exacta (a 6° si es horizontal o vertical). */
+    static Shape line(float x0, float y0, float x1, float y1) {
         double angle = Math.toDegrees(Math.atan2(y1 - y0, x1 - x0));
         double a = ((angle % 90) + 90) % 90;
         if (a < 6 || a > 84) {
             if (Math.abs(x1 - x0) > Math.abs(y1 - y0)) y1 = y0 = (y0 + y1) / 2;
             else x1 = x0 = (x0 + x1) / 2;
+        } else {
+            float[] end = ShapeTools.snapAngle(x0, y0, x1, y1, 3);
+            x1 = end[0];
+            y1 = end[1];
         }
-        return new Shape(LINE, densify(new float[] {x0, y0, x1, y1}, false));
+        return new Shape(LINE, ShapeTools.densify(new float[] {x0, y0, x1, y1}));
     }
 
+    /** Elipse ajustada por sus ejes principales, así que puede salir inclinada. */
     private static Shape ellipse(float[] p, int n) {
-        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
-        for (int i = 0; i < n; i++) {
-            minX = Math.min(minX, p[2 * i]); maxX = Math.max(maxX, p[2 * i]);
-            minY = Math.min(minY, p[2 * i + 1]); maxY = Math.max(maxY, p[2 * i + 1]);
-        }
-        float cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, rx = (maxX - minX) / 2, ry = (maxY - minY) / 2;
+        float[] e = ellipseFit(p, n);
+        float cx = e[0], cy = e[1], rx = e[2], ry = e[3];
+        double tilt = e[4];
         String kind = ELLIPSE;
         if (Math.abs(rx - ry) < 0.15f * Math.max(rx, ry)) {
             rx = ry = (rx + ry) / 2;
+            tilt = 0;
             kind = CIRCLE;
+        } else {
+            // Casi derecha: derecha.
+            double d = Math.toDegrees(tilt) % 90;
+            if (Math.abs(d) < 7 || Math.abs(d) > 83) {
+                double q = Math.round(Math.toDegrees(tilt) / 90) * 90;
+                tilt = Math.toRadians(q);
+            }
         }
         // Empieza donde empezó el trazo y gira en el mismo sentido.
-        double start = Math.atan2(p[1] - cy, p[0] - cx);
+        double dx = p[0] - cx, dy = p[1] - cy, cos = Math.cos(tilt), sin = Math.sin(tilt);
+        double start = Math.atan2((-dx * sin + dy * cos) / ry, (dx * cos + dy * sin) / rx);
         double dir = signedArea(p, n) >= 0 ? 1 : -1;
-        int m = 72;
-        float[] out = new float[2 * (m + 1)];
-        for (int i = 0; i <= m; i++) {
-            double t = start + dir * 2 * Math.PI * i / m;
-            out[2 * i] = cx + rx * (float) Math.cos(t);
-            out[2 * i + 1] = cy + ry * (float) Math.sin(t);
-        }
-        return new Shape(kind, out);
+        return new Shape(kind, ShapeTools.ellipse(cx, cy, rx, ry, tilt, start, dir));
     }
 
-    private static Shape polygon(String kind, float[] p, ArrayList<Integer> corners) {
-        float[] v = new float[2 * corners.size() + 2];
+    /** Las esquinas como x, y seguidos. */
+    private static float[] vertices(float[] p, ArrayList<Integer> corners) {
+        float[] v = new float[2 * corners.size()];
         for (int i = 0; i < corners.size(); i++) {
             v[2 * i] = p[2 * corners.get(i)];
             v[2 * i + 1] = p[2 * corners.get(i) + 1];
         }
-        v[v.length - 2] = v[0];
-        v[v.length - 1] = v[1];
-        return new Shape(kind, densify(v, true));
+        return v;
     }
 
-    /** Cuatro esquinas: rectángulo si los ángulos son casi rectos. */
-    private static Shape quad(float[] p, ArrayList<Integer> corners) {
-        float[] c = new float[8];
-        for (int i = 0; i < 4; i++) {
-            c[2 * i] = p[2 * corners.get(i)];
-            c[2 * i + 1] = p[2 * corners.get(i) + 1];
+    private static Shape closed(String kind, float[] v) {
+        float[] c = java.util.Arrays.copyOf(v, v.length + 2);
+        c[v.length] = v[0];
+        c[v.length + 1] = v[1];
+        return new Shape(kind, ShapeTools.densify(c));
+    }
+
+    /** ¿Ningún lado es diminuto? Si lo hay, es un garabato con picos. */
+    private static boolean evenSides(float[] p, ArrayList<Integer> corners, float length) {
+        for (int k = 0; k < corners.size(); k++) {
+            int a = corners.get(k), b = corners.get((k + 1) % corners.size());
+            if (dist(p[2 * a], p[2 * a + 1], p[2 * b], p[2 * b + 1]) < 0.08f * length) return false;
         }
+        return true;
+    }
+
+    /** Lados casi horizontales o verticales, exactos; casi recto, recto. */
+    private static Shape triangle(float[] v) {
+        for (int i = 0; i < 3; i++) {
+            int j = (i + 1) % 3;
+            double a = ((Math.toDegrees(Math.atan2(v[2 * j + 1] - v[2 * i + 1], v[2 * j] - v[2 * i])) % 90) + 90) % 90;
+            if (a >= 6 && a <= 84) continue;
+            int axis = Math.abs(v[2 * j] - v[2 * i]) > Math.abs(v[2 * j + 1] - v[2 * i + 1]) ? 1 : 0;
+            v[2 * i + axis] = v[2 * j + axis] = (v[2 * i + axis] + v[2 * j + axis]) / 2;
+        }
+        for (int i = 0; i < 3; i++) {
+            int a = (i + 2) % 3, b = (i + 1) % 3;
+            double ang = angle(v[2 * a] - v[2 * i], v[2 * a + 1] - v[2 * i + 1], v[2 * b] - v[2 * i], v[2 * b + 1] - v[2 * i + 1]);
+            if (Math.abs(ang - 90) > 8 || Math.abs(ang - 90) < 0.01) continue;
+            // Ángulo recto exacto: el vértice cae en el círculo cuyo diámetro es el lado opuesto.
+            float mx = (v[2 * a] + v[2 * b]) / 2, my = (v[2 * a + 1] + v[2 * b + 1]) / 2;
+            float k = dist(v[2 * a], v[2 * a + 1], v[2 * b], v[2 * b + 1]) / 2 / Math.max(1, dist(mx, my, v[2 * i], v[2 * i + 1]));
+            v[2 * i] = mx + (v[2 * i] - mx) * k;
+            v[2 * i + 1] = my + (v[2 * i + 1] - my) * k;
+            break;
+        }
+        return closed(TRIANGLE, v);
+    }
+
+    /** Cuatro esquinas: rectángulo exacto (girado o no) si los ángulos son casi rectos. */
+    private static Shape quad(float[] c) {
         for (int i = 0; i < 4; i++) {
             int a = (i + 3) % 4, b = (i + 1) % 4;
             double ang = angle(c[2 * a] - c[2 * i], c[2 * a + 1] - c[2 * i + 1], c[2 * b] - c[2 * i], c[2 * b + 1] - c[2 * i + 1]);
-            if (Math.abs(ang - 90) > 18) return polygon(QUAD, p, corners);
+            if (Math.abs(ang - 90) > 18) return closed(QUAD, c);
         }
-        // ¿Alineado con los ejes? Entonces su caja, exacta.
-        double rot = Math.toDegrees(Math.atan2(c[3] - c[1], c[2] - c[0]));
-        double r = ((rot % 90) + 90) % 90;
-        if (r < 10 || r > 80) {
-            float minX = Math.min(Math.min(c[0], c[2]), Math.min(c[4], c[6]));
-            float maxX = Math.max(Math.max(c[0], c[2]), Math.max(c[4], c[6]));
-            float minY = Math.min(Math.min(c[1], c[3]), Math.min(c[5], c[7]));
-            float maxY = Math.max(Math.max(c[1], c[3]), Math.max(c[5], c[7]));
-            float x0 = c[0] < (minX + maxX) / 2 ? minX : maxX, y0 = c[1] < (minY + maxY) / 2 ? minY : maxY;
-            float x1 = x0 == minX ? maxX : minX, y1 = y0 == minY ? maxY : minY;
-            // Mismo sentido de giro que el trazo.
-            boolean ccw = signedArea(p, N) >= 0;
-            float[] v = ccw == ((x0 == minX) == (y0 == minY))
-                    ? new float[] {x0, y0, x1, y0, x1, y1, x0, y1, x0, y0}
-                    : new float[] {x0, y0, x0, y1, x1, y1, x1, y0, x0, y0};
-            return new Shape(RECTANGLE, densify(v, true));
+        // Giro medio de los cuatro lados (módulo 90°).
+        double sx = 0, sy = 0;
+        for (int i = 0; i < 4; i++) {
+            int j = (i + 1) % 4;
+            double t = 4 * Math.atan2(c[2 * j + 1] - c[2 * i + 1], c[2 * j] - c[2 * i]);
+            sx += Math.cos(t);
+            sy += Math.sin(t);
         }
-        return polygon(RECTANGLE, p, corners);
+        double rot = Math.atan2(sy, sx) / 4;
+        if (Math.abs(Math.toDegrees(rot)) < 10) rot = 0;
+        double cos = Math.cos(rot), sin = Math.sin(rot);
+        // Las esquinas en los ejes del rectángulo.
+        float[] u = new float[4], w = new float[4];
+        float mu = 0, mw = 0;
+        for (int i = 0; i < 4; i++) {
+            u[i] = (float) (c[2 * i] * cos + c[2 * i + 1] * sin);
+            w[i] = (float) (-c[2 * i] * sin + c[2 * i + 1] * cos);
+            mu += u[i] / 4;
+            mw += w[i] / 4;
+        }
+        float halfU = 0, halfW = 0;
+        for (int i = 0; i < 4; i++) {
+            halfU += Math.abs(u[i] - mu) / 4;
+            halfW += Math.abs(w[i] - mw) / 4;
+        }
+        if (Math.abs(halfU - halfW) < 0.08f * Math.max(halfU, halfW)) halfU = halfW = (halfU + halfW) / 2;
+        float[] v = new float[8];
+        for (int i = 0; i < 4; i++) {
+            float a = mu + Math.signum(u[i] - mu) * halfU, b = mw + Math.signum(w[i] - mw) * halfW;
+            v[2 * i] = (float) (a * cos - b * sin);
+            v[2 * i + 1] = (float) (a * sin + b * cos);
+        }
+        return closed(RECTANGLE, v);
+    }
+
+    // ---- Flechas y figuras de varios trazos ----
+
+    /** Una línea y, en el mismo trazo, su cabeza: inicio, punta, barba, (punta), barba. */
+    private static Shape singleArrow(float[] p, float length) {
+        boolean[] keep = new boolean[N];
+        keep[0] = keep[N - 1] = true;
+        simplify(p, 0, N - 1, 0.03f * length, keep);
+        ArrayList<Integer> v = new ArrayList<>();
+        for (int i = 0; i < N; i++) if (keep[i]) v.add(i);
+        if (v.size() != 4 && v.size() != 5) return null;
+        int s = 0, t = v.get(1), a = v.get(2), b = N - 1;
+        float sx = p[0], sy = p[1], tx = p[2 * t], ty = p[2 * t + 1];
+        float shaft = dist(sx, sy, tx, ty);
+        if (shaft < 0.55f * length) return null;
+        if (!barbs(sx, sy, tx, ty, p[2 * a], p[2 * a + 1], p[2 * b], p[2 * b + 1], shaft)) return null;
+        return arrowShape(sx, sy, tx, ty);
+    }
+
+    /**
+     * La «V» dibujada en otro trazo, en una punta de la línea (x0, y0)–(x1, y1).
+     * Null si no es la cabeza de esa línea.
+     */
+    static Shape arrowHead(float x0, float y0, float x1, float y1, float[] xy, int n) {
+        if (n < 3) return null;
+        float length = pathLength(xy, n), shaft = dist(x0, y0, x1, y1);
+        if (length < 12 || length > 1.2f * shaft) return null;
+        float[] p = resample(xy, n, N);
+        // La esquina de la V es el punto más lejano a la recta entre sus extremos.
+        int apex = 0;
+        float best = -1;
+        for (int i = 1; i < N - 1; i++) {
+            float d = segmentDistance(p[2 * i], p[2 * i + 1], p[0], p[1], p[2 * N - 2], p[2 * N - 1]);
+            if (d > best) { best = d; apex = i; }
+        }
+        float ax = p[2 * apex], ay = p[2 * apex + 1];
+        if (maxDeviation(p, N, 0, apex) > 0.15f * length || maxDeviation(p, N, apex, N - 1) > 0.15f * length) return null;
+        float reach = Math.max(18, 0.2f * shaft);
+        boolean atEnd = dist(ax, ay, x1, y1) <= dist(ax, ay, x0, y0);
+        float tx = atEnd ? x1 : x0, ty = atEnd ? y1 : y0, sx = atEnd ? x0 : x1, sy = atEnd ? y0 : y1;
+        if (dist(ax, ay, tx, ty) > reach) return null;
+        if (!barbs(sx, sy, tx, ty, p[0], p[1], p[2 * N - 2], p[2 * N - 1], shaft)) return null;
+        return arrowShape(sx, sy, tx, ty);
+    }
+
+    /** ¿(ax, ay) y (bx, by) salen de la punta hacia atrás, uno a cada lado de la línea? */
+    private static boolean barbs(float sx, float sy, float tx, float ty, float ax, float ay, float bx, float by, float shaft) {
+        float dx = sx - tx, dy = sy - ty;
+        double angA = angle(dx, dy, ax - tx, ay - ty), angB = angle(dx, dy, bx - tx, by - ty);
+        if (angA < 10 || angA > 75 || angB < 10 || angB > 75) return false;
+        if (dist(tx, ty, ax, ay) > 0.6f * shaft || dist(tx, ty, bx, by) > 0.6f * shaft) return false;
+        return (dx * (ay - ty) - dy * (ax - tx)) * (dx * (by - ty) - dy * (bx - tx)) < 0;
+    }
+
+    private static Shape arrowShape(float sx, float sy, float tx, float ty) {
+        float[] end = ShapeTools.snapAngle(sx, sy, tx, ty, 4);
+        return new Shape(ARROW, ShapeTools.arrow(sx, sy, end[0], end[1], false));
+    }
+
+    /**
+     * Líneas sueltas {x0, y0, x1, y1} que se tocan por las puntas y cierran un
+     * triángulo o un cuadrilátero, en cualquier orden. Null si no cierran.
+     */
+    static Shape closeLines(float[][] lines) {
+        int n = lines.length;
+        if (n != 3 && n != 4) return null;
+        float perimeter = 0;
+        for (float[] l : lines) perimeter += dist(l[0], l[1], l[2], l[3]);
+        float tol = Math.max(16, 0.1f * perimeter);
+        boolean[] used = new boolean[n];
+        used[0] = true;
+        float[] v = new float[2 * n];
+        float tailX = lines[0][2], tailY = lines[0][3];
+        for (int k = 1; k < n; k++) {
+            int next = -1;
+            boolean flip = false;
+            float best = tol;
+            for (int i = 0; i < n; i++) {
+                if (used[i]) continue;
+                float a = dist(tailX, tailY, lines[i][0], lines[i][1]), b = dist(tailX, tailY, lines[i][2], lines[i][3]);
+                if (a <= best) { best = a; next = i; flip = false; }
+                if (b <= best) { best = b; next = i; flip = true; }
+            }
+            if (next < 0) return null;
+            used[next] = true;
+            float[] l = lines[next];
+            float headX = flip ? l[2] : l[0], headY = flip ? l[3] : l[1];
+            v[2 * k] = (tailX + headX) / 2;
+            v[2 * k + 1] = (tailY + headY) / 2;
+            tailX = flip ? l[0] : l[2];
+            tailY = flip ? l[1] : l[3];
+        }
+        if (dist(tailX, tailY, lines[0][0], lines[0][1]) > tol) return null;
+        v[0] = (tailX + lines[0][0]) / 2;
+        v[1] = (tailY + lines[0][1]) / 2;
+        return n == 3 ? triangle(v) : quad(v);
     }
 
     // ---- Geometría ----
@@ -195,19 +357,63 @@ final class ShapeRecognizer {
         return angle(p[2 * a] - p[2 * i], p[2 * a + 1] - p[2 * i + 1], p[2 * b] - p[2 * i], p[2 * b + 1] - p[2 * i + 1]);
     }
 
-    /** Error medio respecto a la elipse de la caja (0 = perfecta). */
-    private static float ellipseError(float[] p, int n) {
-        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+    /** Elipse de ejes principales: centro x, y, radios y giro en radianes. */
+    private static float[] ellipseFit(float[] p, int n) {
+        double mx = 0, my = 0;
+        for (int i = 0; i < n; i++) { mx += p[2 * i]; my += p[2 * i + 1]; }
+        mx /= n;
+        my /= n;
+        double sxx = 0, syy = 0, sxy = 0;
         for (int i = 0; i < n; i++) {
-            minX = Math.min(minX, p[2 * i]); maxX = Math.max(maxX, p[2 * i]);
-            minY = Math.min(minY, p[2 * i + 1]); maxY = Math.max(maxY, p[2 * i + 1]);
+            double dx = p[2 * i] - mx, dy = p[2 * i + 1] - my;
+            sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
         }
-        float cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, rx = Math.max(1, (maxX - minX) / 2), ry = Math.max(1, (maxY - minY) / 2);
+        double tilt = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+        double cos = Math.cos(tilt), sin = Math.sin(tilt);
+        double minU = Double.MAX_VALUE, maxU = -Double.MAX_VALUE, minV = Double.MAX_VALUE, maxV = -Double.MAX_VALUE;
+        for (int i = 0; i < n; i++) {
+            double dx = p[2 * i] - mx, dy = p[2 * i + 1] - my;
+            double u = dx * cos + dy * sin, v = -dx * sin + dy * cos;
+            minU = Math.min(minU, u); maxU = Math.max(maxU, u);
+            minV = Math.min(minV, v); maxV = Math.max(maxV, v);
+        }
+        // El centro de la caja girada: el trazo puede repetir un trozo y mover la media.
+        double cu = (minU + maxU) / 2, cv = (minV + maxV) / 2;
+        return new float[] {(float) (mx + cu * cos - cv * sin), (float) (my + cu * sin + cv * cos),
+                (float) Math.max(1, (maxU - minU) / 2), (float) Math.max(1, (maxV - minV) / 2), (float) tilt};
+    }
+
+    /** Distancia media del trazo al polígono de sus esquinas. */
+    private static float polygonError(float[] p, ArrayList<Integer> corners) {
+        float sum = 0;
+        for (int i = 0; i < N; i++) {
+            float best = Float.MAX_VALUE;
+            for (int k = 0; k < corners.size(); k++) {
+                int a = corners.get(k), b = corners.get((k + 1) % corners.size());
+                best = Math.min(best, segmentDistance(p[2 * i], p[2 * i + 1], p[2 * a], p[2 * a + 1], p[2 * b], p[2 * b + 1]));
+            }
+            sum += best;
+        }
+        return sum / N;
+    }
+
+    /** El error de la elipse en las mismas unidades que polygonError. */
+    private static float ellipseDistance(float[] p, float error) {
+        float[] e = ellipseFit(p, N);
+        return error * (float) Math.sqrt(e[2] * e[3]);
+    }
+
+    /** Error medio respecto a la elipse ajustada (0 = perfecta). */
+    private static float ellipseError(float[] p, int n) {
+        float[] e = ellipseFit(p, n);
+        float rx = e[2], ry = e[3];
         if (Math.min(rx, ry) / Math.max(rx, ry) < 0.15f) return 1;
+        double cos = Math.cos(e[4]), sin = Math.sin(e[4]);
         float sum = 0;
         for (int i = 0; i < n; i++) {
-            float dx = (p[2 * i] - cx) / rx, dy = (p[2 * i + 1] - cy) / ry;
-            sum += Math.abs((float) Math.sqrt(dx * dx + dy * dy) - 1);
+            double dx = p[2 * i] - e[0], dy = p[2 * i + 1] - e[1];
+            double u = (dx * cos + dy * sin) / rx, v = (-dx * sin + dy * cos) / ry;
+            sum += Math.abs((float) Math.sqrt(u * u + v * v) - 1);
         }
         return sum / n;
     }
@@ -272,25 +478,6 @@ final class ShapeRecognizer {
             out[2 * k + 1] = xy[2 * n - 1];
         }
         return out;
-    }
-
-    /** Puntos cada ~8 unidades sobre los lados (el grosor sale uniforme). */
-    private static float[] densify(float[] v, boolean closed) {
-        ArrayList<Float> out = new ArrayList<>();
-        int verts = v.length / 2;
-        for (int i = 0; i + 1 < verts; i++) {
-            float x0 = v[2 * i], y0 = v[2 * i + 1], x1 = v[2 * i + 2], y1 = v[2 * i + 3];
-            int steps = Math.max(1, (int) (dist(x0, y0, x1, y1) / 8));
-            for (int s = 0; s < steps; s++) {
-                out.add(x0 + (x1 - x0) * s / steps);
-                out.add(y0 + (y1 - y0) * s / steps);
-            }
-        }
-        out.add(v[v.length - 2]);
-        out.add(v[v.length - 1]);
-        float[] r = new float[out.size()];
-        for (int i = 0; i < r.length; i++) r[i] = out.get(i);
-        return r;
     }
 
     static float dist(float ax, float ay, float bx, float by) {

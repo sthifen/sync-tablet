@@ -14,7 +14,8 @@ import android.view.View;
 final class IconView extends View {
     static final int BACK = 0, PEN = 1, HIGHLIGHTER = 2, ERASER = 3, SHAPES = 4, UNDO = 5, REDO = 6,
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
-            LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29;
+            LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29,
+            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38;
 
     private final int icon;
     private final Path path;
@@ -197,6 +198,38 @@ final class IconView extends View {
                 p.cubicTo(6.6f, 5, 4, 8.5f, 4.3f, 12.6f);
                 p.cubicTo(4.7f, 17.2f, 8.6f, 20.6f, 13.2f, 20.3f);
                 p.cubicTo(16, 20.1f, 18.4f, 18.6f, 19.5f, 14.5f);
+                break;
+            case S_LINE:
+                p.moveTo(5, 19); p.lineTo(19, 5);
+                break;
+            case S_ARROW:
+                p.moveTo(5, 19); p.lineTo(19, 5); p.moveTo(11.5f, 5); p.lineTo(19, 5); p.lineTo(19, 12.5f);
+                break;
+            case S_ARROW2:
+                p.moveTo(5, 19); p.lineTo(19, 5); p.moveTo(13, 5); p.lineTo(19, 5); p.lineTo(19, 11);
+                p.moveTo(5, 13); p.lineTo(5, 19); p.lineTo(11, 19);
+                break;
+            case S_RECT:
+                p.addRect(new RectF(4, 6.5f, 20, 17.5f), Path.Direction.CW);
+                break;
+            case S_ELLIPSE:
+                p.addOval(new RectF(3.5f, 6, 20.5f, 18), Path.Direction.CW);
+                break;
+            case S_TRIANGLE:
+                p.moveTo(12, 5); p.lineTo(20.5f, 19); p.lineTo(3.5f, 19); p.close();
+                break;
+            case S_AXES:
+                p.moveTo(2.5f, 7); p.lineTo(5, 4); p.lineTo(7.5f, 7); p.moveTo(5, 4); p.lineTo(5, 19); p.lineTo(20, 19);
+                p.moveTo(17, 16.5f); p.lineTo(20, 19); p.lineTo(17, 21.5f);
+                break;
+            case S_CROSS:
+                p.moveTo(12, 21); p.lineTo(12, 3); p.moveTo(9.5f, 5.5f); p.lineTo(12, 3); p.lineTo(14.5f, 5.5f);
+                p.moveTo(3, 12); p.lineTo(21, 12); p.moveTo(18.5f, 9.5f); p.lineTo(21, 12); p.lineTo(18.5f, 14.5f);
+                break;
+            case WAND:
+                p.moveTo(4, 20); p.lineTo(15, 9);
+                p.moveTo(17.5f, 3); p.lineTo(17.5f, 7); p.moveTo(15.5f, 5); p.lineTo(19.5f, 5);
+                p.moveTo(20, 11); p.lineTo(20, 14); p.moveTo(18.5f, 12.5f); p.lineTo(21.5f, 12.5f);
                 break;
             case SIDEBAR:
                 p.addRoundRect(new RectF(3.5f, 5, 20.5f, 19), 2.5f, 2.5f, Path.Direction.CW);

@@ -27,6 +27,23 @@ public class ShapeTest {
         if (!ok) fails++;
         System.out.printf("%s %-28s → %s%n", ok ? "✓" : "✗", name, got == null ? "(nada)" : got);
     }
+    static void expect(String name, boolean ok, String got) {
+        if (!ok) fails++;
+        System.out.printf("%s %-28s %s%n", ok ? "✓" : "✗", name, got);
+    }
+    static float extent(float[] xy, int axis) { float lo = 1e9f, hi = -1e9f; for (int i = axis; i < xy.length; i += 2) { lo = Math.min(lo, xy[i]); hi = Math.max(hi, xy[i]); } return hi - lo; }
+    static double angle(float[] xy) { return Math.toDegrees(Math.atan2(xy[xy.length-1]-xy[1], xy[xy.length-2]-xy[0])); }
+    /** ¿Las esquinas de este contorno forman ángulos rectos? */
+    static boolean square(float[] xy) {
+        List<float[]> c = new ArrayList<>();
+        for (int i = 2; i + 3 < xy.length; i += 2) {
+            double a = Math.atan2(xy[i+1]-xy[i-1], xy[i]-xy[i-2]), b = Math.atan2(xy[i+3]-xy[i+1], xy[i+2]-xy[i]);
+            double t = Math.abs(Math.toDegrees(Math.atan2(Math.sin(b-a), Math.cos(b-a))));
+            if (t > 30) c.add(new float[]{(float) t});
+        }
+        for (float[] t : c) if (Math.abs(t[0] - 90) > 0.5) return false;
+        return c.size() >= 3;
+    }
     public static void main(String[] a) {
         check("círculo", ell(300,300,100,100,3,2*Math.PI*1.03), ShapeRecognizer.CIRCLE);
         check("elipse", ell(300,300,180,90,3,2*Math.PI*1.02), ShapeRecognizer.ELLIPSE);
@@ -43,6 +60,51 @@ public class ShapeTest {
         check("garabato", ell(300,300,60,40,25,2*Math.PI*3), null);
         float[] tiny = poly(new float[][]{{100,100},{108,104}},0.3f);
         check("punto/trazo diminuto", tiny, null);
+        // Nuevas: elipse inclinada, flechas, polígonos, varios trazos, ángulos exactos.
+        double c30 = Math.cos(Math.PI/6), s30 = Math.sin(Math.PI/6);
+        float[] tilted = ell(0,0,180,80,2.5f,2*Math.PI*1.03);
+        for (int i = 0; i < tilted.length; i += 2) { float x = tilted[i], y = tilted[i+1]; tilted[i] = 400 + (float)(x*c30 - y*s30); tilted[i+1] = 400 + (float)(x*s30 + y*c30); }
+        check("elipse inclinada 30°", tilted, ShapeRecognizer.ELLIPSE);
+        ShapeRecognizer.Shape te = ShapeRecognizer.recognize(tilted, tilted.length/2);
+        if (te != null) { float bw = extent(te.xy, 0), bh = extent(te.xy, 1); expect("la elipse sigue inclinada", bw > 305 && bw < 340 && bh > 210 && bh < 245, bw + "×" + bh); }
+        check("flecha un trazo", poly(new float[][]{{100,300},{500,300},{460,270},{500,300},{462,332}},1.2f), ShapeRecognizer.ARROW);
+        check("flecha cabeza triángulo", poly(new float[][]{{100,120},{420,350},{365,345},{400,295}},1.2f), ShapeRecognizer.ARROW, true);
+        check("círculo tembloroso", ell(300,300,120,120,5,2*Math.PI*1.03), ShapeRecognizer.CIRCLE, true);
+        check("círculo pequeño", ell(300,300,45,45,2,2*Math.PI*1.03), ShapeRecognizer.CIRCLE, true);
+        check("pentágono", poly(new float[][]{{300,100},{490,238},{418,462},{182,462},{110,238},{298,104}},2f), ShapeRecognizer.POLYGON, true);
+        check("hexágono", poly(new float[][]{{200,100},{400,100},{500,273},{400,446},{200,446},{100,273},{202,102}},2f), ShapeRecognizer.POLYGON, true);
+        // Rectángulo girado: lados perpendiculares de verdad.
+        ShapeRecognizer.Shape rr = ShapeRecognizer.recognize(poly(new float[][]{{200,100},{450,244},{350,417},{100,273},{198,103}},2.5f), 81);
+        expect("rectángulo girado exacto", rr != null && square(rr.xy), rr == null ? "nada" : rr.kind);
+        // Línea a 45°, exacta.
+        ShapeRecognizer.Shape l45 = ShapeRecognizer.recognize(poly(new float[][]{{100,100},{400,405}},1.5f), 21);
+        expect("línea a 45° exacta", l45 != null && Math.abs(angle(l45.xy) - 45) < 0.2, l45 == null ? "nada" : "" + angle(l45.xy));
+        // Trazos sueltos.
+        float[][] box = {{100,100,300,104},{302,100,298,300},{300,302,102,298},{98,300,102,98}};
+        ShapeRecognizer.Shape cl = ShapeRecognizer.closeLines(box);
+        expect("4 líneas → rectángulo", cl != null && cl.kind.equals(ShapeRecognizer.RECTANGLE), cl == null ? "nada" : cl.kind);
+        float[][] shuffled = {box[2], box[0], box[3], box[1]};
+        cl = ShapeRecognizer.closeLines(shuffled);
+        expect("4 líneas desordenadas", cl != null && cl.kind.equals(ShapeRecognizer.RECTANGLE), cl == null ? "nada" : cl.kind);
+        cl = ShapeRecognizer.closeLines(new float[][]{{100,400,400,400},{400,402,250,120},{252,118,98,398}});
+        expect("3 líneas → triángulo", cl != null && cl.kind.equals(ShapeRecognizer.TRIANGLE), cl == null ? "nada" : cl.kind);
+        expect("3 líneas abiertas no cierran", ShapeRecognizer.closeLines(new float[][]{{0,0,100,0},{300,0,400,0},{0,300,100,300}}) == null, "");
+        float[] v = poly(new float[][]{{460,262},{500,300},{458,338}},1f);
+        ShapeRecognizer.Shape h = ShapeRecognizer.arrowHead(100,300,500,300,v,v.length/2);
+        expect("línea + V → flecha", h != null && h.kind.equals(ShapeRecognizer.ARROW), "");
+        float[] far = poly(new float[][]{{260,262},{300,300},{258,338}},1f);
+        expect("V en medio no es flecha", ShapeRecognizer.arrowHead(100,300,500,300,far,far.length/2) == null, "");
+        float[] curve = ell(500,300,40,40,1,Math.PI);
+        expect("curva no es cabeza", ShapeRecognizer.arrowHead(100,300,500,300,curve,curve.length/2) == null, "");
+        // Herramientas de arrastrar.
+        float[] sq = ShapeTools.build(ShapeTools.RECT, 100,100,300,306,0);
+        expect("casi cuadrado → cuadrado", Math.abs(extent(sq,0) - extent(sq,1)) < 0.5f, extent(sq,0) + "×" + extent(sq,1));
+        float[] g = ShapeTools.build(ShapeTools.LINE, 103,118,297,283,ShapeTools.GRID);
+        expect("cuadrícula", g[0] == 120 && g[1] == 120 && g[g.length-2] == 280 && g[g.length-1] == 280, g[0] + "," + g[1]);
+        float[] la = ShapeTools.build(ShapeTools.LINE, 100,100,400,412,0);
+        expect("ángulo de arrastre a 45°", Math.abs(angle(la) - 45) < 0.2, "" + angle(la));
+        for (int k = 0; k <= ShapeTools.CROSS_AXES; k++) { float[] o = ShapeTools.build(k, 200,200,420,380,0); boolean fin = o.length >= 4; for (float x : o) fin &= !Float.isNaN(x); expect("herramienta " + k, fin, ""); }
+        expect("arrastre sin mover no falla", ShapeTools.build(ShapeTools.ARROW,50,50,50,50,0).length >= 4, "");
         System.out.println(fails == 0 ? "TODO BIEN" : fails + " FALLOS");
     }
 }
