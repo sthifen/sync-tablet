@@ -63,6 +63,60 @@ final class SyncClient {
     private SyncClient(Context app) {
         this.app = app;
         this.prefs = app.getSharedPreferences("sync", Context.MODE_PRIVATE);
+        token = prefs.getString("token", "");
+    }
+
+    /** Llave para hablar con el PC por WiFi; por USB la da él mismo. */
+    static volatile String token = "";
+
+    private void saveToken(String t) {
+        token = t;
+        prefs.edit().putString("token", t).apply();
+    }
+
+    /** Por USB el PC entrega su token: así el WiFi queda vinculado sin hacer nada. */
+    private void fetchUsbToken() {
+        try {
+            String t = pairRequest("127.0.0.1", null);
+            if (t != null) saveToken(t);
+        } catch (IOException | JSONException e) {
+            // Sin PC por el cable.
+        }
+    }
+
+    /** Canjea el código que enseña el PC. Devuelve si quedó vinculada. */
+    boolean pair(String host, String code) {
+        try {
+            String t = pairRequest(host, code);
+            if (t == null) return false;
+            saveToken(t);
+            return true;
+        } catch (IOException | JSONException e) {
+            return false;
+        }
+    }
+
+    private static String pairRequest(String host, String code) throws IOException, JSONException {
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("http://" + host + ":" + PORT + "/api/pair").openConnection();
+        c.setConnectTimeout(1500);
+        c.setReadTimeout(3000);
+        try {
+            if (code != null) {
+                c.setRequestMethod("POST");
+                c.setDoOutput(true);
+                c.setRequestProperty("Content-Type", "application/json");
+                c.getOutputStream().write(new JSONObject().put("code", code).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (c.getResponseCode() != 200) return null;
+            java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+            try (java.io.InputStream in = c.getInputStream()) {
+                byte[] b = new byte[1024];
+                for (int k; (k = in.read(b)) > 0; ) body.write(b, 0, k);
+            }
+            return new JSONObject(body.toString("UTF-8")).optString("token", null);
+        } finally {
+            c.disconnect();
+        }
     }
 
     String wifiHost() {
@@ -133,7 +187,9 @@ final class SyncClient {
             String wifi = wifiHost();
             if (!wifi.isEmpty()) hosts.add(wifi);
             for (String host : hosts) {
-                try (WebSocketClient ws = WebSocketClient.connect(host, PORT, "/ws/ink", 1500)) {
+                if (host.equals("127.0.0.1")) fetchUsbToken();
+                String path = token.isEmpty() ? "/ws/ink" : "/ws/ink?token=" + token;
+                try (WebSocketClient ws = WebSocketClient.connect(host, PORT, path, 1500)) {
                     SyncClient.host = host;
                     session(ws, host.equals("127.0.0.1") ? "USB" : "WiFi " + host);
                 } catch (IOException e) {

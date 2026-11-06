@@ -259,6 +259,12 @@ a { color: inherit; }
 .emoji-grid button:hover { background: var(--hover); }
 
 /* ---------- Búsqueda ---------- */
+.pair-link { background: none; border: 0; padding: 4px 0 0; font: inherit; color: var(--muted, #777); cursor: pointer; text-decoration: underline; }
+.pair-box { background: var(--bg, #fff); color: inherit; border-radius: 12px; padding: 20px 24px; width: min(380px, calc(100vw - 32px)); }
+.pair-box h2 { margin: 0 0 8px; font-size: 18px; }
+.pair-field { display: flex; justify-content: space-between; gap: 16px; margin: 8px 0; }
+.pair-field b { font-size: 18px; letter-spacing: .04em; }
+.pair-note { font-size: 13px; opacity: .7; }
 .modal-back { position: fixed; inset: 0; z-index: 70; background: var(--overlay); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
 .search-box { width: min(620px, calc(100vw - 24px)); background: var(--card); border-radius: 12px; box-shadow: var(--shadow-card); overflow: hidden; }
 .search-box input { width: 100%; height: 52px; border: 0; outline: 0; padding: 0 18px; font: 400 17px var(--font); color: var(--text); background: transparent; border-bottom: 1px solid var(--line); }
@@ -337,6 +343,7 @@ a { color: inherit; }
     <div class="side-sep"></div>
     <div class="side-foot">
       <div class="row"><span class="dot" id="conn-dot"></span><span id="conn-text">Conectando con el PC…</span></div>
+      <button class="row pair-link" id="pair-open" type="button">Conectar por WiFi</button>
       <div class="dir" id="dir"></div>
     </div>
   </aside>
@@ -390,6 +397,16 @@ a { color: inherit; }
 </main>
 
 <div class="menu" id="menu" hidden></div>
+<div class="modal-back" id="pair" hidden>
+  <div class="pair-box">
+    <h2>Conectar la tablet por WiFi</h2>
+    <p>En la tablet, toca el icono de WiFi y escribe:</p>
+    <p class="pair-field"><span>IP de este PC</span><b id="pair-ip">—</b></p>
+    <p class="pair-field"><span>Código</span><b id="pair-code">—</b></p>
+    <p class="pair-note">Si ya la conectaste por cable, basta la IP.</p>
+    <button type="button" id="pair-close">Cerrar</button>
+  </div>
+</div>
 <div class="modal-back" id="search" hidden>
   <div class="search-box" role="dialog" aria-label="Buscar">
     <input id="search-input" type="text" placeholder="Busca notas y cuadernos…" autocomplete="off">
@@ -1507,6 +1524,16 @@ a { color: inherit; }
 
   /* ================================================================ arranque */
   function start() {
+    var pairBox = $("pair");
+    $("pair-open").addEventListener("click", function () {
+      fetch("/api/pair/code", { cache: "no-store" }).then(json).then(function (p) {
+        $("pair-code").textContent = p.code;
+        $("pair-ip").textContent = p.ip || "—";
+        pairBox.hidden = false;
+      });
+    });
+    $("pair-close").addEventListener("click", function () { pairBox.hidden = true; });
+    pairBox.addEventListener("click", function (e) { if (e.target === pairBox) pairBox.hidden = true; });
     var noteInUrl = (location.pathname.match(/^\/n\/([^\/?#]+)/) || [])[1];
     var tabletInUrl = new URLSearchParams(location.search).get("tablet");
     var last = null;

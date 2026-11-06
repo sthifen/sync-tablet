@@ -1116,14 +1116,29 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     private void askWifi() {
         EditText e = field(sync.wifiHost());
-        e.setHint("192.168.1.20");
+        e.setHint("IP del PC, como 192.168.1.20");
         e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        EditText code = field("");
+        code.setHint("Código de 6 dígitos");
+        code.setInputType(InputType.TYPE_CLASS_NUMBER);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(e);
+        box.addView(code);
         new AlertDialog.Builder(this)
-                .setTitle("IP del PC")
-                .setMessage("Por cable USB no hace falta. Por WiFi, escribe la IP del PC donde corre synctablet "
-                        + "(mírala en el PC con «ip addr»).")
-                .setView(e)
-                .setPositiveButton("Guardar", (d, w) -> sync.setWifiHost(e.getText().toString()))
+                .setTitle("Conectar por WiFi")
+                .setMessage("Si ya conectaste la tablet por cable, basta la IP. Si no, escribe también el código: "
+                        + "los dos salen en el PC, en «Conectar por WiFi».")
+                .setView(box)
+                .setPositiveButton("Guardar", (d, w) -> {
+                    String host = e.getText().toString().trim(), digits = code.getText().toString().trim();
+                    sync.setWifiHost(host);
+                    if (digits.isEmpty()) return;
+                    new Thread(() -> {
+                        boolean ok = sync.pair(host, digits);
+                        runOnUiThread(() -> Ui.toast(this, ok ? "Tablet vinculada" : "No se pudo vincular: revisa la IP y el código"));
+                    }, "pair").start();
+                })
                 .setNegativeButton("Cancelar", null)
                 .show();
     }

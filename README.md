@@ -53,7 +53,7 @@
 1. En el PC: `./synctablet` (deja la ventana abierta).
 2. En la tablet: instala `synctablet.apk` y conecta el cable USB con la
    *depuración USB* activada (como en [Encaje](https://github.com/sthifen/encaje)).
-   Por WiFi: en la app, botón **WiFi** y la IP del PC.
+   Por WiFi: en la app, botón **WiFi**, con la IP del PC y, si la tablet nunca se conectó por cable, el código que sale en el visor (**Conectar por WiFi**).
 3. Escribe. Abre `http://localhost:8788` en el PC para verlo en vivo.
 
 ## Compilar

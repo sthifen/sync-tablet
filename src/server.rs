@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
 
+use crate::auth::{self, Auth};
 use crate::ink::{Applied, Msg};
 use crate::notes::{Notes, Update};
 use crate::store::Store;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub live: broadcast::Sender<String>,
     /// Tablets conectadas ahora, para el visor que se abre a mitad.
     pub devices: Mutex<Vec<String>>,
+    pub auth: Auth,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -46,6 +48,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/asset/{file}", get(asset))
         .route("/ws/ink", get(ws_ink))
         .route("/ws/live", get(ws_live))
+        .route("/api/pair", get(pair_usb).post(pair_code))
+        .route("/api/pair/code", get(pair_show))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard))
         .with_state(state)
 }
 
@@ -56,6 +61,66 @@ async fn index() -> Response {
 async fn font() -> Response {
     const INTER: &[u8] = include_bytes!("../web/fonts/InterVariable.woff2");
     ([(header::CONTENT_TYPE, "font/woff2"), (header::CACHE_CONTROL, "max-age=31536000, immutable")], INTER).into_response()
+}
+
+// ------------------------------------------------------------- emparejado
+
+/// La tablet por USB (llega como este mismo PC) recibe el token sin más.
+async fn pair_usb(State(s): State<Arc<AppState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if !auth::is_local(&peer) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    axum::Json(json!({ "token": s.auth.token() })).into_response()
+}
+
+#[derive(Deserialize)]
+struct PairRequest {
+    code: String,
+}
+
+/// Por WiFi, el código que enseña el visor del PC se canjea por el token.
+async fn pair_code(State(s): State<Arc<AppState>>, axum::Json(req): axum::Json<PairRequest>) -> Response {
+    match s.auth.redeem(&req.code) {
+        Some(token) => axum::Json(json!({ "token": token })).into_response(),
+        None => StatusCode::FORBIDDEN.into_response(),
+    }
+}
+
+/// El código, sólo para el visor abierto en este PC.
+async fn pair_show(State(s): State<Arc<AppState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if !auth::is_local(&peer) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    axum::Json(json!({ "code": s.auth.code(), "ip": lan_ip() })).into_response()
+}
+
+/// La IP de este PC en su red local. Se pregunta por el camino hacia la puerta
+/// de enlace y no hacia internet, que puede ir por una VPN a la que la tablet no
+/// llega. Conectar un socket UDP no envía nada.
+fn lan_ip() -> Option<String> {
+    let routes = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
+    let target = default_gateway(&routes).unwrap_or(std::net::Ipv4Addr::new(192, 0, 2, 1));
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect((target, 9)).ok()?;
+    Some(socket.local_addr().ok()?.ip().to_string())
+}
+
+/// La puerta de enlace de la ruta por defecto con menor métrica.
+fn default_gateway(routes: &str) -> Option<std::net::Ipv4Addr> {
+    routes
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let (destination, gateway, metric) = (*f.get(1)?, *f.get(2)?, *f.get(6)?);
+            if destination != "00000000" || gateway == "00000000" {
+                return None;
+            }
+            let ip = u32::from_str_radix(gateway, 16).ok()?;
+            Some((metric.parse::<u32>().ok()?, std::net::Ipv4Addr::from(ip.to_le_bytes())))
+        })
+        .min_by_key(|(metric, _)| *metric)
+        .map(|(_, ip)| ip)
 }
 
 // ------------------------------------------------------------------ notas
@@ -345,5 +410,21 @@ fn handle(s: &AppState, msg: &Msg, raw: &str) -> anyhow::Result<Option<String>> 
             };
             Ok(want(vec![page]))
         }
+    }
+}
+
+#[cfg(test)]
+mod lan_tests {
+    use super::default_gateway;
+
+    #[test]
+    fn elige_la_puerta_de_enlace_de_menor_metrica() {
+        let routes = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n\
+                      CloudflareWARP\t00000000\t00000000\t0001\t0\t0\t0\t00000000\n\
+                      wlp4s0\t00000000\t0200A8C0\t0003\t0\t0\t600\t00000000\n\
+                      eno1\t00000000\t0100A8C0\t0003\t0\t0\t100\t00000000\n\
+                      eno1\t0000A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\n";
+        assert_eq!(default_gateway(routes), Some(std::net::Ipv4Addr::new(192, 168, 0, 1)));
+        assert_eq!(default_gateway(""), None);
     }
 }

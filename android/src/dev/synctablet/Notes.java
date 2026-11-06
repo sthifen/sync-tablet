@@ -331,6 +331,8 @@ final class Notes {
         c.setConnectTimeout(3000);
         c.setReadTimeout(8000);
         c.setRequestMethod(method);
+        String token = SyncClient.token;
+        if (!token.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + token);
         try {
             if (body != null) {
                 c.setDoOutput(true);
