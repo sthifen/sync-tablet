@@ -119,6 +119,47 @@ final class InkView extends View {
     private boolean fitted;
     private int pendingScroll = -1;
 
+    /**
+     * Cada página vive en la GPU como textura (RenderNode): se graba una vez y
+     * desplazarla sólo la mueve. Antes de Android 10 se usa `layer`, un bitmap
+     * dibujado por la CPU.
+     */
+    private static final boolean GPU = android.os.Build.VERSION.SDK_INT >= 29;
+    private static final int MAX_NODES = 5;
+    /** Sobre este tamaño la página no se guarda como textura: se repinta su grabación. */
+    private static final long MAX_TEXTURE_PIXELS = 24_000_000L;
+
+    private static final class PageNode {
+        final android.graphics.RenderNode node = new android.graphics.RenderNode("page");
+        /** Lo escrito desde la última grabación: repintar la textura entera por cada trazo se notaría. */
+        final android.graphics.RenderNode recent = new android.graphics.RenderNode("recent");
+        float scale;
+        boolean dirty = true;
+        /** Trazos que ya están en la textura. */
+        int baked;
+
+        void discard() {
+            node.discardDisplayList();
+            recent.discardDisplayList();
+        }
+    }
+
+    /** Sin escribir este rato, lo reciente se funde con la textura. */
+    private static final long BAKE_DELAY_MS = 1500;
+    /** Escribiendo sin parar, cada tantos trazos se funden de todos modos. */
+    private static final int MAX_RECENT = 40;
+    private final Runnable bake = this::bakeRecent;
+
+    /** Las más recientes primero en salir por el otro lado: orden de acceso. */
+    private final LinkedHashMap<Ink.Page, PageNode> nodes = new LinkedHashMap<Ink.Page, PageNode>(8, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Ink.Page, PageNode> eldest) {
+            boolean full = size() > MAX_NODES;
+            if (full) eldest.getValue().discard();
+            return full;
+        }
+    };
+
     private Bitmap layer;
     private Canvas layerCanvas;
     private float layerScale, layerOx, layerOy;
@@ -218,6 +259,12 @@ final class InkView extends View {
                 zoomAround(d.getFocusX(), d.getFocusY(), d.getScaleFactor());
                 return true;
             }
+
+            @Override
+            public void onScaleEnd(ScaleGestureDetector d) {
+                // Termina el zoom: las páginas se graban nítidas a la escala nueva.
+                invalidate();
+            }
         });
         setFocusable(true);
     }
@@ -234,6 +281,8 @@ final class InkView extends View {
     void setPages(List<Ink.Page> list, int show) {
         pages.clear();
         pages.addAll(list);
+        for (PageNode n : nodes.values()) n.discard();
+        nodes.clear();
         current = null;
         mode = NONE;
         pointerId = -1;
@@ -520,7 +569,7 @@ final class InkView extends View {
         }
         clampView(false);
         pad = h / 2;
-        if (layer == null || layer.getWidth() != w || layer.getHeight() != h + 2 * pad) {
+        if (!GPU && (layer == null || layer.getWidth() != w || layer.getHeight() != h + 2 * pad)) {
             if (layer != null) layer.recycle();
             layer = Bitmap.createBitmap(w, h + 2 * pad, Bitmap.Config.ARGB_8888);
             layerCanvas = new Canvas(layer);
@@ -596,12 +645,16 @@ final class InkView extends View {
     }
 
     private void afterScroll() {
+        if (GPU) {
+            invalidate();
+            return;
+        }
         if (layerScale != scale || Math.abs(ox - layerOx) > 1 || Math.abs(oy - layerOy) > pad * 0.7f) renderLayer();
         else invalidate();
     }
 
     private boolean layerAligned() {
-        return layerScale == scale && layerOx == ox && layerOy == oy;
+        return GPU || layerScale == scale && layerOx == ox && layerOy == oy;
     }
 
     // ---- Dibujo ----
@@ -631,6 +684,11 @@ final class InkView extends View {
     }
 
     private void renderLayer() {
+        if (GPU) {
+            for (PageNode n : nodes.values()) n.dirty = true;
+            invalidate();
+            return;
+        }
         if (layer == null) return;
         Canvas c = layerCanvas;
         c.drawColor(DESK);
@@ -651,8 +709,13 @@ final class InkView extends View {
 
     @Override
     protected void onDraw(Canvas c) {
-        if (layer == null) return;
-        if (layerScale == scale) {
+        if (GPU) {
+            if (pages.isEmpty()) return;
+            drawPageNodes(c);
+            layerScale = scale;
+        } else if (layer == null) {
+            return;
+        } else if (layerScale == scale) {
             c.drawBitmap(layer, ox - layerOx, oy - layerOy - pad, null);
         } else {
             c.drawColor(DESK);
@@ -664,7 +727,7 @@ final class InkView extends View {
             c.restore();
         }
         if (mode == STROKE && current != null && current.n > 0
-                && (Ink.HIGHLIGHTER.equals(current.tool) || Ink.TAPE.equals(current.tool) || shaping || snapped)) {
+                && (GPU || Ink.HIGHLIGHTER.equals(current.tool) || Ink.TAPE.equals(current.tool) || shaping || snapped)) {
             onScreenPage(c, currentPage);
             renderer.drawStroke(c, current, false);
             c.restore();
@@ -673,7 +736,96 @@ final class InkView extends View {
         drawSelection(c);
         drawLasers(c);
         drawPull(c);
-        if (onFrame != null && c.isHardwareAccelerated()) onFrame.run();
+        // Escribiendo, lo que hay tras el cristal no cambia: no hace falta repintarlo.
+        if (onFrame != null && c.isHardwareAccelerated() && (mode == NONE || mode == DRAG)) onFrame.run();
+    }
+
+    /** Las páginas a la vista, ya en la GPU. Con un zoom en curso se estiran las que hay. */
+    private void drawPageNodes(Canvas c) {
+        c.drawColor(DESK);
+        float top = -oy / scale, bottom = (getHeight() - oy) / scale;
+        boolean zooming = scaler.isInProgress();
+        for (int i = 0; i < pages.size(); i++) {
+            float y = pageTop(i);
+            if (y > bottom || y + Ink.H + 8 < top) continue;
+            PageNode n = pageNode(i, zooming);
+            c.save();
+            c.translate(ox, oy + y * scale);
+            if (n.scale != scale) c.scale(scale / n.scale, scale / n.scale);
+            c.drawRenderNode(n.node);
+            if (n.recent.hasDisplayList()) c.drawRenderNode(n.recent);
+            c.restore();
+        }
+    }
+
+    private PageNode pageNode(int i, boolean zooming) {
+        Ink.Page page = pages.get(i);
+        PageNode n = nodes.get(page);
+        if (n == null) {
+            n = new PageNode();
+            nodes.put(page, n);
+        }
+        if (n.dirty || n.scale == 0 || (n.scale != scale && !zooming)) record(n, i);
+        return n;
+    }
+
+    private void record(PageNode n, int i) {
+        n.scale = scale;
+        n.dirty = false;
+        n.baked = pages.get(i).strokes.size();
+        n.recent.discardDisplayList();
+        int w = (int) Math.ceil((Ink.W + 4) * scale), h = (int) Math.ceil((Ink.H + 6) * scale);
+        n.node.setPosition(0, 0, w, h);
+        n.node.setUseCompositingLayer((long) w * h <= MAX_TEXTURE_PIXELS, null);
+        Canvas r = n.node.beginRecording(w, h);
+        try {
+            r.scale(scale, scale);
+            r.drawRect(3, 5, Ink.W + 3, Ink.H + 5, shade);
+            renderer.drawPage(r, pages.get(i), scale, hidden(i), revealed);
+        } finally {
+            n.node.endRecording();
+        }
+    }
+
+    /** Un trazo nuevo en la página: va a la capa ligera. */
+    private void strokeAdded(Ink.Page page) {
+        PageNode n = nodes.get(page);
+        if (n != null && !n.dirty) {
+            if (page.strokes.size() - n.baked > MAX_RECENT) {
+                n.dirty = true;
+                invalidate();
+                return;
+            }
+            int w = (int) Math.ceil((Ink.W + 4) * n.scale), h = (int) Math.ceil((Ink.H + 6) * n.scale);
+            n.recent.setPosition(0, 0, w, h);
+            n.recent.setUseCompositingLayer((long) w * h <= MAX_TEXTURE_PIXELS, null);
+            Canvas r = n.recent.beginRecording(w, h);
+            try {
+                r.scale(n.scale, n.scale);
+                for (int i = n.baked; i < page.strokes.size(); i++) renderer.drawStroke(r, page.strokes.get(i), revealed.contains(page.strokes.get(i).id));
+            } finally {
+                n.recent.endRecording();
+            }
+        }
+        removeCallbacks(bake);
+        postDelayed(bake, BAKE_DELAY_MS);
+        invalidate();
+    }
+
+    private void bakeRecent() {
+        if (pointerId != -1) {
+            postDelayed(bake, BAKE_DELAY_MS);
+            return;
+        }
+        for (Map.Entry<Ink.Page, PageNode> e : nodes.entrySet()) {
+            if (e.getValue().baked != e.getKey().strokes.size()) e.getValue().dirty = true;
+        }
+        invalidate();
+    }
+
+    /** Lo que se ve detrás del cristal: las mismas texturas, sin lo que flota encima. */
+    void drawGlassSource(Canvas c) {
+        if (GPU && !pages.isEmpty()) drawPageNodes(c);
     }
 
     private void drawLasso(Canvas c) {
@@ -1269,6 +1421,8 @@ final class InkView extends View {
         s.add(x, y, pressure);
         if (Ink.HIGHLIGHTER.equals(s.tool)) {
             invalidate();
+        } else if (GPU) {
+            invalidate();
         } else if (s.n > 1 && layerAligned()) {
             onLayerPage(currentPage);
             renderer.drawSegment(layerCanvas, s, s.n - 1);
@@ -1463,9 +1617,13 @@ final class InkView extends View {
             while (recentLines.size() > 3) recentLines.removeFirst();
         }
         page.strokes.add(s);
-        onLayerPage(currentPage);
-        renderer.drawStroke(layerCanvas, s, false);
-        layerCanvas.restore();
+        if (GPU) {
+            strokeAdded(page);
+        } else {
+            onLayerPage(currentPage);
+            renderer.drawStroke(layerCanvas, s, false);
+            layerCanvas.restore();
+        }
         invalidate();
         sendStroke(page, s);
         LinkedHashMap<Ink.Page, ArrayList<Ink.Stroke>> one = new LinkedHashMap<>();

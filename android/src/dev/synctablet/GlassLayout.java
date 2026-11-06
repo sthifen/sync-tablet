@@ -41,6 +41,8 @@ final class GlassLayout extends LinearLayout {
     private final RectF box = new RectF();
     private final int[] me = new int[2], src = new int[2];
     private static boolean drawingSource;
+    /** Android 12 en adelante: el desenfoque lo hace la GPU sobre las texturas de la hoja. */
+    private android.graphics.RenderNode blurred;
 
     /** `tint`: color del cristal con su opacidad (p. ej. blanco al 55 %). */
     GlassLayout(Context c, View source, int tint, float radiusPx) {
@@ -85,9 +87,30 @@ final class GlassLayout extends LinearLayout {
                 new float[] {0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
         rim.setShader(new LinearGradient(0, 0, 0, h, light ? 0xF2FFFFFF : 0x80FFFFFF, light ? 0x55FFFFFF : 0x14FFFFFF,
                 Shader.TileMode.CLAMP));
+        if (android.os.Build.VERSION.SDK_INT >= 29) return;
         if (small != null) small.recycle();
         small = Bitmap.createBitmap(Math.max(1, w / DOWN), Math.max(1, h / DOWN), Bitmap.Config.ARGB_8888);
         smallCanvas = new Canvas(small);
+    }
+
+    private void drawBlurred(Canvas c) {
+        if (blurred == null) {
+            blurred = new android.graphics.RenderNode("glass");
+            float r = Ui.dp(getContext(), 12);
+            blurred.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(r, r, android.graphics.Shader.TileMode.CLAMP));
+        }
+        int w = getWidth(), h = getHeight();
+        blurred.setPosition(0, 0, w, h);
+        Canvas r = blurred.beginRecording(w, h);
+        try {
+            getLocationInWindow(me);
+            source.getLocationInWindow(src);
+            r.translate(src[0] - me[0], src[1] - me[1]);
+            ((InkView) source).drawGlassSource(r);
+        } finally {
+            blurred.endRecording();
+        }
+        c.drawRenderNode(blurred);
     }
 
     @Override
@@ -95,7 +118,9 @@ final class GlassLayout extends LinearLayout {
         c.save();
         c.clipPath(shape);
         // Un cristal dentro de la vista de detrás no se dibuja a sí mismo.
-        if (source != null && small != null && !drawingSource) {
+        if (android.os.Build.VERSION.SDK_INT >= 31 && source instanceof InkView && c.isHardwareAccelerated()) {
+            drawBlurred(c);
+        } else if (source != null && small != null && !drawingSource) {
             getLocationInWindow(me);
             source.getLocationInWindow(src);
             small.eraseColor(0);
