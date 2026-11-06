@@ -221,7 +221,16 @@ final class Ink {
             n = 0;
             minX = minY = Float.MAX_VALUE;
             maxX = maxY = -Float.MAX_VALUE;
-            for (int i = 0; i + 1 < xy.length; i += 2) add(xy[i], xy[i + 1], p);
+            boolean up = false;
+            for (int i = 0; i + 1 < xy.length; i += 2) {
+                if (Float.isNaN(xy[i])) {
+                    up = true;
+                    continue;
+                }
+                // Presión negativa: aquí se levantó el lápiz.
+                add(xy[i], xy[i + 1], up ? -1 : p);
+                up = false;
+            }
         }
 
         float x(int i) { return pts[3 * i]; }
@@ -253,7 +262,9 @@ final class Ink {
             if (shape != null) {
                 b.append(",\"shape\":{\"v\":1,\"kind\":\"").append(shape.name()).append("\",\"c\":[").append(round(shape.x0, 100)).append(',')
                         .append(round(shape.y0, 100)).append(',').append(round(shape.x1, 100)).append(',').append(round(shape.y1, 100))
-                        .append("],\"a\":").append(round(shape.angle, 10000)).append('}');
+                        .append("],\"a\":").append(round(shape.angle, 10000));
+                if (shape.label != null) b.append(",\"label\":\"").append(shape.label).append('"');
+                b.append('}');
             }
             return b.append('}').toString();
         }
@@ -271,11 +282,56 @@ final class Ink {
             // Un tipo que esta versión no conoce: queda como dibujo libre.
             if (kind >= 0 && c != null && c.length() == 4) {
                 s.shape = new ShapeTools.Spec(kind, (float) c.getDouble(0), (float) c.getDouble(1), (float) c.getDouble(2), (float) c.getDouble(3),
-                        (float) f.optDouble("a", 0));
+                        (float) f.optDouble("a", 0), f.has("label") ? f.getString("label") : null);
             }
             return s;
         }
     }
+
+    /** Una nota adhesiva: es de la app, nunca sale al exportar. Puede quedar fuera de la hoja. */
+    static final class Note {
+        final String id;
+        String text = "";
+        float x, y, w = 240;
+        int color = NOTE_COLORS[0];
+        /** La punta de su flecha, si tiene. */
+        boolean arrow;
+        float ax, ay;
+
+        Note(String id) {
+            this.id = id;
+        }
+
+        JSONObject toJsonObject() throws JSONException {
+            JSONObject o = new JSONObject();
+            o.put("id", id);
+            o.put("text", text);
+            o.put("x", x);
+            o.put("y", y);
+            o.put("w", w);
+            o.put("color", color);
+            if (arrow) {
+                o.put("ax", ax);
+                o.put("ay", ay);
+            }
+            return o;
+        }
+
+        static Note fromJson(JSONObject o) throws JSONException {
+            Note n = new Note(o.getString("id"));
+            n.text = o.optString("text");
+            n.x = (float) o.optDouble("x");
+            n.y = (float) o.optDouble("y");
+            n.w = (float) o.optDouble("w", 240);
+            n.color = o.optInt("color", NOTE_COLORS[0]);
+            n.arrow = o.has("ax");
+            n.ax = (float) o.optDouble("ax");
+            n.ay = (float) o.optDouble("ay");
+            return n;
+        }
+    }
+
+    static final int[] NOTE_COLORS = {0xFFFDE68A, 0xFFFBCFE8, 0xFFBFDBFE, 0xFFBBF7D0, 0xFFFED7AA, 0xFFDDD6FE};
 
     static final class Page {
         final String id;
@@ -288,6 +344,7 @@ final class Ink {
         String bgText;
         final ArrayList<Stroke> strokes = new ArrayList<>();
         final ArrayList<Item> items = new ArrayList<>();
+        final ArrayList<Note> notes = new ArrayList<>();
 
         /** Toma el contenido de otra (para deshacer volviendo a una copia). */
         void copyFrom(Page o) {
@@ -298,6 +355,8 @@ final class Ink {
             strokes.addAll(o.strokes);
             items.clear();
             items.addAll(o.items);
+            notes.clear();
+            notes.addAll(o.notes);
         }
 
         Page(String id, String notebook) {
@@ -325,6 +384,17 @@ final class Ink {
             b.append(']');
             if (bgAsset != null) b.append(",\"bg_asset\":\"").append(bgAsset).append('"');
             if (bgText != null) b.append(",\"bg_text\":").append(JSONObject.quote(bgText));
+            if (!notes.isEmpty()) {
+                b.append(",\"notes\":[");
+                for (int i = 0; i < notes.size(); i++) {
+                    if (i > 0) b.append(',');
+                    try {
+                        b.append(notes.get(i).toJsonObject());
+                    } catch (JSONException ignored) {
+                    }
+                }
+                b.append(']');
+            }
             return b.append('}').toString();
         }
 
@@ -339,6 +409,8 @@ final class Ink {
             if (it != null) for (int i = 0; i < it.length(); i++) p.items.add(Item.fromJson(it.getJSONObject(i)));
             if (o.has("bg_asset") && !o.isNull("bg_asset")) p.bgAsset = o.getString("bg_asset");
             if (o.has("bg_text") && !o.isNull("bg_text")) p.bgText = o.getString("bg_text");
+            JSONArray ns = o.optJSONArray("notes");
+            if (ns != null) for (int i = 0; i < ns.length(); i++) p.notes.add(Note.fromJson(ns.getJSONObject(i)));
             return p;
         }
     }

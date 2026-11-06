@@ -56,7 +56,7 @@ final class InkView extends View {
     private static final long LINE_MEMORY_MS = 15000;
     private static final float ATTACH = 16;
 
-    static final int PEN = 0, HIGHLIGHTER = 1, ERASER = 2, LASSO = 3, TEXT = 4, LASER = 5, TAPE = 6, SHAPE = 7;
+    static final int PEN = 0, HIGHLIGHTER = 1, ERASER = 2, LASSO = 3, TEXT = 4, LASER = 5, TAPE = 6, SHAPE = 7, NOTE = 8;
 
     interface Listener {
         /** Un mensaje para el PC (trazo, borrado, página entera, láser). */
@@ -72,6 +72,10 @@ final class InkView extends View {
         void onSelection(boolean active);
         /** Con la herramienta de texto: crear (item null) o editar un cuadro. */
         void onTextRequest(int page, Ink.Item item, float x, float y);
+        /** Crear (note null) o editar una nota, en la página dada. */
+        void onNoteRequest(int page, Ink.Note note, float x, float y);
+        /** Poner el valor de un componente de circuito. */
+        void onValueRequest(int page, Ink.Stroke component, String current);
         /** Con la herramienta de texto sobre una hoja de cálculo: editarla. */
         void onTableRequest(int page, Ink.Item table);
         /** Botón del S Pen pulsado sin tocar la pantalla (doble: dos seguidos). */
@@ -175,7 +179,7 @@ final class InkView extends View {
     private float fingerDownX, fingerDownY;
 
     // Lo que hace el puntero que dibuja.
-    private static final int NONE = 0, STROKE = 1, ERASE = 2, LASSO_DRAW = 3, DRAG = 4, LASER_DRAW = 5, TEXT_TAP = 6;
+    private static final int NONE = 0, STROKE = 1, ERASE = 2, LASSO_DRAW = 3, DRAG = 4, LASER_DRAW = 5, TEXT_TAP = 6, NOTE_MOVE = 7, NOTE_ARROW = 8, NOTE_NEW = 9;
     private int mode = NONE;
     private int pointerId = -1;
     private int currentPage;
@@ -183,6 +187,8 @@ final class InkView extends View {
     private boolean snapped;
     /** Se está arrastrando una figura con la herramienta: de (shapeX, shapeY) al lápiz. */
     private boolean shaping;
+    /** Dibujo a mano alzada que se convierte en componente de circuito. */
+    private boolean circuitFree;
     private float shapeX, shapeY;
     /** Figura ya reconocida y con el lápiz aún apoyado: se ajusta hasta soltarlo. */
     private float[] snapBase;
@@ -213,6 +219,15 @@ final class InkView extends View {
     private int dragHandle;
     private float dragX, dragY, dragAngle;
     private float[] dragBox = new float[4];
+    private static final float CIRCUIT_REACH = 30;
+    /** Cuánto se aleja la hoja para dejar sitio a las notas. */
+    private static final float NOTE_ZOOM = 0.68f;
+    private int notePage;
+    private Ink.Note activeNote;
+    private String noteBefore;
+    private float noteDownX, noteDownY, noteDx, noteDy, zoomBeforeNotes;
+    private boolean noteMoved;
+    private ValueAnimator zoomAnimator;
     /** Punta de línea en movimiento: la línea como va quedando. */
     private ShapeTools.Spec dragSpec;
 
@@ -732,6 +747,7 @@ final class InkView extends View {
             renderer.drawStroke(c, current, false);
             c.restore();
         }
+        drawNotes(c);
         drawLasso(c);
         drawSelection(c);
         drawLasers(c);
@@ -744,7 +760,7 @@ final class InkView extends View {
     private void drawPageNodes(Canvas c) {
         c.drawColor(DESK);
         float top = -oy / scale, bottom = (getHeight() - oy) / scale;
-        boolean zooming = scaler.isInProgress();
+        boolean zooming = scaler.isInProgress() || zoomAnimator != null;
         for (int i = 0; i < pages.size(); i++) {
             float y = pageTop(i);
             if (y > bottom || y + Ink.H + 8 < top) continue;
@@ -937,10 +953,18 @@ final class InkView extends View {
 
     /** Mueve una punta: se engancha a otra figura cercana, o endereza su ángulo. */
     private ShapeTools.Spec lineWithEnd(ShapeTools.Spec line, boolean first, float x, float y) {
-        Ink.Stroke self = selStrokes.get(0);
-        float best = ATTACH;
+        float[] hit = nearestAnchor(pages.get(selPage), selStrokes.get(0), x, y, ATTACH);
+        if (hit == null) {
+            hit = ShapeTools.snapAngle(first ? line.x1 : line.x0, first ? line.y1 : line.y0, x, y, 4);
+        }
+        return line.withEnd(first, hit[0], hit[1]);
+    }
+
+    /** El punto de enganche de otra figura más cercano, o null. */
+    private static float[] nearestAnchor(Ink.Page page, Ink.Stroke self, float x, float y, float reach) {
+        float best = reach;
         float[] hit = null;
-        for (Ink.Stroke s : pages.get(selPage).strokes) {
+        for (Ink.Stroke s : page.strokes) {
             if (s == self || s.shape == null) continue;
             float[] a = s.shape.anchors();
             for (int i = 0; i + 1 < a.length; i += 2) {
@@ -951,10 +975,216 @@ final class InkView extends View {
                 }
             }
         }
-        if (hit == null) {
-            hit = ShapeTools.snapAngle(first ? line.x1 : line.x0, first ? line.y1 : line.y0, x, y, 4);
+        return hit;
+    }
+
+    // ---- Circuitos ----
+
+    /** Lo dibujado a mano pasa a ser el componente que parece, con las patas enganchadas. */
+    private void drawnComponent(Ink.Stroke s) {
+        float[] xy = new float[2 * s.n];
+        for (int i = 0; i < s.n; i++) {
+            xy[2 * i] = s.x(i);
+            xy[2 * i + 1] = s.y(i);
         }
-        return line.withEnd(first, hit[0], hit[1]);
+        ShapeTools.Spec spec = ShapeRecognizer.circuit(xy, s.n);
+        if (spec == null) return;
+        Ink.Page page = pages.get(currentPage);
+        if (spec.kind == ShapeTools.VOLTAGE) spec = orientSource(page, spec);
+        float[] a = nearestAnchor(page, s, spec.x0, spec.y0, CIRCUIT_REACH), b = nearestAnchor(page, s, spec.x1, spec.y1, CIRCUIT_REACH);
+        if (a != null) spec = spec.withEnd(true, a[0], a[1]);
+        if (b != null) spec = spec.withEnd(false, b[0], b[1]);
+        // Un cable o un componente sueltos, derechos si casi lo están.
+        if (a == null || b == null) {
+            float[] end = ShapeTools.snapAngle(spec.x0, spec.y0, spec.x1, spec.y1, 8);
+            if (b == null) spec = spec.withEnd(false, end[0], end[1]);
+        }
+        s.replace(spec.points(), 0.7f);
+        s.shape = spec;
+    }
+
+    /** Una fuente se tumba si los cables cercanos le llegan por los lados. */
+    private ShapeTools.Spec orientSource(Ink.Page page, ShapeTools.Spec v) {
+        float cx = (v.x0 + v.x1) / 2, cy = (v.y0 + v.y1) / 2, r = Math.abs(v.y1 - v.y0) / 2;
+        boolean sides = nearestAnchor(page, null, cx - r, cy, CIRCUIT_REACH) != null || nearestAnchor(page, null, cx + r, cy, CIRCUIT_REACH) != null;
+        boolean ends = nearestAnchor(page, null, cx, cy - r, CIRCUIT_REACH) != null || nearestAnchor(page, null, cx, cy + r, CIRCUIT_REACH) != null;
+        return sides && !ends ? new ShapeTools.Spec(v.kind, cx - r, cy, cx + r, cy, 0) : v;
+    }
+
+    /** Un toque sobre un componente pide su valor. */
+    private boolean tapComponent(Ink.Stroke tap) {
+        Ink.Page page = pages.get(currentPage);
+        float x = tap.x(0), y = tap.y(0);
+        for (int i = page.strokes.size() - 1; i >= 0; i--) {
+            Ink.Stroke s = page.strokes.get(i);
+            if (s.shape == null || !s.shape.isComponent() || !s.hits(x, y, 18)) continue;
+            Ink.Item label = labelOf(page, s);
+            listener.onValueRequest(currentPage, s, label == null ? "" : label.text);
+            return true;
+        }
+        return false;
+    }
+
+    private static Ink.Item labelOf(Ink.Page page, Ink.Stroke s) {
+        if (s.shape == null || s.shape.label == null) return null;
+        for (Ink.Item it : page.items) if (it.id.equals(s.shape.label)) return it;
+        return null;
+    }
+
+    private void placeLabel(Ink.Item label, ShapeTools.Spec spec) {
+        float[] p = spec.labelPosition();
+        label.w = Math.max(70, 15 * (label.text == null ? 0 : label.text.length()) + 20);
+        label.x = p[0] - label.w / 2 + 8;
+        label.y = p[1] - label.size * 0.65f;
+    }
+
+    /** Pone, cambia o quita (texto vacío) el valor de un componente. */
+    void setValue(int index, Ink.Stroke s, String value) {
+        Ink.Page page = pages.get(index);
+        int at = page.strokes.indexOf(s);
+        if (at < 0) return;
+        String old = page.toJson();
+        Ink.Item label = labelOf(page, s);
+        String text = value.trim();
+        if (text.isEmpty()) {
+            if (label != null) page.items.remove(label);
+            page.strokes.set(at, s.withShape(s.shape.withLabel(null)));
+        } else {
+            if (label == null) {
+                label = new Ink.Item(Ink.newId(), "text");
+                label.size = 26;
+                label.color = s.color;
+                page.items.add(label);
+                page.strokes.set(at, s.withShape(s.shape.withLabel(label.id)));
+            }
+            label.text = text;
+            placeLabel(label, s.shape);
+        }
+        commitSnapshot(page, old);
+    }
+
+    /** El valor sigue al componente. */
+    private void moveLabels(Ink.Page page) {
+        for (Ink.Stroke s : selStrokes) {
+            Ink.Item label = labelOf(page, s);
+            if (label != null) placeLabel(label, s.shape);
+        }
+    }
+
+    // ---- Notas ----
+
+    private void startNote(MotionEvent e, int idx) {
+        float docX = (e.getX(idx) - ox) / scale, docY = (e.getY(idx) - oy) / scale;
+        notePage = pageAt(docY);
+        float x = docX, y = docY - pageTop(notePage), reach = 26 * density / scale;
+        noteDownX = x;
+        noteDownY = y;
+        noteMoved = false;
+        activeNote = null;
+        Ink.Page page = pages.get(notePage);
+        for (int i = page.notes.size() - 1; i >= 0 && activeNote == null; i--) {
+            Ink.Note n = page.notes.get(i);
+            float h = renderer.noteHeight(n);
+            if (n.arrow && Math.hypot(x - n.ax, y - n.ay) < reach) {
+                activeNote = n;
+                mode = NOTE_ARROW;
+            } else if (Math.hypot(x - (n.x + n.w), y - (n.y + h)) < reach) {
+                activeNote = n;
+                mode = NOTE_ARROW;
+            } else if (x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + h) {
+                activeNote = n;
+                mode = NOTE_MOVE;
+                noteDx = x - n.x;
+                noteDy = y - n.y;
+            }
+        }
+        if (activeNote == null) mode = NOTE_NEW;
+        else noteBefore = page.toJson();
+    }
+
+    private void moveNote(float x, float y) {
+        Ink.Note n = activeNote;
+        if (n == null) return;
+        if (Math.hypot(x - noteDownX, y - noteDownY) > 6 / scale * density) noteMoved = true;
+        if (!noteMoved) return;
+        if (mode == NOTE_MOVE) {
+            float dx = x - noteDx - n.x, dy = y - noteDy - n.y;
+            n.x += dx;
+            n.y += dy;
+        } else {
+            n.arrow = true;
+            n.ax = x;
+            n.ay = y;
+        }
+        invalidate();
+    }
+
+    private void finishNote(int m) {
+        Ink.Page page = pages.get(notePage);
+        if (m == NOTE_NEW) {
+            listener.onNoteRequest(notePage, null, noteDownX, noteDownY);
+        } else if (noteMoved) {
+            commitSnapshot(page, noteBefore);
+        } else if (m == NOTE_MOVE) {
+            listener.onNoteRequest(notePage, activeNote, activeNote.x, activeNote.y);
+        }
+        activeNote = null;
+        invalidate();
+    }
+
+    /** Crea o cambia una nota; con texto vacío, la borra. */
+    void putNote(int index, Ink.Note note, float x, float y, String text, int color) {
+        Ink.Page page = pages.get(index);
+        String old = page.toJson();
+        boolean empty = text.trim().isEmpty();
+        if (note == null) {
+            if (empty) return;
+            note = new Ink.Note(Ink.newId());
+            note.x = x - note.w / 2;
+            note.y = y - 30;
+            page.notes.add(note);
+        } else if (empty) {
+            page.notes.remove(note);
+        }
+        note.text = text.trim();
+        note.color = color;
+        commitSnapshot(page, old);
+        invalidate();
+    }
+
+    private void drawNotes(Canvas c) {
+        float top = -oy / scale, bottom = (getHeight() - oy) / scale;
+        for (int i = 0; i < pages.size(); i++) {
+            Ink.Page p = pages.get(i);
+            if (p.notes.isEmpty()) continue;
+            float y = pageTop(i);
+            if (y - 900 > bottom || y + Ink.H + 900 < top) continue;
+            onScreenPage(c, i);
+            for (Ink.Note n : p.notes) renderer.drawNote(c, n, tool == NOTE);
+            c.restore();
+        }
+    }
+
+    /** Al usar notas, la hoja se aleja para dejar sitio a los lados. */
+    void roomForNotes(boolean on) {
+        float target = on ? fitScale * NOTE_ZOOM : fitScale;
+        if (on) zoomBeforeNotes = scale;
+        else if (Math.abs(scale - fitScale * NOTE_ZOOM) > 0.01f) return;
+        else target = zoomBeforeNotes > 0 ? zoomBeforeNotes : fitScale;
+        if (Math.abs(target - scale) < 0.001f) return;
+        if (zoomAnimator != null) zoomAnimator.cancel();
+        zoomAnimator = ValueAnimator.ofFloat(scale, target);
+        zoomAnimator.setDuration(340);
+        zoomAnimator.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0.9f, 0.2f, 1f));
+        zoomAnimator.addUpdateListener(a -> zoomAround(getWidth() / 2f, getHeight() / 2f, (float) a.getAnimatedValue() / scale));
+        zoomAnimator.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator a) {
+                zoomAnimator = null;
+                invalidate();
+            }
+        });
+        zoomAnimator.start();
     }
 
     private float[] selArray() {
@@ -1041,7 +1271,7 @@ final class InkView extends View {
         int t = e.getToolType(idx);
         return t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER
                 || t == MotionEvent.TOOL_TYPE_MOUSE
-                || ((fingerDraws || tool == LASSO) && t == MotionEvent.TOOL_TYPE_FINGER && fingers == 0);
+                || ((fingerDraws || tool == LASSO || tool == NOTE) && t == MotionEvent.TOOL_TYPE_FINGER && fingers == 0);
     }
 
     private static boolean button(MotionEvent e) {
@@ -1159,6 +1389,8 @@ final class InkView extends View {
             mode = LASSO_DRAW;
             lassoErases = tool == ERASER;
             lasso.clear();
+        } else if (tool == NOTE) {
+            startNote(e, idx);
         } else if (tool == TEXT) {
             mode = TEXT_TAP;
         } else if (tool == LASER) {
@@ -1175,7 +1407,8 @@ final class InkView extends View {
             float width = hl ? highlighterWidth : tool == TAPE ? 34 : penWidth;
             current = new Ink.Stroke(Ink.newId(), kind, color, width);
             snapped = false;
-            shaping = tool == SHAPE && !hl;
+            circuitFree = tool == SHAPE && !hl && shapeKind == ShapeTools.CIRCUIT_FREE;
+            shaping = tool == SHAPE && !hl && !circuitFree;
             snapBase = null;
             absorbed.clear();
             holdX = holdY = Float.NaN;
@@ -1193,6 +1426,10 @@ final class InkView extends View {
                 eraseAt(pages.get(p), docX, docY - pageTop(p));
                 return;
             }
+            case NOTE_MOVE:
+            case NOTE_ARROW:
+                moveNote(docX, docY - pageTop(notePage));
+                return;
             case LASSO_DRAW:
                 lasso.add(docX);
                 lasso.add(docY - pageTop(currentPage));
@@ -1227,6 +1464,11 @@ final class InkView extends View {
                 break;
             case LASSO_DRAW:
                 finishLasso();
+                break;
+            case NOTE_MOVE:
+            case NOTE_ARROW:
+            case NOTE_NEW:
+                finishNote(m);
                 break;
             case DRAG:
                 finishDrag();
@@ -1432,7 +1674,7 @@ final class InkView extends View {
     }
 
     private void snapIfHeld() {
-        if (current == null || mode != STROKE || snapped || shaping || Ink.TAPE.equals(current.tool)) return;
+        if (current == null || mode != STROKE || snapped || shaping || circuitFree || Ink.TAPE.equals(current.tool)) return;
         if (toShape(current)) {
             snapped = true;
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
@@ -1588,11 +1830,21 @@ final class InkView extends View {
         Ink.Stroke s = current;
         current = null;
         boolean dragged = shaping;
+        boolean free = circuitFree;
         shaping = false;
+        circuitFree = false;
+        if (s != null && (dragged || free) && (s.maxX - s.minX) + (s.maxY - s.minY) < 10 && tapComponent(s)) {
+            renderLayer();
+            return;
+        }
+        if (free && s != null) {
+            drawnComponent(s);
+            snapped = false;
+        }
         // Una letra no es una figura: la conversión automática pide cierto tamaño.
         boolean bigEnough = s != null && ((s.maxX - s.minX) + (s.maxY - s.minY) >= MIN_AUTO_SHAPE
                 || Math.max(s.maxX - s.minX, s.maxY - s.minY) >= MIN_AUTO_LINE);
-        if (s != null && !dragged && !snapped && autoShapes && bigEnough && !Ink.TAPE.equals(s.tool) && toShape(s)) {
+        if (s != null && !dragged && !free && !snapped && autoShapes && bigEnough && !Ink.TAPE.equals(s.tool) && toShape(s)) {
             snapped = true;
             renderLayer();
         }
@@ -1861,8 +2113,19 @@ final class InkView extends View {
             ShapeTools.Spec spec = dragSpec;
             dragSpec = null;
             Ink.Stroke s = selStrokes.get(0);
-            if (spec != s.shape) replaceSelected(s, s.withShape(spec));
-            else renderLayer();
+            if (spec != s.shape) {
+                Ink.Stroke t = s.withShape(spec);
+                Ink.Item label = labelOf(page, s);
+                String before = page.toJson();
+                if (label != null) placeLabel(label, spec);
+                int at = page.strokes.indexOf(s);
+                if (at >= 0) page.strokes.set(at, t);
+                selStrokes.set(0, t);
+                updateSelBox();
+                commitSnapshot(page, before);
+            } else {
+                renderLayer();
+            }
             return;
         }
         float[] box = selArray();
@@ -1882,6 +2145,7 @@ final class InkView extends View {
             selStrokes.set(i, t);
         }
         for (Ink.Item it : selItems) mapItem(it, m, even);
+        moveLabels(page);
         updateSelBox();
         commitSnapshot(page, old);
     }
@@ -1946,6 +2210,10 @@ final class InkView extends View {
         if (selPage < 0) return;
         Ink.Page page = pages.get(selPage);
         String old = page.toJson();
+        for (Ink.Stroke s : selStrokes) {
+            Ink.Item label = labelOf(page, s);
+            if (label != null) page.items.remove(label);
+        }
         page.strokes.removeAll(selStrokes);
         page.items.removeAll(selItems);
         clearSelection();

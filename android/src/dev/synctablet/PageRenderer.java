@@ -132,6 +132,54 @@ final class PageRenderer {
         }
     }
 
+    private final Paint note = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint noteText = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private static final float NOTE_PAD = 16;
+
+    private StaticLayout noteLayout(Ink.Note n) {
+        noteText.setTextSize(24);
+        noteText.setColor(0xFF1F2937);
+        String s = n.text == null ? "" : n.text;
+        return StaticLayout.Builder.obtain(s, 0, s.length(), noteText, Math.max(1, (int) (n.w - 2 * NOTE_PAD))).setLineSpacing(0, 1.1f).build();
+    }
+
+    float noteHeight(Ink.Note n) {
+        return Math.max(84, noteLayout(n).getHeight() + 2 * NOTE_PAD);
+    }
+
+    /** Del color de la nota, más oscuro: su flecha. */
+    private static int darker(int c) {
+        return 0xFF000000 | (((c >> 16 & 0xFF) * 5 / 8) << 16) | (((c >> 8 & 0xFF) * 5 / 8) << 8) | ((c & 0xFF) * 5 / 8);
+    }
+
+    /** Una nota. `active`: con su asa para sacar la flecha. */
+    void drawNote(Canvas c, Ink.Note n, boolean active) {
+        float h = noteHeight(n);
+        if (n.arrow) {
+            float cx = n.x + n.w / 2, cy = n.y + h / 2;
+            note.setStyle(Paint.Style.STROKE);
+            note.setStrokeWidth(5);
+            note.setStrokeCap(Paint.Cap.ROUND);
+            note.setColor(darker(n.color));
+            float[] a = ShapeTools.arrow(cx, cy, n.ax, n.ay, false);
+            for (int i = 2; i + 1 < a.length; i += 2) c.drawLine(a[i - 2], a[i - 1], a[i], a[i + 1], note);
+        }
+        note.setStyle(Paint.Style.FILL);
+        note.setColor(0x33000000);
+        c.drawRoundRect(n.x + 3, n.y + 5, n.x + n.w + 3, n.y + h + 5, 14, 14, note);
+        note.setColor(n.color);
+        c.drawRoundRect(n.x, n.y, n.x + n.w, n.y + h, 14, 14, note);
+        c.save();
+        c.translate(n.x + NOTE_PAD, n.y + NOTE_PAD);
+        noteLayout(n).draw(c);
+        c.restore();
+        if (active) {
+            note.setColor(darker(n.color));
+            c.drawCircle(n.x + n.w, n.y + h, 11, note);
+            if (n.arrow) c.drawCircle(n.ax, n.ay, 11, note);
+        }
+    }
+
     /** Alto de un elemento (para seleccionarlo). */
     float itemHeight(Ink.Item it) {
         return it.isImage() || it.isTable() ? it.h : textHeight(it);
@@ -231,7 +279,9 @@ final class PageRenderer {
     }
 
     void drawSegment(Canvas c, Ink.Stroke s, int i) {
-        float p = (s.p(i - 1) + s.p(i)) / 2;
+        // Presión negativa: aquí se levantó el lápiz.
+        if (s.p(i) < 0) return;
+        float p = (Math.max(s.p(i - 1), s.p(i)) + s.p(i)) / 2;
         ink.setColor(s.color);
         ink.setAlpha(Ink.segAlpha(s.tool, p));
         ink.setStrokeWidth(Ink.segWidth(s.tool, s.width, p, s.x(i) - s.x(i - 1), s.y(i) - s.y(i - 1)));

@@ -27,6 +27,10 @@ public class ShapeTest {
         if (!ok) fails++;
         System.out.printf("%s %-28s → %s%n", ok ? "✓" : "✗", name, got == null ? "(nada)" : got);
     }
+    static void cir(String name, float[] xy, int want) {
+        ShapeTools.Spec s = ShapeRecognizer.circuit(xy, xy.length/2);
+        expect(name, (s == null ? -1 : s.kind) == want, s == null ? "(nada)" : s.name());
+    }
     static void expect(String name, boolean ok, String got) {
         if (!ok) fails++;
         System.out.printf("%s %-28s %s%n", ok ? "✓" : "✗", name, got);
@@ -141,6 +145,26 @@ public class ShapeTest {
         if (rq != null && rq.spec != null) { float[] sp = rq.spec.points(); expect("sus puntos coinciden", Math.abs(extent(sp,0) - extent(rq.xy,0)) < 2 && Math.abs(extent(sp,1) - extent(rq.xy,1)) < 2, extent(sp,0) + " vs " + extent(rq.xy,0)); }
         ShapeRecognizer.Shape re = ShapeRecognizer.recognize(tilted, tilted.length/2);
         if (re != null) { expect("elipse inclinada editable", re.spec != null, ""); if (re.spec != null) { float[] sp = re.spec.points(); expect("sus puntos coinciden", Math.abs(extent(sp,0) - extent(re.xy,0)) < 3, extent(sp,0) + " vs " + extent(re.xy,0)); } }
+        // Circuitos.
+        cir("zigzag → resistencia", poly(new float[][]{{100,300},{130,270},{170,330},{210,270},{250,330},{290,270},{330,330},{360,300}},1.5f), ShapeTools.RESISTOR);
+        cir("zigzag vertical", poly(new float[][]{{300,100},{270,130},{330,170},{270,210},{330,250},{270,290},{300,330}},1.5f), ShapeTools.RESISTOR);
+        cir("círculo → fuente", ell(300,300,70,70,2,2*Math.PI*1.03), ShapeTools.VOLTAGE);
+        cir("línea → cable", poly(new float[][]{{100,200},{500,210}},1.5f), ShapeTools.LINE);
+        float[] coil = new float[2*90];
+        for (int i = 0; i < 90; i++) { double t = 2*Math.PI*4.2*i/89; coil[2*i] = 100 + 3.4f*i + 30*(float)Math.sin(t); coil[2*i+1] = 300 - 30*(float)Math.cos(t) + (float) r.nextGaussian(); }
+        cir("espiral → bobina", coil, ShapeTools.INDUCTOR);
+        cir("garabato → nada", ell(300,300,60,40,25,2*Math.PI*3), -1);
+        for (int k = ShapeTools.RESISTOR; k <= ShapeTools.SWITCH; k++) {
+            float[] o = new ShapeTools.Spec(k, 100, 100, 300, 100, 0).points();
+            boolean nums = o.length >= 8; int real = 0; for (float x2 : o) if (!Float.isNaN(x2)) real++;
+            float lo = 1e9f, hi = -1e9f; for (int i = 0; i < o.length; i += 2) if (!Float.isNaN(o[i])) { lo = Math.min(lo, o[i]); hi = Math.max(hi, o[i]); }
+            expect("componente " + new ShapeTools.Spec(k,0,0,1,1,0).name(), nums && real >= 8 && lo <= 100.01f && hi >= 299.9f, lo + "–" + hi);
+        }
+        float[] cp = new ShapeTools.Spec(ShapeTools.CAPACITOR,0,0,200,0,0).points(); boolean jumps = false; for (float q : cp) jumps |= Float.isNaN(q);
+        expect("condensador levanta el lápiz", jumps, "");
+        float[] lb = new ShapeTools.Spec(ShapeTools.RESISTOR,100,300,300,300,0).labelPosition(); expect("valor encima", lb[1] < 300 && Math.abs(lb[0]-200) < 1, lb[0] + "," + lb[1]);
+        ShapeTools.Spec lab = new ShapeTools.Spec(ShapeTools.RESISTOR,0,0,10,0,0).withLabel("a");
+        expect("el valor sigue al componente", "a".equals(lab.mapped(new float[]{1,0,0,1,5,5},0).label) && "a".equals(lab.withEnd(true,1,1).label), "");
         System.out.println(fails == 0 ? "TODO BIEN" : fails + " FALLOS");
     }
 }

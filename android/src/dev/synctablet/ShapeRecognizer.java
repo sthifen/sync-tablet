@@ -81,6 +81,81 @@ final class ShapeRecognizer {
         return null;
     }
 
+    // ---- Circuitos ----
+
+    /**
+     * Lo que se quiso dibujar en un circuito: zigzag → resistencia, espiral →
+     * bobina, círculo → fuente, trazo recto → cable. Null si no parece nada.
+     */
+    static ShapeTools.Spec circuit(float[] xy, int n) {
+        if (n < 2) return null;
+        float length = pathLength(xy, n);
+        if (length < 24) return null;
+        float[] p = resample(xy, n, N);
+        float x0 = p[0], y0 = p[1], x1 = p[2 * N - 2], y1 = p[2 * N - 1];
+        float gap = dist(x0, y0, x1, y1);
+        float turning = totalTurning(p);
+        // Un círculo cerrado da una vuelta; una bobina, varias sin cerrarse.
+        if (gap > 0.3f * length && turning > 2.6 * Math.PI && isSpiral(p)) {
+            return new ShapeTools.Spec(ShapeTools.INDUCTOR, x0, y0, x1, y1, 0);
+        }
+        if (gap < 0.22f * length && ellipseError(p, N) < 0.2f) {
+            float[] e = ellipseFit(p, N);
+            float r = (e[2] + e[3]) / 2, reach = r * 1.5f;
+            return new ShapeTools.Spec(ShapeTools.VOLTAGE, e[0], e[1] + reach, e[0], e[1] - reach, 0);
+        }
+        if (gap > 0.25f * length && sideChanges(p, 0.05f * gap) >= 3) {
+            return new ShapeTools.Spec(ShapeTools.RESISTOR, x0, y0, x1, y1, 0);
+        }
+        if (gap > 0.85f * length) {
+            return new ShapeTools.Spec(ShapeTools.LINE, x0, y0, x1, y1, 0);
+        }
+        return null;
+    }
+
+    /** Veces que el trazo cruza de un lado al otro de la recta entre sus extremos. */
+    private static int sideChanges(float[] p, float threshold) {
+        float dx = p[2 * N - 2] - p[0], dy = p[2 * N - 1] - p[1], len = Math.max(1, (float) Math.hypot(dx, dy));
+        int changes = 0, side = 0;
+        for (int i = 0; i < N; i++) {
+            float d = ((p[2 * i] - p[0]) * dy - (p[2 * i + 1] - p[1]) * dx) / len;
+            int now = d > threshold ? 1 : d < -threshold ? -1 : 0;
+            if (now != 0 && now != side) {
+                if (side != 0) changes++;
+                side = now;
+            }
+        }
+        return changes;
+    }
+
+    /** Giro acumulado, con signo. */
+    private static float totalTurning(float[] p) {
+        double sum = 0, prev = Double.NaN;
+        for (int i = 2; i < N; i += 2) {
+            double a = Math.atan2(p[2 * i + 1] - p[2 * i - 3], p[2 * i] - p[2 * i - 4]);
+            if (!Double.isNaN(prev)) {
+                double d = a - prev;
+                while (d > Math.PI) d -= 2 * Math.PI;
+                while (d < -Math.PI) d += 2 * Math.PI;
+                sum += d;
+            }
+            prev = a;
+        }
+        return (float) Math.abs(sum);
+    }
+
+    /** ¿Las vueltas avanzan a lo largo de una recta? Un garabato en un sitio no. */
+    private static boolean isSpiral(float[] p) {
+        float dx = p[2 * N - 2] - p[0], dy = p[2 * N - 1] - p[1], len = Math.max(1, (float) Math.hypot(dx, dy));
+        float lo = 0, hi = 0;
+        for (int i = 0; i < N; i++) {
+            float d = ((p[2 * i] - p[0]) * dy - (p[2 * i + 1] - p[1]) * dx) / len;
+            lo = Math.min(lo, d);
+            hi = Math.max(hi, d);
+        }
+        return hi - lo < 0.8f * len;
+    }
+
     // ---- Figuras ----
 
     /** Línea recta; casi a un múltiplo de 15°, exacta (a 6° si es horizontal o vertical). */

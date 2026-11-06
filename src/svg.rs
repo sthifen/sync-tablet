@@ -262,7 +262,11 @@ fn stroke_svg(s: &mut String, stroke: &Stroke) {
     for i in 1..n {
         let (x0, y0, p0) = stroke.point(i - 1);
         let (x1, y1, p1) = stroke.point(i);
-        let p = (p0 + p1) / 2.0;
+        // Presión negativa: ahí se levanta el lápiz (componentes de circuito).
+        if p1 < 0.0 {
+            continue;
+        }
+        let p = (p0.max(p1) + p1) / 2.0;
         seg(segment_width(stroke.tool, stroke.width, p, x1 - x0, y1 - y0), segment_opacity(stroke.tool, p), x0, y0, x1, y1);
     }
     for ((wk, ok), d) in groups {
@@ -280,7 +284,15 @@ mod tests {
     use super::*;
 
     fn page(strokes: Vec<Stroke>, background: Background) -> Page {
-        Page { id: "p".into(), notebook: "n".into(), version: 1, background, strokes, items: vec![], bg_asset: None, bg_text: None }
+        Page { id: "p".into(), notebook: "n".into(), version: 1, background, strokes, items: vec![], bg_asset: None, bg_text: None, notes: vec![] }
+    }
+
+    #[test]
+    fn un_salto_del_lapiz_no_dibuja_linea() {
+        let st = Stroke { id: "c".into(), tool: Tool::Pen, color: "#000000".into(), width: 3.0, points: vec![0.0, 0.0, 0.7, 10.0, 0.0, 0.7, 50.0, 0.0, -1.0, 60.0, 0.0, 0.7], shape: None };
+        let svg = page_svg(&page(vec![st], Background::Plain), "");
+        assert!(svg.contains("M0.0 0.0L10.0 0.0") && svg.contains("M50.0 0.0L60.0 0.0"), "{svg}");
+        assert!(!svg.contains("M10.0 0.0L50.0"), "{svg}");
     }
 
     #[test]

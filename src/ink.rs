@@ -111,6 +111,9 @@ pub struct Page {
     /// Texto de esa página del PDF, para copiarlo y buscarlo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bg_text: Option<String>,
+    /// Notas adhesivas de la app: nunca salen en una exportación.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<serde_json::Value>,
 }
 
 /// Un elemento de la hoja que no es un trazo.
@@ -249,7 +252,7 @@ mod tests {
     }
 
     fn page() -> Page {
-        Page { id: "p".into(), notebook: "n".into(), version: 0, background: Background::Plain, strokes: vec![], items: vec![], bg_asset: None, bg_text: None }
+        Page { id: "p".into(), notebook: "n".into(), version: 0, background: Background::Plain, strokes: vec![], items: vec![], bg_asset: None, bg_text: None, notes: vec![] }
     }
 
     #[test]

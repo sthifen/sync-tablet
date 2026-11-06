@@ -254,7 +254,7 @@ mod tests {
     }
 
     fn page(id: &str) -> Page {
-        Page { id: id.into(), notebook: "nb1".into(), version: 0, background: Background::Lines, strokes: vec![], items: vec![], bg_asset: None, bg_text: None }
+        Page { id: id.into(), notebook: "nb1".into(), version: 0, background: Background::Lines, strokes: vec![], items: vec![], bg_asset: None, bg_text: None, notes: vec![] }
     }
 
     fn stroke() -> Stroke {

@@ -1381,7 +1381,9 @@ a { color: inherit; }
       ctx.lineWidth = segWidth(s.tool, s.width, p[2], 1, 0); ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0], p[1]); ctx.stroke(); return;
     }
     for (i = 1; i < n; i++) {
-      var pr = (p[3 * i - 1] + p[3 * i + 2]) / 2, dx = p[3 * i] - p[3 * i - 3], dy = p[3 * i + 1] - p[3 * i - 2];
+      // Presión negativa: ahí se levanta el lápiz (componentes de circuito).
+      if (p[3 * i + 2] < 0) continue;
+      var pr = (Math.max(p[3 * i - 1], p[3 * i + 2]) + p[3 * i + 2]) / 2, dx = p[3 * i] - p[3 * i - 3], dy = p[3 * i + 1] - p[3 * i - 2];
       ctx.lineWidth = segWidth(s.tool, s.width, pr, dx, dy);
       ctx.globalAlpha = segOpacity(s.tool, pr);
       ctx.beginPath(); ctx.moveTo(p[3 * i - 3], p[3 * i - 2]); ctx.lineTo(p[3 * i], p[3 * i + 1]); ctx.stroke();

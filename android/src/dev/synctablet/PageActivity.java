@@ -56,6 +56,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             IconView.S_ELLIPSE, IconView.S_TRIANGLE, IconView.S_AXES, IconView.S_CROSS};
     private static final String[] SHAPE_NAMES = {"Línea", "Flecha", "Flecha doble", "Rectángulo", "Elipse", "Triángulo",
             "Ejes", "Ejes cruzados"};
+    private static final int[] CIRCUIT_KINDS = {ShapeTools.CIRCUIT_FREE, ShapeTools.LINE, ShapeTools.RESISTOR, ShapeTools.CAPACITOR, ShapeTools.INDUCTOR,
+            ShapeTools.VOLTAGE, ShapeTools.AC, ShapeTools.CURRENT, ShapeTools.DIODE, ShapeTools.SWITCH, ShapeTools.GROUND};
+    private static final String[] CIRCUIT_NAMES = {"Dibujar a mano", "Cable", "Resistencia", "Condensador", "Bobina", "Fuente de tensión",
+            "Fuente alterna", "Fuente de corriente", "Diodo", "Interruptor", "Tierra"};
     private static final String BOX_HINT = "Lados: estirar · esquinas: agrandar · arriba: girar";
     /** Ancho en píxeles de las páginas de un PDF importado. */
     private static final int PDF_WIDTH = 1600;
@@ -85,6 +89,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private InkView ink;
     private GlassLayout bar, palette, selectionBar, shapeBar;
+    private LinearLayout shapeRow, circuitRow;
+    private final ComponentButton[] circuitButtons = new ComponentButton[CIRCUIT_KINDS.length];
     private IconView autoShapeButton, editImage, editText, editLine, dockMore;
     private TextView selectionHint;
     private ScrollView dockPanel;
@@ -94,7 +100,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private int dockCollapsedWidth;
     private final IconView[] shapeButtons = new IconView[SHAPE_KINDS.length];
     private TextView title;
-    private IconView pen, highlighter, eraser, lasso, shapes, text, tape, laser, undo, redo, finger;
+    private IconView pen, highlighter, eraser, lasso, shapes, text, note, tape, laser, undo, redo, finger;
     private View dot;
     private LinearLayout colors, widths;
     private int customColor;
@@ -174,6 +180,11 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             if (shapeBar.getVisibility() == View.VISIBLE) shapeBar.postInvalidateOnAnimation();
         };
         setContentView(root);
+        // Se vuelve al dock como se dejó.
+        if (ink.shapeKind >= ShapeTools.RESISTOR) {
+            shapeRow.setVisibility(View.GONE);
+            circuitRow.setVisibility(View.VISIBLE);
+        }
         loadPages(index);
         refreshTools();
     }
@@ -267,7 +278,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         text = icon(IconView.TEXT, "Texto: toca la hoja para escribir", v -> setTool(InkView.TEXT));
         tape = icon(IconView.TAPE, "Cinta: tapa algo; tócala con el dedo para destaparla", v -> setTool(InkView.TAPE));
         laser = icon(IconView.LASER, "Puntero láser (también en el PC)", v -> setTool(InkView.LASER));
-        for (View t : new View[] {pen, highlighter, eraser, lasso, shapes, text, tape, laser}) row.addView(t);
+        note = icon(IconView.NOTE, "Notas: no salen al exportar; pueden ir fuera de la hoja", v -> setTool(InkView.NOTE));
+        for (View t : new View[] {pen, highlighter, eraser, lasso, shapes, text, note, tape, laser}) row.addView(t);
         row.addView(sep(false));
 
         undo = icon(IconView.UNDO, "Deshacer", v -> ink.undo());
@@ -373,6 +385,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             });
             row.addView(shapeButtons[i]);
         }
+        row.addView(icon(IconView.CHIP, "Circuitos", v -> setCircuitMode(true)));
         row.addView(sep(false));
         autoShapeButton = icon(IconView.WAND, "Convertir mis trazos en figuras", v -> {
             ink.autoShapes = !ink.autoShapes;
@@ -383,8 +396,42 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         row.addView(autoShapeButton);
         dockMore = icon(IconView.MORE, "Más figuras", v -> toggleDock());
         row.addView(dockMore);
+        shapeRow = row;
         g.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 56)));
+        circuitRow = new LinearLayout(this);
+        circuitRow.setGravity(Gravity.CENTER_VERTICAL);
+        circuitRow.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), 0);
+        circuitRow.addView(icon(IconView.BACK_ROW, "Volver a las figuras", v -> setCircuitMode(false)));
+        circuitRow.addView(sep(false));
+        for (int i = 0; i < CIRCUIT_KINDS.length; i++) {
+            int kind = CIRCUIT_KINDS[i];
+            circuitButtons[i] = new ComponentButton(this, kind, CIRCUIT_NAMES[i]);
+            circuitButtons[i].setOnClickListener(v -> {
+                ink.shapeKind = kind;
+                prefs.edit().putInt("shapeKind", kind).apply();
+                refreshTools();
+            });
+            circuitRow.addView(circuitButtons[i]);
+        }
+        circuitRow.setVisibility(View.GONE);
+        g.addView(circuitRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 56)));
         return g;
+    }
+
+    /** El complemento de circuitos: el dock pasa a tener componentes. */
+    private void setCircuitMode(boolean on) {
+        closeDockNow();
+        dockCollapsedWidth = 0;
+        android.transition.ChangeBounds grow = new android.transition.ChangeBounds();
+        grow.setDuration(280);
+        grow.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0.9f, 0.2f, 1f));
+        android.transition.TransitionManager.beginDelayedTransition((ViewGroup) shapeBar.getParent(), grow);
+        shapeRow.setVisibility(on ? View.GONE : View.VISIBLE);
+        circuitRow.setVisibility(on ? View.VISIBLE : View.GONE);
+        ink.shapeKind = on ? ShapeTools.CIRCUIT_FREE : ShapeTools.RECT;
+        prefs.edit().putInt("shapeKind", ink.shapeKind).apply();
+        if (on) Ui.toast(this, "Dibuja: zigzag, resistencia · círculo, fuente · espiral, bobina · línea, cable. Toca un componente para su valor");
+        refreshTools();
     }
 
     /** Abre o cierra el dock, con el mismo gesto de ida y de vuelta. */
@@ -490,6 +537,12 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     private void setTool(int t) {
+        if (t == InkView.NOTE && ink.tool != InkView.NOTE) {
+            ink.roomForNotes(true);
+            Ui.toast(this, "Toca para poner una nota, dentro o fuera de la hoja. Su punto oscuro saca una flecha");
+        } else if (t != InkView.NOTE && ink.tool == InkView.NOTE) {
+            ink.roomForNotes(false);
+        }
         ink.tool = t;
         if (t != InkView.SHAPE) closeDockNow();
         if (t != InkView.LASSO) ink.clearSelection();
@@ -505,6 +558,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         tape.setActive(ink.tool == InkView.TAPE);
         laser.setActive(ink.tool == InkView.LASER);
         shapes.setActive(ink.tool == InkView.SHAPE);
+        note.setActive(ink.tool == InkView.NOTE);
+        for (int i = 0; i < CIRCUIT_KINDS.length; i++) circuitButtons[i].setActive(ink.shapeKind == CIRCUIT_KINDS[i]);
         shapeBar.setVisibility(ink.tool == InkView.SHAPE ? View.VISIBLE : View.GONE);
         for (int i = 0; i < SHAPE_KINDS.length; i++) shapeButtons[i].setActive(ink.shapeKind == SHAPE_KINDS[i]);
         autoShapeButton.setActive(ink.autoShapes);
@@ -765,6 +820,143 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     // ---- Texto ----
+
+    /** Botón del dock con el símbolo del componente. */
+    private static final class ComponentButton extends View {
+        private final float[] xy;
+        private final boolean free;
+        private final android.graphics.Paint line = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint disc = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private boolean active;
+
+        ComponentButton(android.content.Context c, int kind, String name) {
+            super(c);
+            free = kind == ShapeTools.CIRCUIT_FREE;
+            xy = free ? new float[0] : new ShapeTools.Spec(kind, 6, 24, kind == ShapeTools.GROUND ? 26 : 42, 24, 0).points();
+            if (kind == ShapeTools.GROUND) {
+                float[] g = new ShapeTools.Spec(kind, 24, 8, 24, 30, 0).points();
+                System.arraycopy(g, 0, xy, 0, Math.min(g.length, xy.length));
+            }
+            line.setStyle(android.graphics.Paint.Style.STROKE);
+            line.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            line.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            disc.setColor(Ui.ACCENT_DEEP);
+            setContentDescription(name);
+            setClickable(true);
+            setFocusable(true);
+        }
+
+        void setActive(boolean a) {
+            if (a != active) {
+                active = a;
+                invalidate();
+            }
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) {
+            int s = Ui.dp(getContext(), 44);
+            setMeasuredDimension(s, s);
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float k = getWidth() / 48f;
+            if (active) c.drawCircle(getWidth() / 2f, getHeight() / 2f, getWidth() * 0.46f, disc);
+            line.setColor(active ? 0xFFFFFFFF : Ui.ICON);
+            line.setStrokeWidth(1.7f * k);
+            c.save();
+            c.scale(k, k);
+            if (free) {
+                // Un trazo a mano.
+                android.graphics.Path p = new android.graphics.Path();
+                p.moveTo(10, 30); p.cubicTo(16, 12, 20, 36, 26, 20); p.cubicTo(29, 12, 34, 28, 38, 18);
+                c.drawPath(p, line);
+            } else {
+                for (int i = 2; i + 1 < xy.length; i += 2) {
+                    if (Float.isNaN(xy[i]) || Float.isNaN(xy[i - 2])) continue;
+                    c.drawLine(xy[i - 2], xy[i - 1], xy[i], xy[i + 1], line);
+                }
+            }
+            c.restore();
+        }
+    }
+
+    @Override
+    public void onNoteRequest(int page, Ink.Note item, float x, float y) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 20);
+        box.setPadding(pad, pad / 2, pad, 0);
+        EditText field = new EditText(this);
+        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        field.setMinLines(3);
+        field.setGravity(Gravity.TOP);
+        if (item != null) field.setText(item.text);
+        box.addView(field);
+        LinearLayout swatches = new LinearLayout(this);
+        swatches.setGravity(Gravity.CENTER);
+        swatches.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 4));
+        int[] chosen = {item != null ? item.color : prefs.getInt("noteColor", Ink.NOTE_COLORS[0])};
+        ArrayList<View> dots = new ArrayList<>();
+        int size = Ui.dp(this, 40);
+        for (int c : Ink.NOTE_COLORS) {
+            View dot = new View(this);
+            dot.setBackground(Ui.round(c, size / 2));
+            dot.setScaleX(c == chosen[0] ? 1.1f : 0.8f);
+            dot.setScaleY(c == chosen[0] ? 1.1f : 0.8f);
+            dot.setOnClickListener(v -> {
+                chosen[0] = c;
+                prefs.edit().putInt("noteColor", c).apply();
+                for (View o : dots) o.animate().scaleX(o == v ? 1.1f : 0.8f).scaleY(o == v ? 1.1f : 0.8f).setDuration(160).start();
+            });
+            dots.add(dot);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(size, size);
+            lp.setMargins(Ui.dp(this, 4), 0, Ui.dp(this, 4), 0);
+            swatches.addView(dot, lp);
+        }
+        box.addView(swatches);
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this)
+                .setTitle(item == null ? "Nota nueva" : "Nota")
+                .setView(box)
+                .setPositiveButton("Guardar", (d, w) -> ink.putNote(page, item, x, y, field.getText().toString(), chosen[0]))
+                .setNegativeButton("Cancelar", null);
+        if (item != null) dialog.setNeutralButton("Borrar", (d, w) -> ink.putNote(page, item, x, y, "", chosen[0]));
+        dialog.show();
+        field.requestFocus();
+    }
+
+    @Override
+    public void onValueRequest(int page, Ink.Stroke component, String current) {
+        EditText field = new EditText(this);
+        field.setText(current);
+        field.setSelection(current.length());
+        field.setHint("10 kΩ");
+        field.setSingleLine(true);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 20);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(field);
+        LinearLayout units = new LinearLayout(this);
+        units.setGravity(Gravity.CENTER);
+        for (String u : new String[] {"Ω", "kΩ", "MΩ", "µF", "nF", "mH", "V", "A"}) {
+            TextView b = Ui.button(this, u);
+            b.setOnClickListener(v -> field.getText().insert(field.getSelectionStart(), " " + u));
+            units.addView(b);
+        }
+        HorizontalScrollView unitScroll = new HorizontalScrollView(this);
+        unitScroll.setHorizontalScrollBarEnabled(false);
+        unitScroll.addView(units);
+        box.addView(unitScroll);
+        new AlertDialog.Builder(this)
+                .setTitle("Valor")
+                .setView(box)
+                .setPositiveButton("Guardar", (d, w) -> ink.setValue(page, component, field.getText().toString()))
+                .setNegativeButton("Cancelar", null)
+                .show();
+        field.requestFocus();
+    }
 
     @Override
     public void onTextRequest(int page, Ink.Item item, float x, float y) {
