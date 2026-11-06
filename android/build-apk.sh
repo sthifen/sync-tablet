@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compila la app Android sin Gradle ni Android Studio (como Encaje):
-#   aapt2 (recursos) → javac → d8 (dex) → zipalign → apksigner (clave de depuración).
+#   aapt2 (recursos) → javac → d8 (dex) → zipalign → apksigner (clave propia si existe; si no, la de depuración).
 #
 # Si faltan, descarga build-tools y la plataforma en $ANDROID_HOME
 # (por defecto ~/Android/Sdk). Su uso está sujeto a la licencia del Android SDK:
@@ -82,8 +82,23 @@ if [[ ! -f "$KEYSTORE" ]]; then
     -dname "CN=Sync Tablet Debug" >/dev/null 2>&1
 fi
 "$BT/zipalign" -P 16 -f 4 "$OUT/base.apk" "$OUT/aligned.apk"
-"$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-  --out "$APK" "$OUT/aligned.apk"
+# Con la clave propia (fuera del repo) y su enlace con la de depuración, las
+# tablets se actualizan sin desinstalar. Sin ellas, cualquiera puede compilar
+# con la de depuración, pero ese APK no actualiza una instalación ya rotada.
+RELEASE_KS="${SYNCTABLET_KEYSTORE:-$HOME/.synctablet/release.jks}"
+LINEAGE="${SYNCTABLET_LINEAGE:-$HOME/.synctablet/lineage}"
+if [[ -f "$RELEASE_KS" && -f "$LINEAGE" ]]; then
+  echo "  clave propia: $RELEASE_KS"
+  PASS=()
+  [[ -n "${SYNCTABLET_KS_PASS:-}" ]] && PASS=(--ks-pass env:SYNCTABLET_KS_PASS)
+  "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
+    --next-signer --ks "$RELEASE_KS" "${PASS[@]}" \
+    --lineage "$LINEAGE" --rotation-min-sdk-version 28 --out "$APK" "$OUT/aligned.apk"
+else
+  echo "  clave de depuración"
+  "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
+    --out "$APK" "$OUT/aligned.apk"
+fi
 "$BT/apksigner" verify "$APK"
 echo "✓ $APK ($(du -h "$APK" | cut -f1))"
 
