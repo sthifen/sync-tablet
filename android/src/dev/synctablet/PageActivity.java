@@ -84,7 +84,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private InkView ink;
     private GlassLayout bar, palette, selectionBar, shapeBar;
-    private IconView autoShapeButton, editImage;
+    private IconView autoShapeButton, editImage, editText;
     private final IconView[] shapeButtons = new IconView[SHAPE_KINDS.length];
     private TextView title;
     private IconView pen, highlighter, eraser, lasso, shapes, text, tape, laser, undo, redo, finger;
@@ -317,7 +317,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         GlassLayout g = new GlassLayout(this, ink, Ui.GLASS_LIGHT, Ui.dp(this, 28));
         g.setGravity(Gravity.CENTER_VERTICAL);
         g.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), 0);
-        TextView hint = Ui.text(this, "Arrastra para mover · la esquina cambia el tamaño · un color lo recolorea", 13, Ui.ICON_MUTED, false);
+        TextView hint = Ui.text(this, "Lados: estirar · esquinas: agrandar · arriba: girar", 13, Ui.ICON_MUTED, false);
         hint.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 8), 0);
         g.addView(hint);
         editImage = icon(IconView.SLIDERS, "Editar la imagen", v -> {
@@ -327,6 +327,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             }
         });
         g.addView(editImage);
+        editText = icon(IconView.TEXT, "Editar el texto", v -> ink.editSelectedText());
+        g.addView(editText);
         g.addView(icon(IconView.COPY, "Duplicar", v -> ink.duplicateSelection()));
         g.addView(icon(IconView.TRASH, "Borrar", v -> ink.deleteSelection()));
         g.addView(icon(IconView.CHECK, "Listo", v -> ink.clearSelection()));
@@ -1513,6 +1515,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     public void onSelection(boolean active) {
         selectionBar.setVisibility(active ? View.VISIBLE : View.GONE);
         editImage.setVisibility(active && ink.selectedImage() != null && Native.available() ? View.VISIBLE : View.GONE);
+        editText.setVisibility(active && ink.selectedText() != null ? View.VISIBLE : View.GONE);
         refreshTools();
     }
 

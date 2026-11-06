@@ -44,6 +44,8 @@ import java.util.Map;
  * página antes y después.
  */
 final class InkView extends View {
+    /** Separación del tirador de giro, en dp. */
+    private static final float ROTATE_GAP = 34;
     /** Presión fija de las figuras arrastradas. */
     private static final float SHAPE_PRESSURE = 0.7f;
     /** Tamaño mínimo (ancho + alto) para convertir sola una figura. */
@@ -163,8 +165,10 @@ final class InkView extends View {
     private final ArrayList<Ink.Stroke> selStrokes = new ArrayList<>();
     private final ArrayList<Ink.Item> selItems = new ArrayList<>();
     private final RectF selBox = new RectF();
-    private boolean scaling;
-    private float dragX, dragY, tdx, tdy, tk = 1;
+    /** Arrastre de la selección: qué tirador, y a qué caja y ángulo va. */
+    private int dragHandle;
+    private float dragX, dragY, dragAngle;
+    private float[] dragBox = new float[4];
 
     // Láser: estelas (en coordenadas del documento) que se desvanecen; no se guardan.
     private final ArrayList<float[]> laserTrails = new ArrayList<>();
@@ -684,26 +688,82 @@ final class InkView extends View {
         onScreenPage(c, selPage);
         if (mode == DRAG) {
             // La selección, movida/escalada en vivo.
+            float[] box = selArray(), m = SelectionMath.affine(box, dragBox, dragAngle);
+            // Los textos se dibujan como quedarán: se reacomodan, no se deforman.
+            boolean even = SelectionMath.uniform(box, dragBox);
+            for (Ink.Item it : selItems) {
+                Ink.Item shown = it.copy(it.id);
+                mapItem(shown, m, even);
+                renderer.drawItem(c, shown);
+            }
             c.save();
-            c.translate(selBox.left + tdx, selBox.top + tdy);
-            c.scale(tk, tk);
-            c.translate(-selBox.left, -selBox.top);
-            for (Ink.Item it : selItems) renderer.drawItem(c, it);
+            android.graphics.Matrix matrix = new android.graphics.Matrix();
+            matrix.setValues(new float[] {m[0], m[2], m[4], m[1], m[3], m[5], 0, 0, 1});
+            c.concat(matrix);
             for (Ink.Stroke s : selStrokes) renderer.drawStroke(c, s, revealed.contains(s.id));
             c.restore();
         }
         RectF b = shownBox();
+        float cx = b.centerX(), cy = b.centerY(), dot = 7 * density / scale;
+        c.save();
+        c.rotate((float) Math.toDegrees(mode == DRAG ? dragAngle : 0), cx, cy);
         dashed.setStrokeWidth(1.5f * density / scale);
         c.drawRect(b, dashed);
         dashed.setStrokeWidth(2 * density);
-        c.drawCircle(b.right, b.bottom, 9 * density / scale, handle);
+        for (float x : new float[] {b.left, b.right}) for (float y : new float[] {b.top, b.bottom}) c.drawCircle(x, y, dot, handle);
+        c.drawCircle(b.left, cy, dot, handle);
+        c.drawCircle(b.right, cy, dot, handle);
+        if (stretchesVertically()) {
+            c.drawCircle(cx, b.top, dot, handle);
+            c.drawCircle(cx, b.bottom, dot, handle);
+        }
+        if (rotates()) {
+            float gap = ROTATE_GAP * density / scale;
+            handle.setStrokeWidth(1.5f * density / scale);
+            c.drawLine(cx, b.top, cx, b.top - gap, handle);
+            c.drawCircle(cx, b.top - gap, dot * 1.25f, handle);
+        }
         c.restore();
+        c.restore();
+    }
+
+    private float[] selArray() {
+        return new float[] {selBox.left, selBox.top, selBox.right, selBox.bottom};
+    }
+
+    /** Un texto solo mide de alto lo que ocupan sus líneas. */
+    private boolean stretchesVertically() {
+        if (!selStrokes.isEmpty()) return true;
+        for (Ink.Item it : selItems) if (it.isImage() || it.isTable()) return true;
+        return false;
+    }
+
+    /** Las imágenes y los textos no se giran. */
+    private boolean rotates() {
+        return selItems.isEmpty();
+    }
+
+    /** Lleva un elemento a su sitio y tamaño nuevos (sin giro). */
+    private static void mapItem(Ink.Item it, float[] m, boolean even) {
+        float sx = m[0], sy = m[3];
+        it.x = sx * it.x + m[4];
+        it.y = sy * it.y + m[5];
+        if (it.isImage()) {
+            it.w *= sx;
+            it.h *= sy;
+        } else if (it.isTable()) {
+            it.w *= sx;
+            it.h *= sy;
+            it.size *= Math.min(sx, sy);
+        } else {
+            it.w = Math.max(40, it.w * sx);
+            if (even) it.size *= sx;
+        }
     }
 
     /** La caja de la selección con el arrastre en curso. */
     private RectF shownBox() {
-        return new RectF(selBox.left + tdx, selBox.top + tdy,
-                selBox.left + tdx + selBox.width() * tk, selBox.top + tdy + selBox.height() * tk);
+        return mode == DRAG ? new RectF(dragBox[0], dragBox[1], dragBox[2], dragBox[3]) : new RectF(selBox);
     }
 
     private void drawLasers(Canvas c) {
@@ -785,15 +845,11 @@ final class InkView extends View {
         return h < 0 ? e.getPressure(idx) : e.getHistoricalPressure(idx, h);
     }
 
-    /** ¿El punto (en pantalla) está sobre la selección? 1 = esquina de escalar, 2 = dentro. */
+    /** Qué parte de la selección hay en ese punto de la pantalla (SelectionMath). */
     private int selectionHit(float sx, float sy) {
-        if (selPage < 0) return 0;
-        float x = (sx - ox) / scale, y = (sy - oy) / scale - pageTop(selPage);
-        float r = 26 * density / scale;
-        if (Math.hypot(x - selBox.right, y - selBox.bottom) < r) return 1;
-        RectF b = new RectF(selBox);
-        b.inset(-8 * density / scale, -8 * density / scale);
-        return b.contains(x, y) ? 2 : 0;
+        if (selPage < 0) return SelectionMath.NONE;
+        float x = (sx - ox) / scale, y = (sy - oy) / scale - pageTop(selPage), k = density / scale;
+        return SelectionMath.hit(selArray(), x, y, 22 * k, 14 * k, stretchesVertically(), rotates(), ROTATE_GAP * k);
     }
 
     @Override
@@ -808,7 +864,7 @@ final class InkView extends View {
                     boolean finger = e.getToolType(idx) == MotionEvent.TOOL_TYPE_FINGER;
                     int hit = fingers == 0 ? selectionHit(e.getX(idx), e.getY(idx)) : 0;
                     if (hit > 0) {
-                        startDrag(e, idx, hit == 1);
+                        startDrag(e, idx, hit);
                         return true;
                     }
                     if (draws(e, idx)) {
@@ -977,10 +1033,6 @@ final class InkView extends View {
         pointerId = -1;
         removeCallbacks(holdCheck);
         if (mode == ERASE) finishErase();
-        else if (mode == DRAG) {
-            tdx = tdy = 0;
-            tk = 1;
-        }
         mode = NONE;
         current = null;
         lasso.clear();
@@ -1494,60 +1546,68 @@ final class InkView extends View {
         selPage = -1;
         selStrokes.clear();
         selItems.clear();
-        tdx = tdy = 0;
-        tk = 1;
         if (had && listener != null) listener.onSelection(false);
         invalidate();
     }
 
-    private void startDrag(MotionEvent e, int idx, boolean scale) {
+    private void startDrag(MotionEvent e, int idx, int hit) {
         pointerId = e.getPointerId(idx);
         mode = DRAG;
-        scaling = scale;
-        dragX = (e.getX(idx) - ox) / this.scale;
-        dragY = (e.getY(idx) - oy) / this.scale - pageTop(selPage);
-        tdx = tdy = 0;
-        tk = 1;
+        dragHandle = hit;
+        dragX = (e.getX(idx) - ox) / scale;
+        dragY = (e.getY(idx) - oy) / scale - pageTop(selPage);
+        dragBox = selArray();
+        dragAngle = 0;
         renderLayer();
     }
 
     private void drag(float x, float y) {
-        if (scaling) {
-            float w0 = selBox.width(), h0 = selBox.height();
-            float k = Math.max((selBox.width() + x - dragX) / w0, (selBox.height() + y - dragY) / h0);
-            tk = Math.max(0.15f, Math.min(8f, k));
+        if (dragHandle == SelectionMath.ROTATE) {
+            double a = Math.atan2(y - selBox.centerY(), x - selBox.centerX()) + Math.PI / 2;
+            dragAngle = SelectionMath.snapAngle(Math.atan2(Math.sin(a), Math.cos(a)));
         } else {
-            tdx = x - dragX;
-            tdy = y - dragY;
+            dragBox = SelectionMath.resize(dragHandle, selArray(), x - dragX, y - dragY);
         }
         invalidate();
     }
 
     private void finishDrag() {
         Ink.Page page = pages.get(selPage);
-        if (tdx == 0 && tdy == 0 && tk == 1) {
+        float[] box = selArray();
+        if (dragAngle == 0 && java.util.Arrays.equals(box, dragBox)) {
             renderLayer();
             return;
         }
         String old = page.toJson();
-        float ax = selBox.left, ay = selBox.top;
+        float[] m = SelectionMath.affine(box, dragBox, dragAngle);
+        boolean even = SelectionMath.uniform(box, dragBox);
+        // Al estirar en un sentido, la línea conserva su grosor.
+        float widthScale = even ? (dragBox[2] - dragBox[0]) / (box[2] - box[0]) : 1;
         for (int i = 0; i < selStrokes.size(); i++) {
-            Ink.Stroke s = selStrokes.get(i), t = s.transformed(ax, ay, tk, tdx, tdy);
+            Ink.Stroke s = selStrokes.get(i), t = s.mapped(m, widthScale);
             int at = page.strokes.indexOf(s);
             if (at >= 0) page.strokes.set(at, t);
             selStrokes.set(i, t);
         }
-        for (Ink.Item it : selItems) {
-            it.x = ax + (it.x - ax) * tk + tdx;
-            it.y = ay + (it.y - ay) * tk + tdy;
-            it.w *= tk;
-            it.h *= tk;
-            if (!it.isImage()) it.size *= tk;
-        }
-        tdx = tdy = 0;
-        tk = 1;
+        for (Ink.Item it : selItems) mapItem(it, m, even);
         updateSelBox();
         commitSnapshot(page, old);
+    }
+
+    /** El texto seleccionado, si es lo único seleccionado. */
+    Ink.Item selectedText() {
+        if (!selStrokes.isEmpty() || selItems.size() != 1) return null;
+        Ink.Item it = selItems.get(0);
+        return it.isImage() || it.isTable() ? null : it;
+    }
+
+    /** Abre el texto seleccionado para escribir en él. */
+    void editSelectedText() {
+        Ink.Item it = selectedText();
+        if (it == null) return;
+        int page = selPage;
+        clearSelection();
+        listener.onTextRequest(page, it, it.x, it.y);
     }
 
     /** Recolorea lo seleccionado (trazos y textos). */

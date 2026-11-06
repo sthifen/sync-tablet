@@ -174,6 +174,15 @@ final class Ink {
             return s;
         }
 
+        /** Copia con la transformación afín {a, b, c, d, e, f} y el grosor multiplicado. */
+        Stroke mapped(float[] m, float widthScale) {
+            Stroke s = new Stroke(id, tool, color, width * widthScale);
+            for (int i = 0; i < n; i++) {
+                s.add(m[0] * x(i) + m[2] * y(i) + m[4], m[1] * x(i) + m[3] * y(i) + m[5], p(i));
+            }
+            return s;
+        }
+
         Stroke(String id, String tool, int color, float width) {
             this.id = id;
             this.tool = tool;
