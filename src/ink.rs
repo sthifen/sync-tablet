@@ -114,6 +114,9 @@ pub struct Page {
     /// Notas adhesivas de la app: nunca salen en una exportación.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<serde_json::Value>,
+    /// Marcas del lápiz neurona: como las notas, solo las usa la tablet y nunca se exportan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<serde_json::Value>,
 }
 
 /// Un elemento de la hoja que no es un trazo.
@@ -252,7 +255,7 @@ mod tests {
     }
 
     fn page() -> Page {
-        Page { id: "p".into(), notebook: "n".into(), version: 0, background: Background::Plain, strokes: vec![], items: vec![], bg_asset: None, bg_text: None, notes: vec![] }
+        Page { id: "p".into(), notebook: "n".into(), version: 0, background: Background::Plain, strokes: vec![], items: vec![], bg_asset: None, bg_text: None, notes: vec![], marks: vec![] }
     }
 
     #[test]

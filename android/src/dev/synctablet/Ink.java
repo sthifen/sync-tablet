@@ -290,6 +290,50 @@ final class Ink {
     }
 
     /** Una nota adhesiva: es de la app, nunca sale al exportar. Puede quedar fuera de la hoja. */
+    /**
+     * Lo que el lápiz neurona rodeó en una página: una zona con sus palabras
+     * clave y sus enlaces a otras marcas. Como las notas, nunca se exporta.
+     */
+    static final class Mark {
+        final String id;
+        float x, y, w, h;
+        final ArrayList<String> words = new ArrayList<>();
+        final ArrayList<String> links = new ArrayList<>();
+
+        Mark(String id) {
+            this.id = id;
+        }
+
+        boolean contains(float px, float py) {
+            return px >= x && px <= x + w && py >= y && py <= y + h;
+        }
+
+        JSONObject toJsonObject() throws JSONException {
+            JSONObject o = new JSONObject();
+            o.put("id", id);
+            o.put("x", x);
+            o.put("y", y);
+            o.put("w", w);
+            o.put("h", h);
+            o.put("words", new JSONArray(words));
+            o.put("links", new JSONArray(links));
+            return o;
+        }
+
+        static Mark fromJson(JSONObject o) throws JSONException {
+            Mark m = new Mark(o.getString("id"));
+            m.x = (float) o.optDouble("x");
+            m.y = (float) o.optDouble("y");
+            m.w = (float) o.optDouble("w");
+            m.h = (float) o.optDouble("h");
+            JSONArray a = o.optJSONArray("words");
+            if (a != null) for (int i = 0; i < a.length(); i++) m.words.add(a.getString(i));
+            a = o.optJSONArray("links");
+            if (a != null) for (int i = 0; i < a.length(); i++) m.links.add(a.getString(i));
+            return m;
+        }
+    }
+
     static final class Note {
         final String id;
         String text = "";
@@ -346,6 +390,7 @@ final class Ink {
         final ArrayList<Stroke> strokes = new ArrayList<>();
         final ArrayList<Item> items = new ArrayList<>();
         final ArrayList<Note> notes = new ArrayList<>();
+        final ArrayList<Mark> marks = new ArrayList<>();
 
         /** Toma el contenido de otra (para deshacer volviendo a una copia). */
         void copyFrom(Page o) {
@@ -358,6 +403,8 @@ final class Ink {
             items.addAll(o.items);
             notes.clear();
             notes.addAll(o.notes);
+            marks.clear();
+            marks.addAll(o.marks);
         }
 
         Page(String id, String notebook) {
@@ -396,6 +443,17 @@ final class Ink {
                 }
                 b.append(']');
             }
+            if (!marks.isEmpty()) {
+                b.append(",\"marks\":[");
+                for (int i = 0; i < marks.size(); i++) {
+                    if (i > 0) b.append(',');
+                    try {
+                        b.append(marks.get(i).toJsonObject());
+                    } catch (JSONException ignored) {
+                    }
+                }
+                b.append(']');
+            }
             return b.append('}').toString();
         }
 
@@ -412,6 +470,8 @@ final class Ink {
             if (o.has("bg_text") && !o.isNull("bg_text")) p.bgText = o.getString("bg_text");
             JSONArray ns = o.optJSONArray("notes");
             if (ns != null) for (int i = 0; i < ns.length(); i++) p.notes.add(Note.fromJson(ns.getJSONObject(i)));
+            JSONArray ms = o.optJSONArray("marks");
+            if (ms != null) for (int i = 0; i < ms.length(); i++) p.marks.add(Mark.fromJson(ms.getJSONObject(i)));
             return p;
         }
     }

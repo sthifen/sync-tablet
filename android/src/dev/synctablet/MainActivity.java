@@ -237,7 +237,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         sidebar.addView(navItem(IconView.PLUS, "Nueva nota", v -> newNote()));
         sidebar.addView(navItem(IconView.PEN, "Nuevo cuaderno", v -> askNewNotebook()));
         sidebar.addView(navItem(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null)));
-        sidebar.addView(navItem(IconView.MOON, t.dark ? "Modo claro" : "Modo oscuro", v -> toggleTheme()));
+        sidebar.addView(navItem(IconView.NEURON, "Mapa de ideas", v -> startActivityForResult(new Intent(this, GraphActivity.class), OPEN_GRAPH)));
+        sidebar.addView(navItem(IconView.SLIDERS, "Organizar materias", v -> organize()));
         sidebar.addView(navItem(IconView.WAND, "Personalizar", v -> personalize()));
 
         ScrollView sv = new ScrollView(this);
@@ -578,15 +579,15 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         TextView title = text(folderView, 36, t.text, t.bold);
         title.setPadding(0, t.dp(14), 0, t.dp(6));
         pageBox.addView(title);
-        int nb = notebooksIn(folderView).size();
-        pageBox.addView(text(nb == 0 ? "Carpeta vacía" : nb == 1 ? "1 cuaderno" : nb + " cuadernos", 15, t.faint, t.regular));
+        int nb = notebooksIn(folderView).size(), nn = notesIn(folderView).size();
+        String what = nb + nn == 0 ? "Carpeta vacía" : (nb == 1 ? "1 cuaderno" : nb + " cuadernos") + (nn == 0 ? "" : nn == 1 ? " · 1 nota" : " · " + nn + " notas");
+        pageBox.addView(text(what, 15, t.faint, t.regular));
         LinearLayout actions = row();
         actions.setPadding(0, t.dp(14), 0, 0);
         actions.addView(pill("‹  Inicio", v -> { setFolderView(null); showHome(); }));
         String here = folderView;
         actions.addView(pill("Opciones de la carpeta", v -> folderMenu(here)));
         pageBox.addView(actions);
-        sectionTitle("Cuadernos");
         gallery();
         View end = new View(this);
         pageBox.addView(end, new LinearLayout.LayoutParams(-1, t.dp(120)));
@@ -647,6 +648,44 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     /** Galería de cuadernos: vista previa de la primera página, título y datos. */
     private void gallery() {
+        ArrayList<Ink.Notebook> list = notebooksIn(folderView == null ? "" : folderView);
+        list.sort((a, b) -> Long.compare(b.updated, a.updated));
+        ArrayList<View> views = new ArrayList<>();
+        String here = folderView;
+        if (here == null) {
+            for (String f : folders()) views.add(folderCard(f));
+            for (Ink.Notebook n : list) views.add(card(n));
+            views.add(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()));
+            views.add(actionCard(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null)));
+            grid(views);
+            return;
+        }
+        // Dentro de una materia, por meses.
+        String month = null;
+        for (Ink.Notebook n : list) {
+            String m = Topics.month(null, n.updated > 0 ? n.updated : System.currentTimeMillis());
+            if (!m.equals(month)) {
+                if (!views.isEmpty()) grid(views);
+                views = new ArrayList<>();
+                sectionTitle(m);
+                month = m;
+            }
+            views.add(card(n));
+        }
+        if (!views.isEmpty()) grid(views);
+        ArrayList<JSONObject> inside = notesIn(here);
+        if (!inside.isEmpty()) {
+            sectionTitle("Notas");
+            for (JSONObject n : inside) pageBox.addView(noteRow(n));
+        }
+        sectionTitle("Agregar");
+        views = new ArrayList<>();
+        views.add(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()));
+        views.add(actionCard(IconView.PAGES, "Agregar cuadernos", v -> addNotebooks(here)));
+        grid(views);
+    }
+
+    private void grid(ArrayList<View> views) {
         GridLayout grid = new GridLayout(this);
         int width = pageBox.getWidth() - pageBox.getPaddingLeft();
         if (width <= 0) width = getResources().getDisplayMetrics().widthPixels - t.dp(sidebar.getVisibility() == View.VISIBLE ? 400 : 130);
@@ -657,15 +696,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(-1, -2);
         glp.topMargin = t.dp(16);
         pageBox.addView(grid, glp);
-        ArrayList<Ink.Notebook> list = notebooksIn(folderView == null ? "" : folderView);
-        list.sort((a, b) -> Long.compare(b.updated, a.updated));
         int i = 0;
-        if (folderView == null) for (String f : folders()) grid.addView(folderCard(f), cell(i++, cols, cellW, gap));
-        for (Ink.Notebook n : list) grid.addView(card(n), cell(i++, cols, cellW, gap));
-        grid.addView(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()), cell(i++, cols, cellW, gap));
-        String here = folderView;
-        grid.addView(here == null ? actionCard(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null))
-                : actionCard(IconView.PAGES, "Agregar cuadernos", v -> addNotebooks(here)), cell(i, cols, cellW, gap));
+        for (View v : views) grid.addView(v, cell(i++, cols, cellW, gap));
     }
 
     /** La portada de una carpeta toma el color de su primer cuaderno. */
@@ -687,7 +719,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         name.setSingleLine(true);
         name.setEllipsize(TextUtils.TruncateAt.END);
         info.addView(name);
-        TextView s = text(inside.isEmpty() ? "Vacía" : inside.size() == 1 ? "1 cuaderno" : inside.size() + " cuadernos", 12, t.faint, t.regular);
+        int docs = inside.size() + notesIn(folder).size();
+        TextView s = text(docs == 0 ? "Vacía" : docs == 1 ? "1 documento" : docs + " documentos", 12, t.faint, t.regular);
         s.setPadding(0, t.dp(4), 0, 0);
         info.addView(s);
         c.addView(info);
@@ -1010,6 +1043,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         if (note != null) {
             tiles.add(new OptionDock.Tile(dock.letter(note.optString("icon", "📄")), "Cambiar icono", false, this::pickIcon).stays());
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Mover a carpeta", false, this::moveNoteToFolder).stays());
             if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPORT), "Exportar a Word", false, this::saveDocx));
         }
         if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Importar Word", false, this::pickDocx));
@@ -1021,7 +1055,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     // ---------------------------------------------------------------- Word
 
-    private static final int PICK_DOCX = 41, SAVE_DOCX = 42, PICK_LOOK = 43;
+    private static final int PICK_DOCX = 41, SAVE_DOCX = 42, PICK_LOOK = 43, OPEN_GRAPH = 44;
     private static final String DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     private void pickDocx() {
@@ -1040,6 +1074,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == OPEN_GRAPH && result == RESULT_OK && data != null && data.getStringExtra("note") != null) {
+            openNote(data.getStringExtra("note"));
+            return;
+        }
         if (result != RESULT_OK || data == null || data.getData() == null) return;
         if (request == PICK_LOOK) {
             android.net.Uri uri = data.getData();
@@ -1358,6 +1396,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         tiles.add(new OptionDock.Tile(lookTile(Looks.APP), "Fondo de la app", false, () -> editLook(Looks.APP, "Fondo de la app", true)).stays());
         tiles.add(new OptionDock.Tile(lookTile(Looks.HOME), "Portada de Inicio", false, () -> editLook(Looks.HOME, "Portada de Inicio", false)).stays());
         tiles.add(new OptionDock.Tile(lookTile(Looks.DESK), "Detrás de las hojas", false, () -> editLook(Looks.DESK, "Detrás de las hojas", false)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, this::toggleTheme));
         dock.tiles("Personalizar", tiles);
     }
 
@@ -1426,6 +1465,167 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         return bar;
     }
 
+    // ---- Organizar materias ----
+
+    /** Un documento suelto y lo que se le propone. */
+    private static final class Proposal {
+        Ink.Notebook notebook;
+        String noteId, title, subject, month, course;
+        int confidence;
+        boolean chosen = true;
+    }
+
+    /** Lee lo escrito a máquina de todo lo suelto y propone; nada se mueve sin confirmar. */
+    private void organize() {
+        Ui.toast(this, "Leyendo tus documentos…");
+        new Thread(() -> {
+            HashMap<String, String> learned = new HashMap<>();
+            HashMap<String, String> texts = new HashMap<>();
+            HashMap<String, String> placed = noteFolders();
+            for (Ink.Notebook n : new ArrayList<>(store.notebooks())) {
+                StringBuilder b = new StringBuilder();
+                for (int i = 0; i < Math.min(n.pages.size(), 40); i++) b.append(Store.text(store.peek(n.pages.get(i))));
+                texts.put(n.id, b.toString());
+                if (!n.folder.isEmpty()) learned.merge(n.folder, n.title + " " + b, (x, y) -> x + " " + y);
+            }
+            ArrayList<JSONObject> all = notes.list();
+            for (JSONObject n : all) {
+                String folder = placed.get(n.optString("id"));
+                if (folder != null) learned.merge(folder, n.optString("title") + " " + Notes.text(n), (x, y) -> x + " " + y);
+            }
+            for (String folder : folders()) learned.putIfAbsent(folder, folder);
+            ArrayList<Proposal> found = new ArrayList<>();
+            int unread = 0;
+            for (Ink.Notebook n : new ArrayList<>(store.notebooks())) {
+                if (!n.folder.isEmpty()) continue;
+                String text = texts.get(n.id);
+                Topics.Guess g = Topics.classify(n.title, text, learned);
+                if (g.subject == null) {
+                    unread++;
+                    continue;
+                }
+                Proposal p = proposal(n.title, g, text, n.updated);
+                p.notebook = n;
+                found.add(p);
+            }
+            for (JSONObject n : all) {
+                if (placed.containsKey(n.optString("id"))) continue;
+                String title = n.optString("title"), text = Notes.text(n);
+                Topics.Guess g = Topics.classify(title, text, learned);
+                if (g.subject == null) {
+                    unread++;
+                    continue;
+                }
+                Proposal p = proposal(title.isEmpty() ? "Sin título" : title, g, text, n.optLong("updated"));
+                p.noteId = n.optString("id");
+                found.add(p);
+            }
+            found.sort((a, b) -> a.subject.compareTo(b.subject));
+            int left = unread;
+            main.post(() -> {
+                if (!isFinishing()) showProposals(found, left);
+            });
+        }).start();
+    }
+
+    private static Proposal proposal(String title, Topics.Guess g, String text, long updated) {
+        Proposal p = new Proposal();
+        p.title = title;
+        p.subject = g.subject;
+        p.confidence = g.confidence;
+        p.month = Topics.month(text, updated > 0 ? updated : System.currentTimeMillis());
+        p.course = Topics.course(text);
+        // Si no se está seguro, que no vaya marcado.
+        p.chosen = g.confidence >= 55;
+        return p;
+    }
+
+    private void showProposals(ArrayList<Proposal> found, int left) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(t.dp(20), 0, t.dp(20), t.dp(8));
+        String note = left == 0 ? "" : left == 1 ? "1 documento sin texto suficiente (a mano): no lo toco." : left + " documentos sin texto suficiente (a mano): no los toco.";
+        if (found.isEmpty()) {
+            box.addView(dock.message(note.isEmpty() ? "No hay documentos sueltos por organizar." : note));
+            dock.show("Organizar materias", box, new OptionDock.Action("Listo", true, null));
+            return;
+        }
+        if (!note.isEmpty()) box.addView(dock.message(note + " Con el lápiz neurona sus palabras clave también cuentan."));
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list);
+        for (Proposal p : found) {
+            LinearLayout r = row();
+            r.setPadding(t.dp(8), t.dp(8), t.dp(4), t.dp(8));
+            r.setBackground(pressable(false));
+            TextView mark = text(p.chosen ? "☑" : "☐", 22, t.text, t.regular);
+            r.addView(mark, new LinearLayout.LayoutParams(t.dp(36), -2));
+            LinearLayout info = new LinearLayout(this);
+            info.setOrientation(LinearLayout.VERTICAL);
+            TextView name = text(p.title, 15, t.text, t.medium);
+            name.setSingleLine(true);
+            name.setEllipsize(TextUtils.TruncateAt.END);
+            info.addView(name);
+            TextView sub = text(describe(p), 13, t.muted, t.regular);
+            sub.setPadding(0, t.dp(3), 0, 0);
+            info.addView(sub);
+            r.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
+            r.setOnClickListener(v -> {
+                p.chosen = !p.chosen;
+                mark.setText(p.chosen ? "☑" : "☐");
+            });
+            r.addView(pill("Cambiar", v -> {
+                EditText e = field(p.subject);
+                ask("Materia de «" + p.title + "»", e, "Usar", () -> {
+                    String subject = e.getText().toString().trim();
+                    if (!subject.isEmpty()) {
+                        p.subject = subject;
+                        p.chosen = true;
+                        p.confidence = 100;
+                    }
+                    showProposals(found, left);
+                });
+            }));
+            list.addView(r);
+        }
+        box.addView(scroll, new LinearLayout.LayoutParams(-1, t.dp(Math.min(400, 68 * found.size()))));
+        dock.show("Organizar materias", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Ordenar", true, () -> applyProposals(found)));
+    }
+
+    private static String describe(Proposal p) {
+        String s = p.subject + " · " + p.month;
+        if (!p.course.isEmpty()) s += " · " + p.course;
+        return s + (p.confidence >= 100 ? "" : " · " + p.confidence + " %");
+    }
+
+    /** Cada materia es una carpeta; una sigla de curso queda en su nombre. */
+    private void applyProposals(ArrayList<Proposal> found) {
+        java.util.TreeSet<String> all = folders();
+        HashMap<String, String> map = noteFolders();
+        int moved = 0;
+        for (Proposal p : found) {
+            if (!p.chosen) continue;
+            String folder = p.subject;
+            boolean code = p.course.matches("[A-Z]{2,5}\\d{3,5}");
+            if (code && !all.contains(folder)) folder += " · " + p.course;
+            all.add(folder);
+            if (p.notebook != null) {
+                p.notebook.folder = folder;
+                sync.sendNotebook(p.notebook);
+            } else {
+                map.put(p.noteId, folder);
+            }
+            moved++;
+        }
+        keepFolders(all);
+        keepNoteFolders(map);
+        store.saveNotebooks();
+        renderSidebar();
+        if (noteId == null) showHome();
+        Ui.toast(this, moved == 1 ? "1 documento ordenado" : moved + " documentos ordenados");
+    }
+
     // ---- Carpetas ----
     // Un cuaderno guarda el nombre de su carpeta (y eso llega al PC); las que
     // aún están vacías solo existen en esta lista de la tablet.
@@ -1433,7 +1633,52 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private java.util.TreeSet<String> folders() {
         java.util.TreeSet<String> all = new java.util.TreeSet<>(prefs.getStringSet("folders", java.util.Collections.emptySet()));
         for (Ink.Notebook n : store.notebooks()) if (!n.folder.isEmpty()) all.add(n.folder);
+        all.addAll(noteFolders().values());
         return all;
+    }
+
+    /** Nota → carpeta. Las notas no viajan con carpeta al PC: esto es de la tablet. */
+    private HashMap<String, String> noteFolders() {
+        HashMap<String, String> map = new HashMap<>();
+        try {
+            JSONObject o = new JSONObject(prefs.getString("noteFolders", "{}"));
+            for (java.util.Iterator<String> k = o.keys(); k.hasNext(); ) {
+                String id = k.next();
+                if (notes.note(id) != null) map.put(id, o.getString(id));
+            }
+        } catch (JSONException ignored) {
+        }
+        return map;
+    }
+
+    private void keepNoteFolders(HashMap<String, String> map) {
+        prefs.edit().putString("noteFolders", new JSONObject(map).toString()).apply();
+    }
+
+    private ArrayList<JSONObject> notesIn(String folder) {
+        ArrayList<JSONObject> list = new ArrayList<>();
+        HashMap<String, String> map = noteFolders();
+        for (JSONObject n : sortedNotes()) if (folder.equals(map.get(n.optString("id")))) list.add(n);
+        return list;
+    }
+
+    private void moveNoteToFolder() {
+        String id = noteId;
+        HashMap<String, String> map = noteFolders();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (String folder : folders()) {
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), folder, folder.equals(map.get(id)), () -> {
+                map.put(id, folder);
+                keepNoteFolders(map);
+                renderSidebar();
+            }));
+        }
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.HOME), "Sin carpeta", !map.containsKey(id), () -> {
+            map.remove(id);
+            keepNoteFolders(map);
+            renderSidebar();
+        }));
+        dock.tiles("Mover la nota a", tiles);
     }
 
     private void keepFolders(java.util.Set<String> all) {
@@ -1542,6 +1787,9 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 sync.sendNotebook(n);
             }
             store.saveNotebooks();
+            HashMap<String, String> map = noteFolders();
+            map.replaceAll((id, f) -> f.equals(folder) ? name : f);
+            keepNoteFolders(map);
             if (folder.equals(folderView)) setFolderView(name);
             renderSidebar();
             if (noteId == null) showHome();
@@ -1557,6 +1805,9 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 sync.sendNotebook(n);
             }
             store.saveNotebooks();
+            HashMap<String, String> map = noteFolders();
+            map.values().removeIf(folder::equals);
+            keepNoteFolders(map);
             java.util.TreeSet<String> all = folders();
             all.remove(folder);
             keepFolders(all);

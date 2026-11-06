@@ -284,7 +284,7 @@ mod tests {
     use super::*;
 
     fn page(strokes: Vec<Stroke>, background: Background) -> Page {
-        Page { id: "p".into(), notebook: "n".into(), version: 1, background, strokes, items: vec![], bg_asset: None, bg_text: None, notes: vec![] }
+        Page { id: "p".into(), notebook: "n".into(), version: 1, background, strokes, items: vec![], bg_asset: None, bg_text: None, notes: vec![], marks: vec![] }
     }
 
     #[test]

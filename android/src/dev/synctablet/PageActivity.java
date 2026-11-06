@@ -84,10 +84,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     /** El número de cada acción se guarda en las preferencias: las nuevas van al final. */
     private static final String[] PEN_ACTIONS = {"Pluma y goma", "Deshacer", "Lazo", "Puntero láser", "Resaltador", "Nada",
             "Rehacer", "Página siguiente", "Página anterior", "Página nueva", "Figuras", "Texto", "Nota", "Presentar",
-            "Dibujar con el dedo", "Siguiente color", "Siguiente grosor", "Hoja oscura o clara"};
+            "Dibujar con el dedo", "Siguiente color", "Siguiente grosor", "Hoja oscura o clara", "Lápiz neurona"};
     private static final int[] PEN_ICONS = {IconView.ERASER, IconView.UNDO, IconView.LASSO, IconView.LASER, IconView.HIGHLIGHTER, IconView.MORE,
             IconView.REDO, IconView.NEXT, IconView.PREV, IconView.PLUS, IconView.SHAPES, IconView.TEXT, IconView.NOTE, IconView.PLAY,
-            IconView.HAND, IconView.DOTS, IconView.SLIDERS, IconView.MOON};
+            IconView.HAND, IconView.DOTS, IconView.SLIDERS, IconView.MOON, IconView.NEURON};
     /** En presentación; PresentActivity.act usa estos mismos números. */
     private static final String[] SLIDE_ACTIONS = {"Siguiente", "Anterior", "Primera", "Salir", "Nada"};
     private static final int[] SLIDE_ICONS = {IconView.NEXT, IconView.PREV, IconView.HOME, IconView.BACK, IconView.MORE};
@@ -118,7 +118,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private int dockCollapsedWidth;
     private final IconView[] shapeButtons = new IconView[SHAPE_KINDS.length];
     private TextView title;
-    private IconView pen, highlighter, eraser, lasso, shapes, text, note, tape, laser, undo, redo, finger;
+    private IconView pen, highlighter, eraser, lasso, shapes, text, note, neuron, tape, laser, undo, redo, finger;
     private View dot;
     private LinearLayout colors, widths;
     private int customColor;
@@ -331,7 +331,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         tape = icon(IconView.TAPE, "Cinta: tapa algo; tócala con el dedo para destaparla", v -> setTool(InkView.TAPE));
         laser = icon(IconView.LASER, "Puntero láser (también en el PC)", v -> setTool(InkView.LASER));
         note = icon(IconView.NOTE, "Notas: no salen al exportar; pueden ir fuera de la hoja", v -> setTool(InkView.NOTE));
-        for (View t : new View[] {pen, highlighter, eraser, lasso, shapes, text, note, tape, laser}) row.addView(t);
+        neuron = icon(IconView.NEURON, "Lápiz neurona: rodea lo que se relaciona", v -> setTool(InkView.LINK));
+        for (View t : new View[] {pen, highlighter, eraser, lasso, shapes, text, note, neuron, tape, laser}) row.addView(t);
         row.addView(sep(false));
 
         undo = icon(IconView.UNDO, "Deshacer", v -> ink.undo());
@@ -610,7 +611,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         } else if (t != InkView.NOTE && ink.tool == InkView.NOTE) {
             ink.roomForNotes(false);
         }
+        if (t == InkView.LINK) hintOnce("neuronHint", "Rodea algo para marcarlo con palabras clave. De una marca a otra, trázalas para enlazarlas. Tócala para editarla");
         ink.tool = t;
+        ink.invalidate();
         if (t != InkView.SHAPE) closeDockNow();
         if (t != InkView.LASSO) ink.clearSelection();
         refreshTools();
@@ -626,6 +629,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         laser.setActive(ink.tool == InkView.LASER);
         shapes.setActive(ink.tool == InkView.SHAPE);
         note.setActive(ink.tool == InkView.NOTE);
+        neuron.setActive(ink.tool == InkView.LINK);
         for (int i = 0; i < CIRCUIT_KINDS.length; i++) circuitButtons[i].setActive(ink.shapeKind == CIRCUIT_KINDS[i]);
         shapeBar.setVisibility(ink.tool == InkView.SHAPE ? View.VISIBLE : View.GONE);
         for (int i = 0; i < SHAPE_KINDS.length; i++) shapeButtons[i].setActive(ink.shapeKind == SHAPE_KINDS[i]);
@@ -912,6 +916,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             case 17:
                 togglePaper();
                 break;
+            case 18:
+                setTool(InkView.LINK);
+                break;
             default:
         }
     }
@@ -1084,6 +1091,57 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             }
             c.restore();
         }
+    }
+
+    @Override
+    public void onMarksLinked() {
+        Ui.toast(this, "Enlazadas");
+    }
+
+    /** Palabras clave de una marca: las sugiere lo escrito ahí y lo que ya usaste. */
+    @Override
+    public void onMarkRequest(int page, Ink.Mark mark, float x, float y, float w, float h) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 20);
+        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
+        EditText field = dock.field(mark != null ? String.join(", ", mark.words) : "", "Palabras clave, separadas por coma");
+        box.addView(field);
+        java.util.LinkedHashSet<String> ideas = new java.util.LinkedHashSet<>(Topics.keywords(ink.textNear(page, x, y, w, h), 6));
+        java.util.Set<String> used = prefs.getStringSet("markWords", java.util.Collections.emptySet());
+        ideas.addAll(used);
+        if (!ideas.isEmpty()) {
+            LinearLayout chips = new LinearLayout(this);
+            int shown = 0;
+            for (String idea : ideas) {
+                if (shown++ == 12) break;
+                TextView chip = dock.chip(idea, false);
+                chip.setOnClickListener(v -> {
+                    String now = field.getText().toString().trim();
+                    field.setText(now.isEmpty() ? idea : now + ", " + idea);
+                    field.setSelection(field.length());
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.rightMargin = Ui.dp(this, 6);
+                chips.addView(chip, lp);
+            }
+            HorizontalScrollView scroll = new HorizontalScrollView(this);
+            scroll.setHorizontalScrollBarEnabled(false);
+            scroll.addView(chips);
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            slp.topMargin = Ui.dp(this, 8);
+            box.addView(scroll, slp);
+        }
+        OptionDock.Action keep = new OptionDock.Action("Guardar", true, () -> {
+            String words = field.getText().toString();
+            ink.putMark(page, mark, x, y, w, h, words);
+            java.util.HashSet<String> all = new java.util.HashSet<>(prefs.getStringSet("markWords", java.util.Collections.emptySet()));
+            for (String word : words.split(",")) if (!word.trim().isEmpty()) all.add(word.trim());
+            prefs.edit().putStringSet("markWords", all).apply();
+        });
+        if (mark == null) dock.show("Marca nueva", box, new OptionDock.Action("Cancelar", false, null), keep);
+        else dock.show("Marca", box, new OptionDock.Action("Quitar", false, () -> ink.removeMark(page, mark)), keep);
+        dock.focus(field);
     }
 
     @Override

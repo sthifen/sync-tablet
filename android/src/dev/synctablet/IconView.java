@@ -15,7 +15,7 @@ final class IconView extends View {
     static final int BACK = 0, PEN = 1, HIGHLIGHTER = 2, ERASER = 3, SHAPES = 4, UNDO = 5, REDO = 6,
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
             LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29,
-            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44, CAMERA = 45, FILE = 46, TABLE = 47, PASTE = 48, SLIDES = 49, GRID_DOC = 50, FOLDER = 51;
+            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44, CAMERA = 45, FILE = 46, TABLE = 47, PASTE = 48, SLIDES = 49, GRID_DOC = 50, FOLDER = 51, NEURON = 52;
 
     private final int icon;
     private final Path path;
@@ -159,6 +159,17 @@ final class IconView extends View {
                 p.addRoundRect(new RectF(3.5f, 4.5f, 20.5f, 19.5f), 2.5f, 2.5f, Path.Direction.CW);
                 p.addCircle(9, 9.5f, 1.6f, Path.Direction.CW);
                 p.moveTo(4, 17); p.lineTo(9.5f, 12.5f); p.lineTo(13, 15.5f); p.lineTo(16, 13); p.lineTo(20, 16.5f);
+                break;
+            case NEURON:
+                p.addCircle(12, 12, 3.2f, Path.Direction.CW);
+                p.addCircle(4.8f, 5.5f, 1.9f, Path.Direction.CW);
+                p.addCircle(19.5f, 6.5f, 1.9f, Path.Direction.CW);
+                p.addCircle(6, 19.5f, 1.9f, Path.Direction.CW);
+                p.addCircle(19, 18.5f, 1.9f, Path.Direction.CW);
+                p.moveTo(6.2f, 6.8f); p.lineTo(9.7f, 9.8f);
+                p.moveTo(18, 7.6f); p.lineTo(14.6f, 10.2f);
+                p.moveTo(7.3f, 18.2f); p.lineTo(9.8f, 14.4f);
+                p.moveTo(17.6f, 17.2f); p.lineTo(14.3f, 14.3f);
                 break;
             case FOLDER:
                 p.moveTo(3.5f, 18); p.lineTo(3.5f, 6.5f); p.quadTo(3.5f, 5, 5, 5); p.lineTo(9.5f, 5); p.lineTo(11.5f, 7.5f);

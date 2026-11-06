@@ -18,6 +18,7 @@ import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 
 import java.util.ArrayDeque;
+import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -56,7 +57,7 @@ final class InkView extends View {
     private static final long LINE_MEMORY_MS = 15000;
     private static final float ATTACH = 16;
 
-    static final int PEN = 0, HIGHLIGHTER = 1, ERASER = 2, LASSO = 3, TEXT = 4, LASER = 5, TAPE = 6, SHAPE = 7, NOTE = 8;
+    static final int PEN = 0, HIGHLIGHTER = 1, ERASER = 2, LASSO = 3, TEXT = 4, LASER = 5, TAPE = 6, SHAPE = 7, NOTE = 8, LINK = 9;
 
     interface Listener {
         /** Un mensaje para el PC (trazo, borrado, página entera, láser). */
@@ -74,6 +75,12 @@ final class InkView extends View {
         void onTextRequest(int page, Ink.Item item, float x, float y);
         /** Crear (note null) o editar una nota, en la página dada. */
         void onNoteRequest(int page, Ink.Note note, float x, float y);
+
+        /** Rodear algo con el lápiz neurona, o tocar una marca (`mark` no es null). */
+        void onMarkRequest(int page, Ink.Mark mark, float x, float y, float w, float h);
+
+        /** Dos marcas quedaron enlazadas con el lápiz neurona. */
+        void onMarksLinked();
         /** Poner el valor de un componente de circuito. */
         void onValueRequest(int page, Ink.Stroke component, String current);
         /** Con la herramienta de texto sobre una hoja de cálculo: editarla. */
@@ -180,7 +187,7 @@ final class InkView extends View {
     private float fingerDownX, fingerDownY;
 
     // Lo que hace el puntero que dibuja.
-    private static final int NONE = 0, STROKE = 1, ERASE = 2, LASSO_DRAW = 3, DRAG = 4, LASER_DRAW = 5, TEXT_TAP = 6, NOTE_MOVE = 7, NOTE_ARROW = 8, NOTE_NEW = 9;
+    private static final int NONE = 0, STROKE = 1, ERASE = 2, LASSO_DRAW = 3, DRAG = 4, LASER_DRAW = 5, TEXT_TAP = 6, NOTE_MOVE = 7, NOTE_ARROW = 8, NOTE_NEW = 9, LINK_DRAW = 10;
     private int mode = NONE;
     private int pointerId = -1;
     private int currentPage;
@@ -749,6 +756,7 @@ final class InkView extends View {
             c.restore();
         }
         drawNotes(c);
+        drawMarks(c);
         drawLasso(c);
         drawSelection(c);
         drawLasers(c);
@@ -1255,6 +1263,205 @@ final class InkView extends View {
         invalidate();
     }
 
+    // ---- Lápiz neurona ----
+
+    private static final int[] MARK_COLORS = {0xFF22D3EE, 0xFFA78BFA, 0xFFF472B6, 0xFF34D399, 0xFFFBBF24, 0xFF60A5FA, 0xFFFB923C};
+    private float[] linkPath = new float[256];
+    private int linkN;
+    private final Paint markFill = new Paint(Paint.ANTI_ALIAS_FLAG), markLine = new Paint(Paint.ANTI_ALIAS_FLAG), markText = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path markCurve = new Path();
+    private final RectF markBox = new RectF();
+
+    /** Cada palabra clave tiene su color en todas las páginas. */
+    static int markColor(Ink.Mark m) {
+        return m.words.isEmpty() ? 0xFF94A3B8 : MARK_COLORS[Math.floorMod(m.words.get(0).toLowerCase(java.util.Locale.ROOT).hashCode(), MARK_COLORS.length)];
+    }
+
+    private Ink.Mark markAt(Ink.Page p, float x, float y) {
+        for (int i = p.marks.size() - 1; i >= 0; i--) if (p.marks.get(i).contains(x, y)) return p.marks.get(i);
+        return null;
+    }
+
+    private void addLinkPoint(float x, float y) {
+        if (linkN + 2 > linkPath.length) linkPath = java.util.Arrays.copyOf(linkPath, linkPath.length * 2);
+        linkPath[linkN++] = x;
+        linkPath[linkN++] = y;
+        invalidate();
+    }
+
+    /** Un toque abre la marca; de marca a marca, las enlaza; rodear algo crea una. */
+    private void finishLink() {
+        int n = linkN;
+        linkN = 0;
+        invalidate();
+        if (n < 2 || pages.isEmpty()) return;
+        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+        for (int i = 0; i < n; i += 2) {
+            minX = Math.min(minX, linkPath[i]);
+            maxX = Math.max(maxX, linkPath[i]);
+            minY = Math.min(minY, linkPath[i + 1]);
+            maxY = Math.max(maxY, linkPath[i + 1]);
+        }
+        int first = pageAt(linkPath[1]), last = pageAt(linkPath[n - 1]);
+        Ink.Page pa = pages.get(first), pb = pages.get(last);
+        Ink.Mark a = markAt(pa, linkPath[0], linkPath[1] - pageTop(first));
+        Ink.Mark b = markAt(pb, linkPath[n - 2], linkPath[n - 1] - pageTop(last));
+        if (maxX - minX + maxY - minY < 16) {
+            if (a != null) listener.onMarkRequest(first, a, a.x, a.y, a.w, a.h);
+            return;
+        }
+        if (a != null && b != null && a != b) {
+            String oldA = pa.toJson(), oldB = pb.toJson();
+            if (!a.links.contains(b.id)) a.links.add(b.id);
+            if (!b.links.contains(a.id)) b.links.add(a.id);
+            commitSnapshot(pa, oldA);
+            if (pb != pa) commitSnapshot(pb, oldB);
+            listener.onMarksLinked();
+            invalidate();
+            return;
+        }
+        if (maxX - minX < 30 || maxY - minY < 16) return;
+        float top = pageTop(first);
+        listener.onMarkRequest(first, null, minX, minY - top, maxX - minX, Math.min(maxY - top, Ink.H) - (minY - top));
+    }
+
+    /** Guarda una marca; `words` es lo que el usuario escribió, separado por comas. */
+    void putMark(int index, Ink.Mark mark, float x, float y, float w, float h, String words) {
+        Ink.Page page = pages.get(index);
+        String old = page.toJson();
+        if (mark == null) {
+            mark = new Ink.Mark(Ink.newId());
+            mark.x = x;
+            mark.y = y;
+            mark.w = w;
+            mark.h = h;
+            page.marks.add(mark);
+        }
+        mark.words.clear();
+        for (String word : words.split(",")) if (!word.trim().isEmpty()) mark.words.add(word.trim());
+        commitSnapshot(page, old);
+        invalidate();
+    }
+
+    /** Quita la marca y los enlaces que otras marcas tenían hacia ella. */
+    void removeMark(int index, Ink.Mark mark) {
+        Ink.Page page = pages.get(index);
+        for (Ink.Page p : pages) {
+            if (p != page && !hasLinkTo(p, mark.id)) continue;
+            String old = p.toJson();
+            for (Ink.Mark m : p.marks) m.links.remove(mark.id);
+            if (p == page) page.marks.remove(mark);
+            commitSnapshot(p, old);
+        }
+        invalidate();
+    }
+
+    private static boolean hasLinkTo(Ink.Page p, String id) {
+        for (Ink.Mark m : p.marks) if (m.links.contains(id)) return true;
+        return false;
+    }
+
+    /** Lo escrito a máquina dentro de una zona: da las palabras que se sugieren. */
+    String textNear(int index, float x, float y, float w, float h) {
+        Ink.Page p = pages.get(index);
+        StringBuilder b = new StringBuilder();
+        for (Ink.Item it : p.items) {
+            if (it.text != null && it.x < x + w && it.x + it.w > x && it.y < y + h && it.y + renderer.itemHeight(it) > y) b.append(it.text).append(' ');
+        }
+        if (b.length() == 0 && p.bgText != null) b.append(p.bgText);
+        return b.toString();
+    }
+
+    private void drawMarks(Canvas c) {
+        boolean editing = tool == LINK;
+        HashMap<String, float[]> centers = null;
+        float top = -oy / scale, bottom = (getHeight() - oy) / scale;
+        float px = 1 / scale;
+        for (int i = 0; i < pages.size(); i++) {
+            Ink.Page p = pages.get(i);
+            if (p.marks.isEmpty()) continue;
+            float y = pageTop(i);
+            if (centers == null) centers = new HashMap<>();
+            for (Ink.Mark m : p.marks) centers.put(m.id, new float[] {m.x + m.w / 2, y + m.y + m.h / 2});
+            if (y > bottom || y + Ink.H < top) continue;
+            onScreenPage(c, i);
+            for (Ink.Mark m : p.marks) {
+                int color = markColor(m);
+                markBox.set(m.x, m.y, m.x + m.w, m.y + m.h);
+                markFill.setColor(color & 0xFFFFFF | (editing ? 0x26000000 : 0x10000000));
+                c.drawRoundRect(markBox, 16, 16, markFill);
+                markLine.setStyle(Paint.Style.STROKE);
+                markLine.setColor(color & 0xFFFFFF | 0x33000000);
+                markLine.setStrokeWidth(9 * density * px);
+                if (editing) c.drawRoundRect(markBox, 16, 16, markLine);
+                markLine.setColor(color & 0xFFFFFF | (editing ? 0xE6000000 : 0x66000000));
+                markLine.setStrokeWidth(1.6f * density * px);
+                c.drawRoundRect(markBox, 16, 16, markLine);
+                if (m.words.isEmpty()) continue;
+                markText.setTextSize(13 * density * px);
+                markText.setFakeBoldText(true);
+                String label = String.join(" · ", m.words);
+                float tw = markText.measureText(label), pad = 7 * density * px, th = 20 * density * px;
+                markBox.set(m.x, m.y - th - 3 * density * px, m.x + tw + 2 * pad, m.y - 3 * density * px);
+                markFill.setColor(color);
+                c.drawRoundRect(markBox, th / 2, th / 2, markFill);
+                markText.setColor(0xFF0B1220);
+                c.drawText(label, m.x + pad, markBox.bottom - 6 * density * px, markText);
+            }
+            c.restore();
+        }
+        if (centers != null) drawMarkLinks(c, centers);
+        if (linkN >= 4) {
+            c.save();
+            c.translate(ox, oy);
+            c.scale(scale, scale);
+            markCurve.reset();
+            markCurve.moveTo(linkPath[0], linkPath[1]);
+            for (int i = 2; i + 1 < linkN; i += 2) markCurve.lineTo(linkPath[i], linkPath[i + 1]);
+            markLine.setStyle(Paint.Style.STROKE);
+            markLine.setStrokeCap(Paint.Cap.ROUND);
+            markLine.setColor(0x4422D3EE);
+            markLine.setStrokeWidth(10 * density * px);
+            c.drawPath(markCurve, markLine);
+            markLine.setColor(0xFF22D3EE);
+            markLine.setStrokeWidth(2.4f * density * px);
+            c.drawPath(markCurve, markLine);
+            c.restore();
+        }
+    }
+
+    /** Los enlaces: curvas de un centro a otro, una vez por pareja. */
+    private void drawMarkLinks(Canvas c, HashMap<String, float[]> centers) {
+        float px = 1 / scale;
+        c.save();
+        c.translate(ox, oy);
+        c.scale(scale, scale);
+        markLine.setStyle(Paint.Style.STROKE);
+        markLine.setStrokeCap(Paint.Cap.ROUND);
+        for (int i = 0; i < pages.size(); i++) {
+            for (Ink.Mark m : pages.get(i).marks) {
+                float[] a = centers.get(m.id);
+                for (String other : m.links) {
+                    float[] b = centers.get(other);
+                    if (b == null || m.id.compareTo(other) > 0) continue;
+                    // El punto de control se aparta de la línea recta, hacia un lado.
+                    float dx = b[0] - a[0], dy = b[1] - a[1], k = 0.18f;
+                    markCurve.reset();
+                    markCurve.moveTo(a[0], a[1]);
+                    markCurve.quadTo((a[0] + b[0]) / 2 - dy * k, (a[1] + b[1]) / 2 + dx * k, b[0], b[1]);
+                    int color = markColor(m);
+                    markLine.setColor(color & 0xFFFFFF | 0x33000000);
+                    markLine.setStrokeWidth(8 * density * px);
+                    c.drawPath(markCurve, markLine);
+                    markLine.setColor(color & 0xFFFFFF | 0xCC000000);
+                    markLine.setStrokeWidth(2 * density * px);
+                    c.drawPath(markCurve, markLine);
+                }
+            }
+        }
+        c.restore();
+    }
+
     private void drawNotes(Canvas c) {
         float top = -oy / scale, bottom = (getHeight() - oy) / scale;
         for (int i = 0; i < pages.size(); i++) {
@@ -1494,6 +1701,9 @@ final class InkView extends View {
             lasso.clear();
         } else if (tool == NOTE) {
             startNote(e, idx);
+        } else if (tool == LINK) {
+            mode = LINK_DRAW;
+            linkN = 0;
         } else if (tool == TEXT) {
             mode = TEXT_TAP;
         } else if (tool == LASER) {
@@ -1543,6 +1753,9 @@ final class InkView extends View {
             case DRAG:
                 drag(docX, docY - pageTop(selPage));
                 return;
+            case LINK_DRAW:
+                addLinkPoint(docX, docY);
+                return;
             case LASER_DRAW:
                 if (2 * laserN + 2 > laser.length) laser = java.util.Arrays.copyOf(laser, laser.length * 2);
                 laser[2 * laserN] = docX;
@@ -1577,6 +1790,9 @@ final class InkView extends View {
                 break;
             case DRAG:
                 finishDrag();
+                break;
+            case LINK_DRAW:
+                finishLink();
                 break;
             case LASER_DRAW: {
                 laserEnds.set(laserEnds.size() - 1, SystemClock.uptimeMillis());

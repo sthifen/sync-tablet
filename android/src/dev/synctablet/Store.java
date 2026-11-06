@@ -88,6 +88,8 @@ final class Store {
     synchronized Ink.Page duplicatePage(Ink.Notebook n, Ink.Page from, int at) {
         Ink.Page p = new Ink.Page(Ink.newId(), n.id);
         p.copyFrom(from);
+        // Una marca es de un sitio: la copia no hereda enlaces.
+        p.marks.clear();
         // Las imágenes y textos se pueden mover: cada página con los suyos.
         for (int i = 0; i < p.items.size(); i++) p.items.set(i, p.items.get(i).copy(p.items.get(i).id));
         n.pages.add(at, p.id);
@@ -120,6 +122,34 @@ final class Store {
             android.util.Log.e("SyncTablet", "página ilegible " + id, e);
             return null;
         }
+    }
+
+    /**
+     * Texto y marcas de una página sin dejarla en memoria: revisar todos los
+     * cuadernos para el mapa o las materias no debe cargar todos los trazos.
+     */
+    synchronized Ink.Page peek(String id) {
+        Ink.Page p = pages.get(id);
+        if (p != null) return p;
+        try {
+            File f = new File(pagesDir, id + ".json");
+            return f.isFile() ? Ink.Page.fromJson(read(f, "{}")) : null;
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    /** Lo escrito a máquina de una página: PDF, textos, tablas y palabras clave. */
+    static String text(Ink.Page p) {
+        StringBuilder b = new StringBuilder();
+        if (p == null) return "";
+        if (p.bgText != null) b.append(p.bgText).append('\n');
+        for (Ink.Item it : p.items) {
+            if (it.text != null) b.append(it.text).append('\n');
+            if (it.values != null) for (String v : it.values) if (v != null) b.append(v).append(' ');
+        }
+        for (Ink.Mark m : p.marks) for (String w : m.words) b.append(w).append(' ').append(w).append(' ');
+        return b.toString();
     }
 
     synchronized Map<String, Long> versions() {
