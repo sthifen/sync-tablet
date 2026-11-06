@@ -57,9 +57,11 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private static final String[] SHAPE_NAMES = {"Línea", "Flecha", "Flecha doble", "Rectángulo", "Elipse", "Triángulo",
             "Ejes", "Ejes cruzados"};
     private static final int[] CIRCUIT_KINDS = {ShapeTools.CIRCUIT_FREE, ShapeTools.LINE, ShapeTools.RESISTOR, ShapeTools.CAPACITOR, ShapeTools.INDUCTOR,
-            ShapeTools.VOLTAGE, ShapeTools.AC, ShapeTools.CURRENT, ShapeTools.DIODE, ShapeTools.SWITCH, ShapeTools.GROUND};
+            ShapeTools.VOLTAGE, ShapeTools.AC, ShapeTools.CURRENT, ShapeTools.DIODE, ShapeTools.SWITCH, ShapeTools.GROUND,
+            ShapeTools.NPN, ShapeTools.PNP, ShapeTools.NMOS, ShapeTools.PMOS, ShapeTools.OPAMP};
     private static final String[] CIRCUIT_NAMES = {"Dibujar a mano", "Cable", "Resistencia", "Condensador", "Bobina", "Fuente de tensión",
-            "Fuente alterna", "Fuente de corriente", "Diodo", "Interruptor", "Tierra"};
+            "Fuente alterna", "Fuente de corriente", "Diodo", "Interruptor", "Tierra",
+            "Transistor NPN", "Transistor PNP", "MOSFET canal N", "MOSFET canal P", "Amplificador operacional"};
     private static final String BOX_HINT = "Lados: estirar · esquinas: agrandar · arriba: girar";
     /** Ancho en píxeles de las páginas de un PDF importado. */
     private static final int PDF_WIDTH = 1600;
@@ -90,8 +92,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private InkView ink;
     private GlassLayout bar, palette, selectionBar, shapeBar;
     private LinearLayout shapeRow, circuitRow;
+    private HorizontalScrollView circuitDock;
     private final ComponentButton[] circuitButtons = new ComponentButton[CIRCUIT_KINDS.length];
-    private IconView autoShapeButton, editImage, editText, editLine, dockMore;
+    private IconView autoShapeButton, editImage, editText, editLine, editFlip, dockMore;
     private TextView selectionHint;
     private ScrollView dockPanel;
     private android.animation.ValueAnimator dockAnimator;
@@ -183,7 +186,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         // Se vuelve al dock como se dejó.
         if (ink.shapeKind >= ShapeTools.RESISTOR) {
             shapeRow.setVisibility(View.GONE);
-            circuitRow.setVisibility(View.VISIBLE);
+            circuitDock.setVisibility(View.VISIBLE);
         }
         loadPages(index);
         refreshTools();
@@ -342,8 +345,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         selectionHint = Ui.text(this, BOX_HINT, 13, Ui.ICON_MUTED, false);
         selectionHint.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 8), 0);
         g.addView(selectionHint);
-        editLine = icon(IconView.S_ARROW, "Línea, flecha o flecha doble", v -> ink.cycleSelectedLine());
+        editLine = icon(IconView.S_ARROW, "Cambiar de tipo", v -> ink.cycleSelectedLine());
         g.addView(editLine);
+        editFlip = icon(IconView.FLIP, "Voltear", v -> ink.flipSelected());
+        g.addView(editFlip);
         editImage = icon(IconView.SLIDERS, "Editar la imagen", v -> {
             Ink.Item it = ink.selectedImage();
             if (it != null) {
@@ -413,8 +418,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             });
             circuitRow.addView(circuitButtons[i]);
         }
-        circuitRow.setVisibility(View.GONE);
-        g.addView(circuitRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 56)));
+        // En una tablet pequeña no caben todos: el dock se desliza.
+        circuitDock = new HorizontalScrollView(this);
+        circuitDock.setHorizontalScrollBarEnabled(false);
+        circuitDock.addView(circuitRow, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        circuitDock.setVisibility(View.GONE);
+        g.addView(circuitDock, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 56)));
+        g.maxWidth = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 24);
         return g;
     }
 
@@ -427,7 +437,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         grow.setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0.9f, 0.2f, 1f));
         android.transition.TransitionManager.beginDelayedTransition((ViewGroup) shapeBar.getParent(), grow);
         shapeRow.setVisibility(on ? View.GONE : View.VISIBLE);
-        circuitRow.setVisibility(on ? View.VISIBLE : View.GONE);
+        circuitDock.setVisibility(on ? View.VISIBLE : View.GONE);
         ink.shapeKind = on ? ShapeTools.CIRCUIT_FREE : ShapeTools.RECT;
         prefs.edit().putInt("shapeKind", ink.shapeKind).apply();
         if (on) Ui.toast(this, "Dibuja: zigzag, resistencia · círculo, fuente · espiral, bobina · línea, cable. Toca un componente para su valor");
@@ -832,7 +842,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         ComponentButton(android.content.Context c, int kind, String name) {
             super(c);
             free = kind == ShapeTools.CIRCUIT_FREE;
-            xy = free ? new float[0] : new ShapeTools.Spec(kind, 6, 24, kind == ShapeTools.GROUND ? 26 : 42, 24, 0).points();
+            boolean three = kind >= ShapeTools.NPN;
+            xy = free ? new float[0] : new ShapeTools.Spec(kind, three ? 8 : 6, 24, kind == ShapeTools.GROUND ? 26 : three ? 38 : 42, 24, 0).points();
             if (kind == ShapeTools.GROUND) {
                 float[] g = new ShapeTools.Spec(kind, 24, 8, 24, 30, 0).points();
                 System.arraycopy(g, 0, xy, 0, Math.min(g.length, xy.length));
@@ -1783,7 +1794,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         editImage.setVisibility(active && ink.selectedImage() != null && Native.available() ? View.VISIBLE : View.GONE);
         editText.setVisibility(active && ink.selectedText() != null ? View.VISIBLE : View.GONE);
         boolean line = active && ink.selectedLine() != null;
-        editLine.setVisibility(line ? View.VISIBLE : View.GONE);
+        editLine.setVisibility(active && ink.selectedHasVariants() ? View.VISIBLE : View.GONE);
+        editFlip.setVisibility(active && ink.selectedFlips() ? View.VISIBLE : View.GONE);
         selectionHint.setText(line ? "Arrastra las puntas · se enganchan a otras figuras" : BOX_HINT);
         refreshTools();
     }

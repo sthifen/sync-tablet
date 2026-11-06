@@ -85,7 +85,8 @@ final class ShapeRecognizer {
 
     /**
      * Lo que se quiso dibujar en un circuito: zigzag → resistencia, espiral →
-     * bobina, círculo → fuente, trazo recto → cable. Null si no parece nada.
+     * bobina, círculo → fuente, triángulo → operacional, trazo recto → cable.
+     * Null si no parece nada.
      */
     static ShapeTools.Spec circuit(float[] xy, int n) {
         if (n < 2) return null;
@@ -99,6 +100,12 @@ final class ShapeRecognizer {
         if (gap > 0.3f * length && turning > 2.6 * Math.PI && isSpiral(p)) {
             return new ShapeTools.Spec(ShapeTools.INDUCTOR, x0, y0, x1, y1, 0);
         }
+        if (gap < 0.22f * length) {
+            ArrayList<Integer> corners = closedCorners(p, N, 0.045f * length);
+            boolean sharp = corners.size() == 3;
+            for (int c : corners) sharp &= turn(p, N, c) < 125;
+            if (sharp) return opamp(vertices(p, corners));
+        }
         if (gap < 0.22f * length && ellipseError(p, N) < 0.2f) {
             float[] e = ellipseFit(p, N);
             float r = (e[2] + e[3]) / 2, reach = r * 1.5f;
@@ -111,6 +118,26 @@ final class ShapeRecognizer {
             return new ShapeTools.Spec(ShapeTools.LINE, x0, y0, x1, y1, 0);
         }
         return null;
+    }
+
+    /** Un triángulo: su punta es la salida y el lado opuesto, las entradas. */
+    private static ShapeTools.Spec opamp(float[] v) {
+        int tip = 0;
+        float best = -1;
+        for (int i = 0; i < 3; i++) {
+            int a = (i + 1) % 3, b = (i + 2) % 3;
+            float mx = (v[2 * a] + v[2 * b]) / 2, my = (v[2 * a + 1] + v[2 * b + 1]) / 2;
+            float reach = dist(mx, my, v[2 * i], v[2 * i + 1]), base = dist(v[2 * a], v[2 * a + 1], v[2 * b], v[2 * b + 1]);
+            // La punta es el vértice más lejos de un lado corto.
+            float score = reach / Math.max(1, base);
+            if (score > best) { best = score; tip = i; }
+        }
+        int a = (tip + 1) % 3, b = (tip + 2) % 3;
+        float mx = (v[2 * a] + v[2 * b]) / 2, my = (v[2 * a + 1] + v[2 * b + 1]) / 2, tx = v[2 * tip], ty = v[2 * tip + 1];
+        // El símbolo ocupa del 16 % al 84 % entre terminales.
+        float dx = tx - mx, dy = ty - my, k = 0.16f / 0.68f;
+        float[] end = ShapeTools.snapAngle(mx - dx * k, my - dy * k, tx + dx * k, ty + dy * k, 12);
+        return new ShapeTools.Spec(ShapeTools.OPAMP, mx - dx * k, my - dy * k, end[0], end[1], 0);
     }
 
     /** Veces que el trazo cruza de un lado al otro de la recta entre sus extremos. */

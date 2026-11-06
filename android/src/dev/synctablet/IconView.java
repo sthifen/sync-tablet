@@ -15,7 +15,7 @@ final class IconView extends View {
     static final int BACK = 0, PEN = 1, HIGHLIGHTER = 2, ERASER = 3, SHAPES = 4, UNDO = 5, REDO = 6,
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
             LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29,
-            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43;
+            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44;
 
     private final int icon;
     private final Path path;
@@ -232,6 +232,11 @@ final class IconView extends View {
                 break;
             case CHIP: // una resistencia
                 p.moveTo(2.5f, 12); p.lineTo(6, 12); p.lineTo(7.7f, 7); p.lineTo(11, 17); p.lineTo(14, 7); p.lineTo(17, 17); p.lineTo(18.3f, 12); p.lineTo(21.5f, 12);
+                break;
+            case FLIP:
+                p.moveTo(12, 3.5f); p.lineTo(12, 20.5f);
+                p.moveTo(9, 7); p.lineTo(4, 17); p.lineTo(9, 17); p.close();
+                p.moveTo(15, 7); p.lineTo(20, 17); p.lineTo(15, 17); p.close();
                 break;
             case BACK_ROW:
                 p.addCircle(8.5f, 8.5f, 4.5f, Path.Direction.CW);

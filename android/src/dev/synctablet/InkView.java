@@ -938,7 +938,26 @@ final class InkView extends View {
     void cycleSelectedLine() {
         Ink.Stroke s = selectedLine();
         if (s == null) return;
-        replaceSelected(s, s.withShape(s.shape.withKind(ShapeTools.nextLineKind(s.shape.kind))));
+        int kind = s.shape.kind;
+        int next = kind >= ShapeTools.NPN && kind <= ShapeTools.PMOS ? ShapeTools.nextTransistor(kind) : ShapeTools.nextLineKind(kind);
+        replaceSelected(s, s.withShape(s.shape.withKind(next)));
+    }
+
+    /** ¿Lo seleccionado cambia de aspecto con el botón? Una línea o un transistor. */
+    boolean selectedHasVariants() {
+        Ink.Stroke s = selectedLine();
+        return s != null && (!s.shape.isComponent() || (s.shape.kind >= ShapeTools.NPN && s.shape.kind <= ShapeTools.PMOS));
+    }
+
+    /** ¿Lo seleccionado se puede voltear? */
+    boolean selectedFlips() {
+        Ink.Stroke s = selectedLine();
+        return s != null && s.shape.isThreeTerminal();
+    }
+
+    void flipSelected() {
+        Ink.Stroke s = selectedLine();
+        if (s != null) replaceSelected(s, s.withShape(s.shape.flipped()));
     }
 
     private void replaceSelected(Ink.Stroke s, Ink.Stroke t) {

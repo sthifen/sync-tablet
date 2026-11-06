@@ -264,6 +264,7 @@ final class Ink {
                         .append(round(shape.y0, 100)).append(',').append(round(shape.x1, 100)).append(',').append(round(shape.y1, 100))
                         .append("],\"a\":").append(round(shape.angle, 10000));
                 if (shape.label != null) b.append(",\"label\":\"").append(shape.label).append('"');
+                if (shape.mirror) b.append(",\"m\":true");
                 b.append('}');
             }
             return b.append('}').toString();
@@ -282,7 +283,7 @@ final class Ink {
             // Un tipo que esta versión no conoce: queda como dibujo libre.
             if (kind >= 0 && c != null && c.length() == 4) {
                 s.shape = new ShapeTools.Spec(kind, (float) c.getDouble(0), (float) c.getDouble(1), (float) c.getDouble(2), (float) c.getDouble(3),
-                        (float) f.optDouble("a", 0), f.has("label") ? f.getString("label") : null);
+                        (float) f.optDouble("a", 0), f.has("label") ? f.getString("label") : null, f.optBoolean("m"));
             }
             return s;
         }

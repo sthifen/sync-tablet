@@ -154,13 +154,36 @@ public class ShapeTest {
         for (int i = 0; i < 90; i++) { double t = 2*Math.PI*4.2*i/89; coil[2*i] = 100 + 3.4f*i + 30*(float)Math.sin(t); coil[2*i+1] = 300 - 30*(float)Math.cos(t) + (float) r.nextGaussian(); }
         cir("espiral → bobina", coil, ShapeTools.INDUCTOR);
         cir("garabato → nada", ell(300,300,60,40,25,2*Math.PI*3), -1);
+        ShapeTools.Spec tri = ShapeRecognizer.circuit(poly(new float[][]{{200,150},{520,300},{200,450},{202,152}},2f), 61);
+        expect("triángulo → operacional", tri != null && tri.kind == ShapeTools.OPAMP, tri == null ? "(nada)" : tri.name());
+        if (tri != null) expect("su salida es la punta", tri.x1 > tri.x0 && Math.abs(tri.y1 - 300) < 16, tri.x0 + "→" + tri.x1 + "," + tri.y1);
+        ShapeTools.Spec triL = ShapeRecognizer.circuit(poly(new float[][]{{520,150},{200,300},{520,450},{518,152}},2f), 61);
+        expect("triángulo al revés", triL != null && triL.kind == ShapeTools.OPAMP && triL.x1 < triL.x0, triL == null ? "(nada)" : triL.x0 + "→" + triL.x1);
+        cir("círculo sigue siendo fuente", ell(300,300,90,90,2,2*Math.PI*1.03), ShapeTools.VOLTAGE);
+        ShapeTools.Spec q = new ShapeTools.Spec(ShapeTools.NPN, 100,300,300,300,0);
+        float[] tq = q.terminals();
+        expect("transistor: base, colector arriba, emisor abajo", tq.length == 6 && tq[0] == 100 && tq[3] < 300 && tq[5] > 300, Arrays.toString(tq));
+        float[] tf = q.flipped().terminals();
+        expect("volteado: colector abajo", tf[3] > 300 && tf[5] < 300 && tf[0] == 100, Arrays.toString(tf));
+        expect("sus anclas son los terminales", q.anchors().length == 6 && q.anchors()[3] == tq[3], "");
+        float[] to = new ShapeTools.Spec(ShapeTools.OPAMP, 100,300,300,300,0).terminals();
+        expect("operacional: dos entradas y salida", to[0] == 100 && to[2] == 100 && to[1] < 300 && to[3] > 300 && to[4] == 300 && to[5] == 300, Arrays.toString(to));
+        expect("volteo sobrevive a moverlo", q.flipped().mapped(new float[]{1,0,0,1,9,9},0).mirror && q.flipped().withEnd(true,1,1).mirror, "");
+        expect("transistores en ciclo", ShapeTools.nextTransistor(ShapeTools.nextTransistor(ShapeTools.nextTransistor(ShapeTools.nextTransistor(ShapeTools.NPN)))) == ShapeTools.NPN, "");
+        for (int k = ShapeTools.NPN; k <= ShapeTools.OPAMP; k++) {
+            ShapeTools.Spec sp = new ShapeTools.Spec(k, 100,300,300,300,0);
+            float[] o = sp.points(); int real = 0; for (float x2 : o) if (!Float.isNaN(x2)) real++;
+            boolean near = true; float[] tt = sp.terminals();
+            for (int i = 0; i < 6; i += 2) { float best = 1e9f; for (int j = 0; j + 1 < o.length; j += 2) if (!Float.isNaN(o[j])) best = Math.min(best, (float) Math.hypot(o[j]-tt[i], o[j+1]-tt[i+1])); near &= best < 0.5f; }
+            expect("el dibujo llega a sus terminales: " + sp.name(), real >= 20 && near, "");
+        }
         for (int k = ShapeTools.RESISTOR; k <= ShapeTools.SWITCH; k++) {
             float[] o = new ShapeTools.Spec(k, 100, 100, 300, 100, 0).points();
             boolean nums = o.length >= 8; int real = 0; for (float x2 : o) if (!Float.isNaN(x2)) real++;
             float lo = 1e9f, hi = -1e9f; for (int i = 0; i < o.length; i += 2) if (!Float.isNaN(o[i])) { lo = Math.min(lo, o[i]); hi = Math.max(hi, o[i]); }
             expect("componente " + new ShapeTools.Spec(k,0,0,1,1,0).name(), nums && real >= 8 && lo <= 100.01f && hi >= 299.9f, lo + "–" + hi);
         }
-        float[] cp = new ShapeTools.Spec(ShapeTools.CAPACITOR,0,0,200,0,0).points(); boolean jumps = false; for (float q : cp) jumps |= Float.isNaN(q);
+        float[] cp = new ShapeTools.Spec(ShapeTools.CAPACITOR,0,0,200,0,0).points(); boolean jumps = false; for (float pv : cp) jumps |= Float.isNaN(pv);
         expect("condensador levanta el lápiz", jumps, "");
         float[] lb = new ShapeTools.Spec(ShapeTools.RESISTOR,100,300,300,300,0).labelPosition(); expect("valor encima", lb[1] < 300 && Math.abs(lb[0]-200) < 1, lb[0] + "," + lb[1]);
         ShapeTools.Spec lab = new ShapeTools.Spec(ShapeTools.RESISTOR,0,0,10,0,0).withLabel("a");
