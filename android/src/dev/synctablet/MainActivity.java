@@ -97,6 +97,13 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         build();
         String last = saved != null ? saved.getString("note") : prefs.getString("last", null);
         if (last != null && notes.note(last) != null) openNote(last); else showHome();
+        checkUpdate(false);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (Updater.DONE.equals(intent.getAction())) installStatus(intent);
     }
 
     @Override
@@ -1047,6 +1054,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPORT), "Exportar a Word", false, this::saveDocx));
         }
         if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Importar Word", false, this::pickDocx));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPORT), "Buscar actualización", false, () -> checkUpdate(true)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, this::toggleTheme));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.WIFI), "Conectar por WiFi", false, this::askWifi).stays());
         if (note != null) tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Eliminar esta nota", false, () -> confirmDeleteNote(noteId)).stays());
@@ -1348,6 +1356,107 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             changed(n);
         }));
         dock.tiles("Mover «" + n.title + "» a", tiles);
+    }
+
+    // ---- Actualizar ----
+
+    private static final long DAY_MS = 24 * 60 * 60 * 1000L;
+
+    /** Sola, una vez al día; `asked` es cuando el usuario lo pide. */
+    private void checkUpdate(boolean asked) {
+        long now = System.currentTimeMillis();
+        if (!asked && now - prefs.getLong("updateChecked", 0) < DAY_MS) return;
+        if (asked) Ui.toast(this, "Buscando…");
+        new Thread(() -> {
+            try {
+                Updater.Release r = Updater.latest();
+                prefs.edit().putLong("updateChecked", now).apply();
+                String mine = Updater.installed(this);
+                boolean better = r != null && Version.newer(r.version, mine);
+                main.post(() -> {
+                    if (isFinishing()) return;
+                    if (better) {
+                        // Sin interrumpir: si está escribiendo, ya saldrá otro día o en el menú.
+                        if (asked || (noteId == null && !dock.isOpen())) offerUpdate(r, mine);
+                    } else if (asked) {
+                        LinearLayout box = lookBox();
+                        box.addView(dock.message("Tienes la última versión: " + mine));
+                        dock.show("Actualización", box, new OptionDock.Action("Listo", true, null));
+                    }
+                });
+            } catch (java.io.IOException | JSONException e) {
+                android.util.Log.w("SyncTablet", "buscar actualización", e);
+                if (asked) main.post(() -> Ui.toast(this, "No se pudo conectar con GitHub"));
+            }
+        }).start();
+    }
+
+    private LinearLayout lookBox() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(t.dp(20), 0, t.dp(20), t.dp(8));
+        return box;
+    }
+
+    private void offerUpdate(Updater.Release r, String mine) {
+        LinearLayout box = lookBox();
+        box.addView(dock.message("Tienes la " + mine + ". Tus apuntes no se tocan." + (r.notes.isEmpty() ? "" : "\n\n" + r.notes)));
+        OptionDock.Action go = new OptionDock.Action("Actualizar", true, () -> startUpdate(r));
+        go.stays = true;
+        dock.show("Versión " + r.version + " disponible", box, new OptionDock.Action("Después", false, null), go);
+    }
+
+    private void startUpdate(Updater.Release r) {
+        if (android.os.Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            LinearLayout box = lookBox();
+            box.addView(dock.message("Android pide tu permiso una sola vez: activa «Permitir de esta fuente» y vuelve aquí."));
+            OptionDock.Action open = new OptionDock.Action("Abrir ajustes", true, () -> startActivity(
+                    new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:" + getPackageName()))));
+            dock.show("Permiso para actualizar", box, new OptionDock.Action("Cancelar", false, null), open);
+            return;
+        }
+        flushSave();
+        LinearLayout box = lookBox();
+        TextView label = dock.message("Descargando…");
+        box.addView(label);
+        android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        box.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        dock.show("Actualizando a " + r.version, box, new OptionDock.Action("Cancelar", false, () -> cancelled.set(true)));
+        new Thread(() -> {
+            try {
+                java.io.File apk = Updater.download(this, r, p -> main.post(() -> {
+                    bar.setProgress(p);
+                    label.setText("Descargando… " + p + " %");
+                }), cancelled);
+                main.post(() -> label.setText("Comprobada. Abriendo el instalador…"));
+                Updater.install(this, apk);
+            } catch (java.io.IOException | java.security.NoSuchAlgorithmException | SecurityException e) {
+                android.util.Log.w("SyncTablet", "actualizar", e);
+                if (!cancelled.get()) main.post(() -> {
+                    dock.close();
+                    Ui.toast(this, "No se pudo actualizar: " + e.getMessage());
+                });
+            }
+        }).start();
+    }
+
+    /** Android contesta aquí: pide confirmación al usuario o dice cómo acabó. */
+    @SuppressWarnings("deprecation")
+    private void installStatus(Intent intent) {
+        int status = intent.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, android.content.pm.PackageInstaller.STATUS_FAILURE);
+        if (status == android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            if (confirm != null) startActivity(confirm);
+            return;
+        }
+        dock.close();
+        if (status == android.content.pm.PackageInstaller.STATUS_FAILURE_ABORTED) return;
+        if (status != android.content.pm.PackageInstaller.STATUS_SUCCESS) {
+            android.util.Log.w("SyncTablet", "instalador: " + intent.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE));
+            Ui.toast(this, "Android no pudo instalar la actualización");
+        }
     }
 
     // ---- Personalizar ----

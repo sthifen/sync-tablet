@@ -1634,6 +1634,7 @@ final class InkView extends View {
         if (pages.isEmpty()) return false;
         int action = e.getActionMasked();
         int idx = e.getActionIndex();
+        watchFingerTap(e, action);
         switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
@@ -1685,6 +1686,66 @@ final class InkView extends View {
         }
         if (pointerId != -1) return true;
         return gesture(e);
+    }
+
+    // Un toque corto del dedo sobre una imagen la selecciona sin soltar el lápiz.
+    private static final long TAP_MS = 280, PEN_NEAR_MS = 700;
+    private boolean fingerTap;
+    private float tapX, tapY;
+    private long tapAt, penSeen;
+
+    /** El lápiz cerca de la pantalla: un toque ahora es la palma, no el dedo. */
+    @Override
+    public boolean onHoverEvent(MotionEvent e) {
+        if (e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) penSeen = SystemClock.uptimeMillis();
+        return super.onHoverEvent(e);
+    }
+
+    private void watchFingerTap(MotionEvent e, int action) {
+        long now = SystemClock.uptimeMillis();
+        if (e.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) {
+            penSeen = now;
+            fingerTap = false;
+            return;
+        }
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                fingerTap = tool == PEN && !fingerDraws && now - penSeen > PEN_NEAR_MS && (scroller == null || !scroller.isRunning());
+                tapX = e.getX();
+                tapY = e.getY();
+                tapAt = now;
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (Math.hypot(e.getX() - tapX, e.getY() - tapY) > 10 * density) fingerTap = false;
+                break;
+            case MotionEvent.ACTION_UP:
+                if (fingerTap && now - tapAt < TAP_MS && pointerId == -1) tapImage(tapX, tapY);
+                fingerTap = false;
+                break;
+            default:
+                fingerTap = false;
+        }
+    }
+
+    /** Selecciona la imagen de más arriba bajo el dedo; fuera de una imagen, deselecciona. */
+    private void tapImage(float sx, float sy) {
+        float x = (sx - ox) / scale, docY = (sy - oy) / scale;
+        int p = pageAt(docY);
+        float y = docY - pageTop(p);
+        ArrayList<Ink.Item> items = pages.get(p).items;
+        for (int i = items.size() - 1; i >= 0; i--) {
+            Ink.Item it = items.get(i);
+            if (!it.isImage() || x < it.x || x > it.x + it.w || y < it.y || y > it.y + it.h) continue;
+            clearSelection();
+            currentPage = p;
+            selPage = p;
+            selItems.add(it);
+            updateSelBox();
+            listener.onSelection(true);
+            invalidate();
+            return;
+        }
+        if (selPage >= 0) clearSelection();
     }
 
     private void start(MotionEvent e, int idx) {
