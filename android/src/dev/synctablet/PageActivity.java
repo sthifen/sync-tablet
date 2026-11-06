@@ -57,10 +57,12 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             "Ejes", "Ejes cruzados"};
     private static final int[] CIRCUIT_KINDS = {ShapeTools.CIRCUIT_FREE, ShapeTools.LINE, ShapeTools.RESISTOR, ShapeTools.CAPACITOR, ShapeTools.INDUCTOR,
             ShapeTools.VOLTAGE, ShapeTools.AC, ShapeTools.CURRENT, ShapeTools.DIODE, ShapeTools.SWITCH, ShapeTools.GROUND,
-            ShapeTools.NPN, ShapeTools.PNP, ShapeTools.NMOS, ShapeTools.PMOS, ShapeTools.OPAMP};
+            ShapeTools.NPN, ShapeTools.PNP, ShapeTools.NMOS, ShapeTools.PMOS, ShapeTools.OPAMP,
+            ShapeTools.AND, ShapeTools.NAND, ShapeTools.OR, ShapeTools.NOR, ShapeTools.XOR, ShapeTools.XNOR, ShapeTools.NOT, ShapeTools.BUFFER};
     private static final String[] CIRCUIT_NAMES = {"Dibujar a mano", "Cable", "Resistencia", "Condensador", "Bobina", "Fuente de tensión",
             "Fuente alterna", "Fuente de corriente", "Diodo", "Interruptor", "Tierra",
-            "Transistor NPN", "Transistor PNP", "MOSFET canal N", "MOSFET canal P", "Amplificador operacional"};
+            "Transistor NPN", "Transistor PNP", "MOSFET canal N", "MOSFET canal P", "Amplificador operacional",
+            "Compuerta AND", "Compuerta NAND", "Compuerta OR", "Compuerta NOR", "Compuerta XOR", "Compuerta XNOR", "Compuerta NOT", "Búfer"};
     private static final String BOX_HINT = "Lados: estirar · esquinas: agrandar · arriba: girar";
     /** Ancho en píxeles de las páginas de un PDF importado. */
     private static final int PDF_WIDTH = 1600;
@@ -75,7 +77,16 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4, PICK_PPTX = 5, EDIT_IMAGE = 6;
     private static final String PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     /** Acciones para el botón del S Pen (clic y doble clic con el lápiz en el aire). */
-    private static final String[] PEN_ACTIONS = {"Cambiar entre pluma y goma", "Deshacer", "Lazo", "Puntero láser", "Resaltador", "Nada"};
+    /** El número de cada acción se guarda en las preferencias: las nuevas van al final. */
+    private static final String[] PEN_ACTIONS = {"Pluma y goma", "Deshacer", "Lazo", "Puntero láser", "Resaltador", "Nada",
+            "Rehacer", "Página siguiente", "Página anterior", "Página nueva", "Figuras", "Texto", "Nota", "Presentar",
+            "Dibujar con el dedo", "Siguiente color", "Siguiente grosor"};
+    private static final int[] PEN_ICONS = {IconView.ERASER, IconView.UNDO, IconView.LASSO, IconView.LASER, IconView.HIGHLIGHTER, IconView.MORE,
+            IconView.REDO, IconView.NEXT, IconView.PREV, IconView.PLUS, IconView.SHAPES, IconView.TEXT, IconView.NOTE, IconView.PLAY,
+            IconView.HAND, IconView.DOTS, IconView.SLIDERS};
+    /** En presentación; PresentActivity.act usa estos mismos números. */
+    private static final String[] SLIDE_ACTIONS = {"Siguiente", "Anterior", "Primera", "Salir", "Nada"};
+    private static final int[] SLIDE_ICONS = {IconView.NEXT, IconView.PREV, IconView.HOME, IconView.BACK, IconView.MORE};
     private Uri photoUri;
 
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -819,6 +830,48 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             case 4:
                 setTool(ink.tool == InkView.HIGHLIGHTER ? InkView.PEN : InkView.HIGHLIGHTER);
                 break;
+            case 6:
+                ink.redo();
+                break;
+            case 7:
+                ink.scrollToPage(index + 1, true);
+                break;
+            case 8:
+                ink.scrollToPage(index - 1, true);
+                break;
+            case 9:
+                addPage();
+                break;
+            case 10:
+                setTool(InkView.SHAPE);
+                break;
+            case 11:
+                setTool(InkView.TEXT);
+                break;
+            case 12:
+                setTool(InkView.NOTE);
+                break;
+            case 13:
+                present();
+                break;
+            case 14:
+                finger.performClick();
+                break;
+            case 15: {
+                int at = 0;
+                for (int i = 0; i < PEN_COLORS.length; i++) if (PEN_COLORS[i] == ink.penColor) at = i;
+                pickColor(PEN_COLORS[(at + 1) % PEN_COLORS.length], false);
+                break;
+            }
+            case 16: {
+                int at = 0;
+                for (int i = 0; i < PEN_WIDTHS.length; i++) if (PEN_WIDTHS[i] == ink.penWidth) at = i;
+                ink.penWidth = PEN_WIDTHS[(at + 1) % PEN_WIDTHS.length];
+                prefs.edit().putFloat("penWidth", ink.penWidth).apply();
+                refreshTools();
+                Ui.toast(this, new String[] {"Fino", "Medio", "Grueso"}[(at + 1) % PEN_WIDTHS.length]);
+                break;
+            }
             default:
         }
     }
@@ -838,23 +891,45 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             }
             dock.tiles("Mantener el botón mientras escribes", options);
         }).stays());
-        String[] keys = {"penClick", "penDouble"}, heads = {"Un clic", "Doble clic"};
-        for (int i = 0; i < 2; i++) {
-            String key = keys[i], head = heads[i];
-            int fallback = i;
-            tiles.add(new OptionDock.Tile(glyph(IconView.PEN), head + ": " + PEN_ACTIONS[prefs.getInt(key, fallback)], false, () -> {
-                ArrayList<OptionDock.Tile> options = new ArrayList<>();
-                for (int k = 0; k < PEN_ACTIONS.length; k++) {
-                    int choice = k;
-                    options.add(new OptionDock.Tile(glyph(IconView.PEN), PEN_ACTIONS[k], prefs.getInt(key, fallback) == k, () -> {
-                        prefs.edit().putInt(key, choice).apply();
-                        penButtons();
-                    }).stays());
-                }
-                dock.tiles(head + " con el lápiz en el aire", options);
-            }).stays());
-        }
-        dock.tiles("Botones del S Pen", tiles);
+        tiles.add(buttonTile("penClick", 0, "Un clic", " con el lápiz en el aire", PEN_ACTIONS, PEN_ICONS));
+        tiles.add(buttonTile("penDouble", 1, "Doble clic", " con el lápiz en el aire", PEN_ACTIONS, PEN_ICONS));
+        tiles.add(buttonTile("slideClick", 0, "Al presentar, clic", "", SLIDE_ACTIONS, SLIDE_ICONS));
+        tiles.add(buttonTile("slideDouble", 1, "Al presentar, doble", "", SLIDE_ACTIONS, SLIDE_ICONS));
+        tiles.add(new OptionDock.Tile(glyph(IconView.PLAY), "Presentar a distancia", false, this::remoteHelp).stays());
+        dock.tiles("Botones del lápiz", tiles);
+    }
+
+    private OptionDock.Tile buttonTile(String key, int fallback, String head, String tail, String[] names, int[] icons) {
+        int now = Math.min(prefs.getInt(key, fallback), names.length - 1);
+        return new OptionDock.Tile(glyph(icons[now]), head + ": " + names[now], false, () -> {
+            ArrayList<OptionDock.Tile> options = new ArrayList<>();
+            for (int k = 0; k < names.length; k++) {
+                int choice = k;
+                options.add(new OptionDock.Tile(glyph(icons[k]), names[k], now == k, () -> {
+                    prefs.edit().putInt(key, choice).apply();
+                    penButtons();
+                }).stays());
+            }
+            dock.tiles(head + tail, options);
+        }).stays();
+    }
+
+    /** Lejos de la pantalla el botón va por Bluetooth, y Samsung lo deja apagado para cada app nueva. */
+    private void remoteHelp() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 20);
+        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
+        box.addView(Ui.text(this, "Cerca de la pantalla ya funciona. Para usar el botón de lejos, activa una vez «Sync Tablet» dentro de Acciones aéreas, en los ajustes del S Pen. "
+                + "Después, al presentar, cada clic hace lo que elegiste aquí y mover el lápiz a un lado también cambia de diapositiva.", 15, Ui.ICON, false));
+        dock.show("Presentar a distancia", box, new OptionDock.Action("Cerrar", false, null), new OptionDock.Action("Abrir ajustes del S Pen", true, () -> {
+            // Acciones aéreas pide un permiso de sistema; esta es la pantalla anterior.
+            try {
+                startActivity(new Intent("com.samsung.android.service.aircommand.action.SPEN_SETTINGS"));
+            } catch (android.content.ActivityNotFoundException | SecurityException e) {
+                Ui.toast(this, "Búscalas en Ajustes: Funciones avanzadas, S Pen, Acciones aéreas");
+            }
+        }));
     }
 
     private void chooseTemplate() {
@@ -1109,7 +1184,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         tiles.add(new OptionDock.Tile(glyph(IconView.PLUS), "Página nueva", false, this::addPage));
         tiles.add(new OptionDock.Tile(glyph(IconView.PAGES), "Ordenar páginas", false, this::pageManager).stays());
         tiles.add(new OptionDock.Tile(glyph(IconView.PAGE), "Plantilla", false, this::chooseTemplate).stays());
-        tiles.add(new OptionDock.Tile(glyph(IconView.PEN), "Botones del S Pen", false, this::penButtons).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.PEN), "Botones del lápiz", false, this::penButtons).stays());
         if (text != null) tiles.add(new OptionDock.Tile(glyph(IconView.COPY), "Copiar el texto", false, () -> copyText(text)));
         tiles.add(new OptionDock.Tile(glyph(IconView.TRASH), "Borrar esta página", false, () -> confirmDeletePage(index, null)).stays());
         dock.tiles("Página " + (index + 1) + " de " + notebook.pages.size(), tiles);

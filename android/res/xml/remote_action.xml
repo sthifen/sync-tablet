@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Acciones aéreas del S Pen: el lápiz manda estas teclas por Bluetooth a PresentActivity. -->
+<remote-actions version="1.2" actionset_label="@string/air_title">
+    <action id="sync_click" label="@string/air_click" priority="1" trigger_key="F7">
+        <preference name="gesture" value="click"/>
+        <preference name="button_only" value="true"/>
+    </action>
+    <action id="sync_double" label="@string/air_double" priority="2" trigger_key="F8">
+        <preference name="gesture" value="double_click"/>
+        <preference name="button_only" value="true"/>
+    </action>
+    <action id="sync_swipe_next" label="@string/air_next" priority="3" trigger_key="PAGE_DOWN">
+        <preference name="gesture" value="swipe_left"/>
+        <preference name="motion_only" value="true"/>
+    </action>
+    <action id="sync_swipe_prev" label="@string/air_prev" priority="4" trigger_key="PAGE_UP">
+        <preference name="gesture" value="swipe_right"/>
+        <preference name="motion_only" value="true"/>
+    </action>
+</remote-actions>

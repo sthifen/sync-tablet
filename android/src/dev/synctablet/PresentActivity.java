@@ -7,6 +7,9 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.view.GestureDetector;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -21,6 +24,7 @@ import java.util.ArrayList;
  * derecha, deslizando, o con las teclas de un mando de presentaciones.
  */
 public final class PresentActivity extends Activity {
+    private static final long DOUBLE_MS = 350;
     private final ArrayList<Ink.Page> pages = new ArrayList<>();
     private int index;
     private Stage stage;
@@ -53,6 +57,52 @@ public final class PresentActivity extends Activity {
         Ui.toast(this, "Toca a la derecha para avanzar y a la izquierda para volver");
     }
 
+    /** Acción de un clic elegida en «Botones del lápiz»; mismos números que SLIDE_ACTIONS. */
+    private void act(String key, int fallback) {
+        switch (getSharedPreferences("tools", MODE_PRIVATE).getInt(key, fallback)) {
+            case 0: go(1); break;
+            case 1: go(-1); break;
+            case 2:
+                index = 0;
+                stage.invalidate();
+                break;
+            case 3: finish(); break;
+            default:
+        }
+    }
+
+    private final Handler later = new Handler(Looper.getMainLooper());
+    private final Runnable singleClick = () -> act("slideClick", 0);
+    private long lastClick;
+
+    /**
+     * El botón con el lápiz cerca de la pantalla. Aquí un clic no actúa enseguida:
+     * si no, un doble clic primero avanzaría y luego volvería.
+     */
+    @Override
+    public boolean onGenericMotionEvent(MotionEvent e) {
+        if (e.getActionMasked() != MotionEvent.ACTION_BUTTON_PRESS || e.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS
+                || (e.getActionButton() & (MotionEvent.BUTTON_STYLUS_PRIMARY | MotionEvent.BUTTON_SECONDARY)) == 0) {
+            return super.onGenericMotionEvent(e);
+        }
+        long now = SystemClock.uptimeMillis();
+        later.removeCallbacks(singleClick);
+        if (now - lastClick < DOUBLE_MS) {
+            lastClick = 0;
+            act("slideDouble", 1);
+        } else {
+            lastClick = now;
+            later.postDelayed(singleClick, DOUBLE_MS);
+        }
+        return true;
+    }
+
+    @Override
+    protected void onDestroy() {
+        later.removeCallbacks(singleClick);
+        super.onDestroy();
+    }
+
     private void go(int step) {
         int next = index + step;
         if (next < 0) return;
@@ -67,6 +117,13 @@ public final class PresentActivity extends Activity {
     @Override
     public boolean onKeyDown(int code, KeyEvent e) {
         switch (code) {
+            // Las manda el botón del S Pen de lejos (res/xml/remote_action.xml).
+            case KeyEvent.KEYCODE_F7:
+                act("slideClick", 0);
+                return true;
+            case KeyEvent.KEYCODE_F8:
+                act("slideDouble", 1);
+                return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
             case KeyEvent.KEYCODE_DPAD_DOWN:
             case KeyEvent.KEYCODE_PAGE_DOWN:

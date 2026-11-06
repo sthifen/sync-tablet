@@ -39,8 +39,14 @@
 
         <activity
             android:name=".PresentActivity"
-            android:exported="false"
+            android:exported="true"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode">
+            <!-- Sin cuaderno válido se cierra sola: exportada solo para que Samsung la encuentre. -->
+            <intent-filter>
+                <action android:name="com.samsung.android.support.REMOTE_ACTION" />
+            </intent-filter>
+            <meta-data android:name="com.samsung.android.support.REMOTE_ACTION" android:resource="@xml/remote_action" />
+        </activity>
     </application>
 </manifest>

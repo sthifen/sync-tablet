@@ -15,6 +15,8 @@ final class ShapeTools {
     static final int RESISTOR = 8, CAPACITOR = 9, INDUCTOR = 10, VOLTAGE = 11, CURRENT = 12, AC = 13, DIODE = 14, GROUND = 15, SWITCH = 16;
     /** De tres terminales: se colocan igual, de la entrada hacia la derecha del símbolo. */
     static final int NPN = 17, PNP = 18, NMOS = 19, PMOS = 20, OPAMP = 21;
+    /** Compuertas lógicas: dos entradas y salida; NOT y BUFFER, una entrada. */
+    static final int AND = 22, NAND = 23, OR = 24, NOR = 25, XOR = 26, XNOR = 27, NOT = 28, BUFFER = 29;
     /** Con la herramienta de figuras: dibujar a mano y que se entienda el componente. */
     static final int CIRCUIT_FREE = 100;
     /** En una lista de puntos, marca que ahí se levanta el lápiz. */
@@ -25,7 +27,7 @@ final class ShapeTools {
 
     private static final String[] NAMES = {"line", "arrow", "double-arrow", "rect", "ellipse", "triangle", "axes", "cross-axes",
             "resistor", "capacitor", "inductor", "voltage", "current", "ac", "diode", "ground", "switch",
-            "npn", "pnp", "nmos", "pmos", "opamp"};
+            "npn", "pnp", "nmos", "pmos", "opamp", "and", "nand", "or", "nor", "xor", "xnor", "not", "buffer"};
 
     /**
      * Lo que hace editable a una figura: de qué tipo es, sus dos puntos y su giro
@@ -65,12 +67,12 @@ final class ShapeTools {
         }
 
         boolean isComponent() {
-            return kind >= RESISTOR && kind <= OPAMP;
+            return kind >= RESISTOR && kind <= BUFFER;
         }
 
         /** Tiene tres terminales. */
         boolean isThreeTerminal() {
-            return kind >= NPN && kind <= OPAMP;
+            return kind >= NPN && kind <= XNOR;
         }
 
         Spec withLabel(String id) {
@@ -85,7 +87,8 @@ final class ShapeTools {
         float[] terminals() {
             float len = (float) Math.hypot(x1 - x0, y1 - y0);
             Pen p = new Pen(x0, y0, len < 1 ? 1 : (x1 - x0) / len, len < 1 ? 0 : (y1 - y0) / len, mirror);
-            if (kind == OPAMP) p.to(0, -OPAMP_IN * len).up().to(0, OPAMP_IN * len).up().to(len, 0);
+            if (kind >= AND) p.to(0, -GATE_IN * len).up().to(0, GATE_IN * len).up().to(len, 0);
+            else if (kind == OPAMP) p.to(0, -OPAMP_IN * len).up().to(0, OPAMP_IN * len).up().to(len, 0);
             else p.to(0, 0).up().to(TRANSISTOR_LEG * len, -TRANSISTOR_REACH * len).up().to(TRANSISTOR_LEG * len, TRANSISTOR_REACH * len);
             float[] raw = p.points();
             return new float[] {raw[0], raw[1], raw[4], raw[5], raw[8], raw[9]};
@@ -94,7 +97,7 @@ final class ShapeTools {
         /** Dónde va su valor: al lado del componente. */
         float[] labelPosition() {
             float mx = (x0 + x1) / 2, my = (y0 + y1) / 2, dx = x1 - x0, dy = y1 - y0;
-            float len = Math.max(1, (float) Math.hypot(dx, dy)), off = isThreeTerminal() ? 0.62f * len + 18 : kind == VOLTAGE || kind == CURRENT || kind == AC ? 62 : 46;
+            float len = Math.max(1, (float) Math.hypot(dx, dy)), off = kind >= AND ? 0.3f * len + 26 : isThreeTerminal() ? 0.62f * len + 18 : kind == VOLTAGE || kind == CURRENT || kind == AC ? 62 : 46;
             // Del lado de arriba, o del derecho si va vertical.
             float nx = -dy / len, ny = dx / len;
             if (ny > 0 || (ny == 0 && nx < 0)) { nx = -nx; ny = -ny; }
@@ -183,7 +186,14 @@ final class ShapeTools {
         return kind == NPN ? PNP : kind == PNP ? NMOS : kind == NMOS ? PMOS : NPN;
     }
 
-    private static final float OPAMP_IN = 0.2f, TRANSISTOR_LEG = 0.8f, TRANSISTOR_REACH = 0.55f;
+    /** Siguiente compuerta: AND, NAND, OR, NOR, XOR, XNOR; NOT y BUFFER entre ellas. */
+    static int nextGate(int kind) {
+        if (kind == NOT) return BUFFER;
+        if (kind == BUFFER) return NOT;
+        return kind == XNOR ? AND : kind + 1;
+    }
+
+    private static final float GATE_IN = 0.16f, OPAMP_IN = 0.2f, TRANSISTOR_LEG = 0.8f, TRANSISTOR_REACH = 0.55f;
 
     /**
      * La figura de (x0, y0) a (x1, y1). Con `grid` > 0 los puntos caen en la
@@ -198,7 +208,7 @@ final class ShapeTools {
             x0 = snap(x0, grid); y0 = snap(y0, grid);
             x1 = snap(x1, grid); y1 = snap(y1, grid);
         }
-        if ((kind >= NPN && kind <= OPAMP) || kind == VOLTAGE || kind == CURRENT || kind == AC) {
+        if ((kind >= NPN && kind <= BUFFER) || kind == VOLTAGE || kind == CURRENT || kind == AC) {
             // Un arrastre en diagonal es «de esta esquina a esta otra»: el símbolo queda derecho.
             if (1.25f * Math.abs(x1 - x0) >= Math.abs(y1 - y0)) y1 = y0;
             else x1 = x0;
@@ -359,6 +369,9 @@ final class ShapeTools {
                 p.up().to(sx, in - s).to(sx, in + s);
                 break;
             }
+            case AND: case NAND: case OR: case NOR: case XOR: case XNOR: case NOT: case BUFFER:
+                gate(p, kind, len);
+                break;
             default: { // interruptor
                 float half = Math.min(len * 0.28f, 34);
                 p.to(0, 0).to(mid - half, 0).to(mid + half * 0.8f, -half * 0.9f);
@@ -367,6 +380,63 @@ final class ShapeTools {
             }
         }
         return p.points();
+    }
+
+    /** Una compuerta, con el cuerpo centrado entre las patas. */
+    private static void gate(Pen p, int kind, float len) {
+        boolean inverted = kind == NAND || kind == NOR || kind == XNOR || kind == NOT;
+        float a = 0.2f * len, h = 0.3f * len, in = GATE_IN * len, tip;
+        if (kind == NOT || kind == BUFFER) {
+            tip = 0.72f * len;
+            float side = 0.26f * len;
+            p.to(a, -side).to(tip, 0).to(a, side).to(a, -side);
+            p.up().to(0, 0).to(a, 0);
+        } else if (kind == AND || kind == NAND) {
+            float m = 0.44f * len;
+            tip = m + h;
+            p.to(a, -h).to(m, -h);
+            for (int i = 1; i <= 20; i++) {
+                double r = -Math.PI / 2 + Math.PI * i / 20;
+                p.to(m + h * (float) Math.cos(r), h * (float) Math.sin(r));
+            }
+            p.to(a, h).to(a, -h);
+            p.up().to(0, -in).to(a, -in);
+            p.up().to(0, in).to(a, in);
+        } else {
+            boolean exclusive = kind == XOR || kind == XNOR;
+            float pull = 0.26f * len, shoulder = a + 0.34f * len, gap = exclusive ? 0.07f * len : 0;
+            tip = 0.76f * len;
+            curve(p, a, -h, shoulder, -h, tip, 0);
+            curve(p, tip, 0, shoulder, h, a, h);
+            curve(p, a, h, a + pull, 0, a, -h);
+            if (exclusive) {
+                p.up();
+                curve(p, a - gap, h, a - gap + pull, 0, a - gap, -h);
+            }
+            // La pata llega hasta la curva de atrás, que a esa altura ya se metió.
+            float s = (h - in) / (2 * h), back = a + 2 * s * (1 - s) * pull - gap;
+            p.up().to(0, -in).to(back, -in);
+            p.up().to(0, in).to(back, in);
+        }
+        float end = tip;
+        if (inverted) {
+            float r = 0.045f * len;
+            p.up();
+            for (int i = 0; i <= 24; i++) {
+                double t = 2 * Math.PI * i / 24;
+                p.to(tip + r - r * (float) Math.cos(t), r * (float) Math.sin(t));
+            }
+            end = tip + 2 * r;
+        }
+        p.up().to(end, 0).to(len, 0);
+    }
+
+    /** Curva suave de (t0, u0) a (t2, u2), tirada hacia (t1, u1). */
+    private static void curve(Pen p, float t0, float u0, float t1, float u1, float t2, float u2) {
+        for (int i = 0; i <= 16; i++) {
+            float s = i / 16f, q = 1 - s;
+            p.to(q * q * t0 + 2 * q * s * t1 + s * s * t2, q * q * u0 + 2 * q * s * u1 + s * s * u2);
+        }
     }
 
     /** Punta de flecha que llega a (t, u) viniendo de (ft, fu). */

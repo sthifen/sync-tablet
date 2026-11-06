@@ -170,7 +170,21 @@ public class ShapeTest {
         expect("operacional: dos entradas y salida", to[0] == 100 && to[2] == 100 && to[1] < 300 && to[3] > 300 && to[4] == 300 && to[5] == 300, Arrays.toString(to));
         expect("volteo sobrevive a moverlo", q.flipped().mapped(new float[]{1,0,0,1,9,9},0).mirror && q.flipped().withEnd(true,1,1).mirror, "");
         expect("transistores en ciclo", ShapeTools.nextTransistor(ShapeTools.nextTransistor(ShapeTools.nextTransistor(ShapeTools.nextTransistor(ShapeTools.NPN)))) == ShapeTools.NPN, "");
-        for (int k = ShapeTools.NPN; k <= ShapeTools.OPAMP; k++) {
+        for (int k = ShapeTools.AND; k <= ShapeTools.XNOR; k++) {
+            float[] tg = new ShapeTools.Spec(k, 100,300,300,300,0).terminals();
+            expect("compuerta: dos entradas y salida " + k, tg[0] == 100 && tg[2] == 100 && tg[1] < 300 && tg[3] > 300 && tg[4] == 300, Arrays.toString(tg));
+        }
+        int gate = ShapeTools.AND; for (int i = 0; i < 6; i++) gate = ShapeTools.nextGate(gate);
+        expect("compuertas en ciclo", gate == ShapeTools.AND && ShapeTools.nextGate(ShapeTools.nextGate(ShapeTools.NOT)) == ShapeTools.NOT, "");
+        expect("NOT tiene dos terminales", !new ShapeTools.Spec(ShapeTools.NOT,0,0,9,0,0).isThreeTerminal() && new ShapeTools.Spec(ShapeTools.NOT,0,0,9,0,0).isComponent(), "");
+        for (int k = ShapeTools.NOT; k <= ShapeTools.BUFFER; k++) {
+            float[] o = new ShapeTools.Spec(k, 100, 300, 300, 300, 0).points();
+            float lo = 1e9f, hi = -1e9f; for (int i = 0; i < o.length; i += 2) if (!Float.isNaN(o[i])) { lo = Math.min(lo, o[i]); hi = Math.max(hi, o[i]); }
+            expect("una entrada llega de punta a punta " + k, lo <= 100.01f && hi >= 299.9f, lo + "–" + hi);
+        }
+        ShapeTools.Spec upGate = ShapeTools.spec(ShapeTools.NOR, 100, 100, 350, 340, 0);
+        expect("compuerta en diagonal queda derecha", upGate.y0 == upGate.y1, "");
+        for (int k = ShapeTools.NPN; k <= ShapeTools.XNOR; k++) {
             ShapeTools.Spec sp = new ShapeTools.Spec(k, 100,300,300,300,0);
             float[] o = sp.points(); int real = 0; for (float x2 : o) if (!Float.isNaN(x2)) real++;
             boolean near = true; float[] tt = sp.terminals();

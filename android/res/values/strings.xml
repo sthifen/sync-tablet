@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Sync Tablet</string>
+    <string name="air_title">Presentar en Sync Tablet</string>
+    <string name="air_click">Clic del botón (se elige en la app)</string>
+    <string name="air_double">Doble clic del botón (se elige en la app)</string>
+    <string name="air_next">Diapositiva siguiente</string>
+    <string name="air_prev">Diapositiva anterior</string>
 </resources>
