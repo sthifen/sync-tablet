@@ -5,6 +5,8 @@
 //!   cada trazo y borrado según ocurren.
 //! * `/ws/live`: los navegadores con el visor; reciben lo mismo en vivo.
 //! * `/api/…`: cuadernos, páginas en JSON y en SVG, para el visor.
+//! * `/api/notes…`: las notas escritas en el PC (ver `notes.rs`). Los cambios
+//!   se avisan por `/ws/live` con `notes` (lista) y `note` (una nota).
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -15,14 +17,17 @@ use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
+use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
 
 use crate::ink::{Applied, Msg};
+use crate::notes::{Notes, Update};
 use crate::store::Store;
 
 pub struct AppState {
     pub store: Mutex<Store>,
+    pub notes: Mutex<Notes>,
     pub live: broadcast::Sender<String>,
     /// Tablets conectadas ahora, para el visor que se abre a mitad.
     pub devices: Mutex<Vec<String>>,
@@ -30,7 +35,11 @@ pub struct AppState {
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/", get(|| async { Html(include_str!("../web/index.html")) }))
+        .route("/", get(index))
+        .route("/n/{id}", get(index))
+        .route("/fonts/inter.woff2", get(font))
+        .route("/api/notes", get(list_notes).post(create_note))
+        .route("/api/notes/{id}", get(get_note).put(update_note).delete(delete_note))
         .route("/api/notebooks", get(notebooks))
         .route("/api/page/{id}", get(page_json))
         .route("/api/page/{id}/svg", get(page_svg))
@@ -39,6 +48,90 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/ws/live", get(ws_live))
         .with_state(state)
 }
+
+async fn index() -> Response {
+    ([(header::CACHE_CONTROL, "no-cache")], Html(include_str!("../web/index.html"))).into_response()
+}
+
+async fn font() -> Response {
+    const INTER: &[u8] = include_bytes!("../web/fonts/InterVariable.woff2");
+    ([(header::CONTENT_TYPE, "font/woff2"), (header::CACHE_CONTROL, "max-age=31536000, immutable")], INTER).into_response()
+}
+
+// ------------------------------------------------------------------ notas
+
+/// Quién hizo el cambio, para que su propia pestaña no se recargue.
+#[derive(Deserialize, Default)]
+struct Who {
+    #[serde(default)]
+    client: String,
+    #[serde(default)]
+    title: String,
+}
+
+#[derive(Deserialize)]
+struct NoteUpdate {
+    #[serde(flatten)]
+    up: Update,
+    #[serde(default)]
+    client: String,
+}
+
+fn failed(e: anyhow::Error) -> Response {
+    tracing::warn!("no se pudo guardar la nota: {e:#}");
+    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+}
+
+async fn list_notes(State(s): State<Arc<AppState>>) -> Response {
+    axum::Json(s.notes.lock().unwrap().list()).into_response()
+}
+
+async fn create_note(State(s): State<Arc<AppState>>, body: Option<axum::Json<Who>>) -> Response {
+    let who = body.map(|b| b.0).unwrap_or_default();
+    let created = s.notes.lock().unwrap().create(who.title);
+    match created {
+        Ok(note) => {
+            let _ = s.live.send(json!({ "t": "notes", "client": who.client }).to_string());
+            axum::Json(note).into_response()
+        }
+        Err(e) => failed(e),
+    }
+}
+
+async fn get_note(State(s): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
+    match s.notes.lock().unwrap().get(&id) {
+        Some(n) => axum::Json(n).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn update_note(State(s): State<Arc<AppState>>, Path(id): Path<String>, axum::Json(req): axum::Json<NoteUpdate>) -> Response {
+    let res = s.notes.lock().unwrap().update(&id, req.up);
+    match res {
+        Ok((renamed, updated)) => {
+            let _ = s.live.send(json!({ "t": "note", "id": id, "client": req.client }).to_string());
+            if renamed {
+                let _ = s.live.send(json!({ "t": "notes", "client": req.client }).to_string());
+            }
+            axum::Json(json!({ "updated": updated })).into_response()
+        }
+        Err(e) => failed(e),
+    }
+}
+
+async fn delete_note(State(s): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
+    let res = s.notes.lock().unwrap().delete(&id);
+    match res {
+        Ok(true) => {
+            let _ = s.live.send(json!({ "t": "notes", "deleted": id }).to_string());
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => failed(e),
+    }
+}
+
+// ------------------------------------------------------------------ apuntes a mano
 
 async fn notebooks(State(s): State<Arc<AppState>>) -> Response {
     let store = s.store.lock().unwrap();
@@ -103,9 +196,38 @@ async fn ws_ink(
     ws.on_upgrade(move |socket| tablet(socket, s, peer))
 }
 
+/// Avisos del visor que le interesan a la tablet: notas cambiadas en el PC
+/// (no las que cambió ella misma).
+fn for_tablet(text: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return false };
+    matches!(v["t"].as_str(), Some("note" | "notes")) && v["client"].as_str() != Some("tablet")
+}
+
 async fn tablet(mut socket: WebSocket, s: Arc<AppState>, peer: SocketAddr) {
     let mut device = String::new();
-    while let Some(Ok(msg)) = socket.recv().await {
+    let mut live = s.live.subscribe();
+    'session: loop {
+        let msg = tokio::select! {
+            m = socket.recv() => match m {
+                Some(Ok(m)) => m,
+                _ => break,
+            },
+            note = live.recv() => {
+                match note {
+                    Ok(text) if for_tablet(&text) => {
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // Se perdió algún aviso: que la tablet revise todas.
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let _ = socket.send(Message::Text(json!({ "t": "notes" }).to_string().into())).await;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+        };
         let Message::Text(text) = msg else { continue };
         let parsed: Msg = match serde_json::from_str(&text) {
             Ok(m) => m,
@@ -130,7 +252,7 @@ async fn tablet(mut socket: WebSocket, s: Arc<AppState>, peer: SocketAddr) {
         if let Some(r) = reply {
             for line in r.lines() {
                 if socket.send(Message::Text(line.to_owned().into())).await.is_err() {
-                    return;
+                    break 'session;
                 }
             }
         }

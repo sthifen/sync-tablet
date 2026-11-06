@@ -34,6 +34,17 @@
 - **En el PC:** lo que escribes aparece al momento en `http://localhost:8788`, y cada
   página se guarda en `~/SyncTablet/<Cuaderno>/Página NN.svg` para abrirla en
   cualquier programa (Obsidian, el navegador, un visor de imágenes).
+- **Notas en el PC, estilo cuaderno de bloques:** barra lateral con tus notas y los
+  cuadernos de la tablet; escribe `/` para elegir el bloque (títulos, listas, tareas,
+  citas, llamadas, separadores) o atajos como `# `, `- `, `[] `. El bloque **Página de
+  la tablet** mete una página escrita a mano dentro de la nota y se actualiza sola.
+  Búsqueda con `Ctrl+K` (títulos y texto), modo oscuro, y cada nota se guarda también
+  como `~/SyncTablet/Notas/<Título>.md`.
+- **Las notas también en la tablet:** sección «Notas» en la portada y el mismo editor
+  de bloques (con `/`, atajos y páginas a mano dentro). Funcionan sin conexión y se
+  sincronizan solas con el PC al conectar; un cambio en un lado aparece en el otro.
+- **Vista en vivo:** «En vivo desde la tablet» muestra la página en la que escribes y
+  la sigue sola si cambias de página o de cuaderno.
 - **Sin conexión:** la tablet guarda todo y, al volver a conectar, el PC se pone al
   día solo.
 
@@ -65,12 +76,15 @@ InkView ── trazo/borrado ──► WebSocket ──USB (adb reverse) / WiFi�
 - La tablet es la dueña de los datos: cada cambio sube la versión de la página. Al
   conectar manda la versión de cada página y el PC pide las que tiene atrasadas.
 - `src/ink.rs` (modelo y operaciones), `src/store.rs` (disco), `src/svg.rs`
-  (exportar), `src/server.rs` (HTTP/WebSocket), `src/adb.rs` (`adb reverse`).
+  (exportar), `src/notes.rs` (notas del PC y su `.md`), `src/server.rs`
+  (HTTP/WebSocket), `src/adb.rs` (`adb reverse`).
+- `web/index.html`: el visor, un solo archivo (HTML, CSS y JavaScript sin
+  frameworks) incluido en el binario; la fuente Inter (`web/fonts/`) también.
 - `android/src/dev/synctablet/`: `InkView` (dibujo de baja latencia), `Store`
-  (guardado local), `SyncClient` (conexión).
+  (guardado local), `SyncClient` (conexión), `MainActivity` (portada con barra lateral) + `Notes` + `BlockEditor`
+  (notas de bloques; se sincronizan por HTTP con `/api/notes`, avisadas por `/ws/ink`).
 
 ## Próximas piezas
 
-1. Cuaderno tipo Notion en el PC: apuntes a mano, notas escritas, PDFs y fotos juntos.
-2. Enlaces entre cosas.
-3. Phone Link: notificaciones, fotos y archivos de la tablet en el PC.
+1. Enlaces entre notas; PDFs y fotos dentro de las notas.
+2. Phone Link: notificaciones, fotos y archivos de la tablet en el PC.

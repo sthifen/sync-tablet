@@ -14,7 +14,7 @@ import android.view.View;
 final class IconView extends View {
     static final int BACK = 0, PEN = 1, HIGHLIGHTER = 2, ERASER = 3, SHAPES = 4, UNDO = 5, REDO = 6,
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
-            LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24;
+            LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29;
 
     private final int icon;
     private final Path path;
@@ -178,6 +178,29 @@ final class IconView extends View {
             case SEARCH:
                 p.addCircle(10.5f, 10.5f, 6, Path.Direction.CW);
                 p.moveTo(15, 15); p.lineTo(20, 20);
+                break;
+            case DOTS: // asa de un bloque: dos columnas de puntos
+                for (int r = 0; r < 3; r++) for (int col = 0; col < 2; col++) p.addCircle(9.5f + 5 * col, 6.5f + 5.5f * r, 0.9f, Path.Direction.CW);
+                break;
+            case MORE:
+                for (int col = 0; col < 3; col++) p.addCircle(6 + 6 * col, 12, 1f, Path.Direction.CW);
+                break;
+            case HOME:
+                p.moveTo(4, 11); p.lineTo(12, 4); p.lineTo(20, 11);
+                p.moveTo(6.5f, 9.5f); p.lineTo(6.5f, 20); p.lineTo(17.5f, 20); p.lineTo(17.5f, 9.5f);
+                p.moveTo(10, 20); p.lineTo(10, 14.5f); p.lineTo(14, 14.5f); p.lineTo(14, 20);
+                break;
+            case MOON:
+                p.moveTo(19.5f, 14.5f);
+                p.cubicTo(15.5f, 16.5f, 9, 13.5f, 9.5f, 7.5f);
+                p.cubicTo(9.6f, 6.2f, 10, 5, 10.6f, 4);
+                p.cubicTo(6.6f, 5, 4, 8.5f, 4.3f, 12.6f);
+                p.cubicTo(4.7f, 17.2f, 8.6f, 20.6f, 13.2f, 20.3f);
+                p.cubicTo(16, 20.1f, 18.4f, 18.6f, 19.5f, 14.5f);
+                break;
+            case SIDEBAR:
+                p.addRoundRect(new RectF(3.5f, 5, 20.5f, 19), 2.5f, 2.5f, Path.Direction.CW);
+                p.moveTo(9.5f, 5); p.lineTo(9.5f, 19);
                 break;
             case STAR:
                 for (int i = 0; i < 10; i++) {

@@ -91,6 +91,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             return;
         }
         index = saved != null ? saved.getInt("index", notebook.pages.size() - 1) : notebook.pages.size() - 1;
+        // Abierta desde una nota: en la página que la nota enseña.
+        int asked = notebook.pages.indexOf(getIntent().getStringExtra("page"));
+        if (saved == null && asked >= 0) index = asked;
 
         ink = new InkView(this);
         ink.setListener(this);

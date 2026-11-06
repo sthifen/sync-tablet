@@ -7,6 +7,7 @@
 
 mod adb;
 mod ink;
+mod notes;
 mod server;
 mod store;
 mod svg;
@@ -87,8 +88,14 @@ async fn main() -> Result<()> {
         .dir
         .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("SyncTablet"));
     let store = store::Store::open(&dir)?;
+    let notes = notes::Notes::open(&dir)?;
     let (live, _) = tokio::sync::broadcast::channel(256);
-    let state = Arc::new(server::AppState { store: Mutex::new(store), live, devices: Mutex::new(Vec::new()) });
+    let state = Arc::new(server::AppState {
+        store: Mutex::new(store),
+        notes: Mutex::new(notes),
+        live,
+        devices: Mutex::new(Vec::new()),
+    });
 
     let addr = SocketAddr::new(args.bind, args.port);
     let listener = match tokio::net::TcpListener::bind(addr).await {

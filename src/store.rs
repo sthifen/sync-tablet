@@ -27,7 +27,7 @@ pub struct Store {
 }
 
 /// Los ids vienen de la tablet y acaban en nombres de archivo.
-fn valid_id(id: &str) -> bool {
+pub fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 

@@ -3,403 +3,631 @@ package dev.synctablet;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.text.format.DateUtils;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
+import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.TreeSet;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * Portada al estilo de Obsidian y Notion, en cristal líquido: barra lateral
- * (buscar, Inicio, Recientes, Favoritos, carpetas, conexión) y, a la
- * derecha, los cuadernos como tarjetas con la vista previa de su primera
- * página.
- */
-public final class MainActivity extends Activity implements SyncClient.Listener {
-    /** Secciones de la barra lateral; una carpeta es su nombre. */
-    private static final String HOME = "\u0000inicio", RECENT = "\u0000recientes", FAVORITES = "\u0000favoritos";
+import org.json.JSONException;
+import org.json.JSONObject;
 
-    private AuroraView aurora;
-    private LinearLayout nav, content;
-    private TextView status;
-    private View statusDot;
-    private EditText search;
-    private String section = HOME;
-    private final ArrayList<GlassLayout> glass = new ArrayList<>();
-    private SyncClient sync;
+/**
+ * La app de la tablet con el aspecto del visor del PC: barra lateral con las
+ * notas y los cuadernos, barra superior, y en medio la página (con portada,
+ * icono y título). «Inicio» enseña las notas recientes y la galería de
+ * cuadernos; una nota se edita aquí mismo con bloques, y un cuaderno se abre
+ * en la hoja para escribir a mano (PageActivity).
+ */
+public final class MainActivity extends Activity implements SyncClient.Listener, Notes.Listener, BlockEditor.Host {
+    private static final String[] EMOJIS = {"📝", "📄", "👋", "📚", "✏️", "💡", "✅", "📌", "🗓️", "🎯", "🧠", "📎",
+        "🩺", "💊", "🏠", "💼", "🎓", "🧪", "📊", "🗂️", "⭐", "❤️", "🔥", "🌱", "🎨", "🎵", "✈️", "🍎", "⚽", "🐶", "☕", "🌙"};
+
+    private NoteTheme t;
+    private SharedPreferences prefs;
     private Store store;
+    private Notes notes;
+    private SyncClient sync;
     private PageRenderer renderer;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService thumbs = Executors.newSingleThreadExecutor();
-    /** Vista previa de cada cuaderno, con la versión de la página con que se hizo. */
-    private final HashMap<String, Bitmap> previews = new HashMap<>();
-    private final HashMap<String, Long> previewVersions = new HashMap<>();
+    /** Miniaturas de páginas de la tablet, por "id@versión". */
+    private final HashMap<String, Bitmap> thumbCache = new HashMap<>();
+
+    // vistas
+    private LinearLayout sidebar, noteList, nbList, pageBox;
+    private View edge, connDot;
+    private TextView connText, crumb, saveState;
+    private ScrollView scroller;
+    private AuroraView cover;
+    private boolean online;
+    private String where = "";
+
+    /** Nota abierta (null = Inicio). */
+    private String noteId;
+    private JSONObject note;
+    private BlockEditor editor;
+    private TextView iconView;
+    private EditText titleView;
+    private boolean loading, pendingRemote;
+    private final Runnable save = () -> { if (note != null) notes.edited(note); };
 
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        prefs = getSharedPreferences("ui", MODE_PRIVATE);
+        t = new NoteTheme(this);
         store = Store.get(this);
+        notes = Notes.get(this);
         sync = SyncClient.get(this);
         renderer = new PageRenderer(this);
-        int pad = Ui.dp(this, 16);
-
-        FrameLayout root = new FrameLayout(this);
-        aurora = new AuroraView(this);
-        root.addView(aurora, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        LinearLayout split = new LinearLayout(this);
-        root.addView(split, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        Ui.fitSystemBars(split, pad, pad, pad, pad);
-
-        split.addView(sidebar(), new LinearLayout.LayoutParams(Ui.dp(this, 270), ViewGroup.LayoutParams.MATCH_PARENT));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setClipToPadding(false);
-        content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(Ui.dp(this, 28), Ui.dp(this, 12), Ui.dp(this, 12), Ui.dp(this, 28));
-        scroll.addView(content);
-        split.addView(scroll, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
-        // Al desplazar, cambia lo que hay detrás de cada tarjeta.
-        scroll.setOnScrollChangeListener((v, x, y, ox, oy) -> {
-            for (GlassLayout g : glass) g.invalidate();
-        });
-        setContentView(root);
+        build();
+        String last = saved != null ? saved.getString("note") : prefs.getString("last", null);
+        if (last != null && notes.note(last) != null) openNote(last); else showHome();
     }
 
-    private GlassLayout glass(float radius) {
-        GlassLayout g = new GlassLayout(this, aurora, Ui.GLASS_DARK, radius);
-        glass.add(g);
-        return g;
+    @Override
+    protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        out.putString("note", noteId);
     }
-
-    // ---- Barra lateral ----
-
-    private View sidebar() {
-        GlassLayout side = new GlassLayout(this, aurora, 0x30FFFFFF, Ui.dp(this, 26));
-        side.setOrientation(LinearLayout.VERTICAL);
-        int pad = Ui.dp(this, 14);
-        side.setPadding(pad, Ui.dp(this, 18), pad, pad);
-
-        LinearLayout brand = new LinearLayout(this);
-        brand.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView logo = new ImageView(this);
-        logo.setImageResource(R.drawable.ic_launcher);
-        logo.setClipToOutline(true);
-        logo.setBackground(Ui.round(0xFF0F766E, Ui.dp(this, 10)));
-        brand.addView(logo, new LinearLayout.LayoutParams(Ui.dp(this, 34), Ui.dp(this, 34)));
-        TextView name = Ui.text(this, "Sync Tablet", 20, 0xFFFFFFFF, true);
-        name.setPadding(Ui.dp(this, 10), 0, 0, 0);
-        brand.addView(name);
-        side.addView(brand);
-
-        LinearLayout field = new LinearLayout(this);
-        field.setGravity(Gravity.CENTER_VERTICAL);
-        field.setBackground(Ui.round(0x1FFFFFFF, Ui.dp(this, 14)));
-        IconView lens = new IconView(this, IconView.SEARCH, 0xCCFFFFFF, "Buscar");
-        lens.setClickable(false);
-        field.addView(lens);
-        search = new EditText(this);
-        search.setHint("Buscar");
-        search.setHintTextColor(0x99FFFFFF);
-        search.setTextColor(0xFFFFFFFF);
-        search.setBackground(null);
-        search.setSingleLine(true);
-        search.setTextSize(15);
-        search.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
-            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
-            @Override public void afterTextChanged(android.text.Editable s) { fill(); }
-        });
-        field.addView(search, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 44));
-        flp.topMargin = Ui.dp(this, 16);
-        flp.bottomMargin = Ui.dp(this, 10);
-        side.addView(field, flp);
-
-        ScrollView navScroll = new ScrollView(this);
-        nav = new LinearLayout(this);
-        nav.setOrientation(LinearLayout.VERTICAL);
-        navScroll.addView(nav);
-        side.addView(navScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-
-        TextView add = navItem(IconView.PLUS, "Nuevo cuaderno", false);
-        add.setOnClickListener(v -> askNew());
-        side.addView(add);
-
-        LinearLayout foot = new LinearLayout(this);
-        foot.setGravity(Gravity.CENTER_VERTICAL);
-        foot.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), 0, 0);
-        statusDot = new View(this);
-        foot.addView(statusDot, new LinearLayout.LayoutParams(Ui.dp(this, 9), Ui.dp(this, 9)));
-        status = Ui.text(this, "", 13, 0xCCFFFFFF, false);
-        status.setPadding(Ui.dp(this, 8), 0, 0, 0);
-        foot.addView(status, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        IconView wifi = new IconView(this, IconView.WIFI, 0xFFFFFFFF, "Conectar por WiFi");
-        wifi.setOnClickListener(v -> askWifi());
-        foot.addView(wifi);
-        side.addView(foot);
-        return side;
-    }
-
-    /** Fila de la barra lateral: icono y nombre; resaltada si es la sección actual. */
-    private TextView navItem(int icon, String label, boolean active) {
-        TextView t = Ui.text(this, label, 15, 0xFFFFFFFF, active);
-        t.setGravity(Gravity.CENTER_VERTICAL);
-        t.setMinHeight(Ui.dp(this, 44));
-        t.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 10), 0);
-        t.setCompoundDrawablePadding(Ui.dp(this, 10));
-        t.setCompoundDrawablesRelative(iconDrawable(icon), null, null, null);
-        t.setBackground(active ? Ui.round(0x33FFFFFF, Ui.dp(this, 12)) : null);
-        return t;
-    }
-
-    /** Un IconView pintado como drawable, para las filas de texto. */
-    private android.graphics.drawable.Drawable iconDrawable(int icon) {
-        int s = Ui.dp(this, 26);
-        Bitmap b = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
-        IconView v = new IconView(this, icon, 0xFFFFFFFF, "");
-        v.measure(View.MeasureSpec.makeMeasureSpec(s, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(s, View.MeasureSpec.EXACTLY));
-        v.layout(0, 0, s, s);
-        v.draw(new Canvas(b));
-        android.graphics.drawable.BitmapDrawable d = new android.graphics.drawable.BitmapDrawable(getResources(), b);
-        d.setBounds(0, 0, s, s);
-        return d;
-    }
-
-    private void fillNav() {
-        nav.removeAllViews();
-        String[][] fixed = {{HOME, "Inicio"}, {RECENT, "Recientes"}, {FAVORITES, "Favoritos"}};
-        int[] icons = {IconView.PAGE, IconView.UNDO, IconView.STAR};
-        for (int i = 0; i < fixed.length; i++) {
-            String key = fixed[i][0];
-            TextView t = navItem(icons[i], fixed[i][1], key.equals(section));
-            t.setOnClickListener(v -> open(key));
-            nav.addView(t);
-        }
-        TreeSet<String> folders = new TreeSet<>();
-        for (Ink.Notebook n : store.notebooks()) if (!n.folder.isEmpty()) folders.add(n.folder);
-        TextView head = Ui.text(this, "CARPETAS", 12, 0x99FFFFFF, true);
-        head.setPadding(Ui.dp(this, 12), Ui.dp(this, 18), 0, Ui.dp(this, 6));
-        nav.addView(head);
-        if (folders.isEmpty()) {
-            TextView none = Ui.text(this, "Mantén pulsado un cuaderno → «Mover a carpeta»", 12, 0x80FFFFFF, false);
-            none.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 8), 0);
-            nav.addView(none);
-        }
-        for (String f : folders) {
-            int count = 0;
-            for (Ink.Notebook n : store.notebooks()) if (f.equals(n.folder)) count++;
-            TextView t = navItem(IconView.PAGES, f + "  ·  " + count, f.equals(section));
-            t.setOnClickListener(v -> open(f));
-            nav.addView(t);
-        }
-    }
-
-    private void open(String key) {
-        section = key;
-        fill();
-    }
-
-    // ---- Contenido ----
 
     @Override
     protected void onResume() {
         super.onResume();
         sync.addListener(this);
-        content.post(this::fill);
+        notes.addListener(this);
+        notes.sync();
+        cover.setRunning(true);
+        renderSidebar();
+        // Al volver de la hoja: miniaturas y cuadernos al día.
+        if (noteId == null) showHome(); else if (editor != null) editor.refresh();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        cover.setRunning(false);
+        flushSave();
         sync.removeListener(this);
+        notes.removeListener(this);
+    }
+
+    // ---------------------------------------------------------------- piezas
+
+    private TextView text(String s, float sp, int color, android.graphics.Typeface face) {
+        TextView v = new TextView(this);
+        v.setText(s);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        v.setTextColor(color);
+        v.setTypeface(face);
+        v.setIncludeFontPadding(false);
+        return v;
+    }
+
+    private LinearLayout row() {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        return r;
+    }
+
+    private GradientDrawable rounded(int color, float radiusDp) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color);
+        d.setCornerRadius(t.px(radiusDp));
+        return d;
+    }
+
+    /** Fondo que se resalta al tocar (y queda marcado si `selected`). */
+    private android.graphics.drawable.Drawable pressable(boolean selected) {
+        return new RippleDrawable(ColorStateList.valueOf(t.hover | 0x22000000),
+                rounded(selected ? (t.dark ? 0x1AFFFFFF : 0x14333333) : 0, 6), rounded(0xFFFFFFFF, 6));
+    }
+
+    private IconView icon(int which, int color, String label) {
+        IconView v = new IconView(this, which, color, label);
+        v.setMinimumWidth(0);
+        v.setMinimumHeight(0);
+        return v;
+    }
+
+    // ---------------------------------------------------------------- construcción
+
+    @SuppressWarnings("deprecation")
+    private void build() {
+        getWindow().setStatusBarColor(t.bar);
+        getWindow().setNavigationBarColor(t.bg);
+        if (!t.dark) getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        LinearLayout root = new LinearLayout(this);
+        root.setBackgroundColor(t.bg);
+        root.addView(buildSidebar(), new LinearLayout.LayoutParams(t.dp(270), -1));
+        edge = new View(this);
+        edge.setBackgroundColor(t.edge);
+        root.addView(edge, new LinearLayout.LayoutParams(Math.max(1, t.dp(1)), -1));
+        root.addView(buildMain(), new LinearLayout.LayoutParams(0, -1, 1));
+        boolean open = prefs.getBoolean("sidebar", true);
+        sidebar.setVisibility(open ? View.VISIBLE : View.GONE);
+        edge.setVisibility(open ? View.VISIBLE : View.GONE);
+        // De borde a borde (Android 15+): sitio para las barras del sistema y el teclado.
+        root.setOnApplyWindowInsetsListener((v, in) -> {
+            android.graphics.Insets s = in.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime());
+            v.setPadding(s.left, s.top, s.right, s.bottom);
+            return in;
+        });
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener((o, n) -> {
+            if (pendingRemote && !isEditing()) main.postDelayed(() -> onNotesChanged(noteId), 400);
+        });
+        setContentView(root);
+    }
+
+    private View buildSidebar() {
+        sidebar = new LinearLayout(this);
+        sidebar.setOrientation(LinearLayout.VERTICAL);
+        sidebar.setBackgroundColor(t.bar);
+        sidebar.setPadding(t.dp(6), t.dp(6), t.dp(6), 0);
+
+        LinearLayout brand = row();
+        brand.setPadding(t.dp(10), 0, t.dp(4), 0);
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.ic_launcher);
+        logo.setBackground(rounded(0xFF0F766E, 5));
+        logo.setClipToOutline(true);
+        brand.addView(logo, new LinearLayout.LayoutParams(t.dp(24), t.dp(24)));
+        TextView name = text("Sync Tablet", 15, t.text, t.bold);
+        LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(0, -2, 1);
+        nlp.leftMargin = t.dp(10);
+        brand.addView(name, nlp);
+        IconView close = icon(IconView.SIDEBAR, t.icon, "Cerrar la barra lateral");
+        close.setOnClickListener(v -> toggleSidebar());
+        brand.addView(close, new LinearLayout.LayoutParams(t.dp(40), t.dp(40)));
+        sidebar.addView(brand, new LinearLayout.LayoutParams(-1, t.dp(50)));
+
+        sidebar.addView(navItem(IconView.SEARCH, "Buscar", v -> openSearch()));
+        sidebar.addView(navItem(IconView.HOME, "Inicio", v -> { flushSave(); showHome(); }));
+        sidebar.addView(navItem(IconView.PLUS, "Nueva nota", v -> newNote()));
+        sidebar.addView(navItem(IconView.PEN, "Nuevo cuaderno", v -> askNewNotebook()));
+        sidebar.addView(navItem(IconView.MOON, t.dark ? "Modo claro" : "Modo oscuro", v -> toggleTheme()));
+
+        ScrollView sv = new ScrollView(this);
+        LinearLayout lists = new LinearLayout(this);
+        lists.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(lists);
+        lists.addView(label("Notas", v -> newNote(), "Nueva nota"));
+        noteList = new LinearLayout(this);
+        noteList.setOrientation(LinearLayout.VERTICAL);
+        lists.addView(noteList);
+        lists.addView(label("Cuadernos", v -> askNewNotebook(), "Nuevo cuaderno"));
+        nbList = new LinearLayout(this);
+        nbList.setOrientation(LinearLayout.VERTICAL);
+        lists.addView(nbList);
+        sidebar.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        View line = new View(this);
+        line.setBackgroundColor(t.line);
+        sidebar.addView(line, new LinearLayout.LayoutParams(-1, Math.max(1, t.dp(1))));
+        LinearLayout conn = row();
+        conn.setPadding(t.dp(12), t.dp(14), t.dp(10), t.dp(16));
+        connDot = new View(this);
+        conn.addView(connDot, new LinearLayout.LayoutParams(t.dp(8), t.dp(8)));
+        connText = text("", 13, t.faint, t.regular);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, -2, 1);
+        clp.leftMargin = t.dp(8);
+        conn.addView(connText, clp);
+        IconView wifi = icon(IconView.WIFI, t.icon, "Conectar por WiFi");
+        conn.addView(wifi, new LinearLayout.LayoutParams(t.dp(28), t.dp(28)));
+        conn.setOnClickListener(v -> askWifi());
+        wifi.setOnClickListener(v -> askWifi());
+        sidebar.addView(conn, new LinearLayout.LayoutParams(-1, -2));
+        paintConn();
+        return sidebar;
+    }
+
+    private View navItem(int ic, String label, View.OnClickListener l) {
+        LinearLayout r = row();
+        r.setPadding(t.dp(8), 0, t.dp(10), 0);
+        r.setBackground(pressable(false));
+        r.addView(icon(ic, t.icon, ""), new LinearLayout.LayoutParams(t.dp(26), t.dp(26)));
+        TextView tv = text(label, 15, t.muted, t.medium);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.leftMargin = t.dp(10);
+        r.addView(tv, lp);
+        r.setOnClickListener(l);
+        r.setContentDescription(label);
+        r.setLayoutParams(new LinearLayout.LayoutParams(-1, t.dp(40)));
+        return r;
+    }
+
+    private View label(String s, View.OnClickListener add, String addLabel) {
+        LinearLayout r = row();
+        r.setPadding(t.dp(10), t.dp(18), t.dp(2), t.dp(4));
+        r.addView(text(s, 12, t.faint, t.medium), new LinearLayout.LayoutParams(0, -2, 1));
+        IconView plus = icon(IconView.PLUS, t.faint, addLabel);
+        plus.setOnClickListener(add);
+        r.addView(plus, new LinearLayout.LayoutParams(t.dp(32), t.dp(32)));
+        return r;
+    }
+
+    private View buildMain() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout top = row();
+        top.setPadding(t.dp(8), 0, t.dp(8), 0);
+        IconView menu = icon(IconView.SIDEBAR, t.icon, "Barra lateral");
+        menu.setOnClickListener(v -> toggleSidebar());
+        top.addView(menu, new LinearLayout.LayoutParams(t.dp(44), t.dp(44)));
+        crumb = text("", 15, t.text, t.regular);
+        crumb.setSingleLine(true);
+        crumb.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(0, -2, 1);
+        cl.leftMargin = t.dp(6);
+        top.addView(crumb, cl);
+        saveState = text("", 13, t.faint, t.regular);
+        saveState.setPadding(t.dp(8), 0, t.dp(8), 0);
+        top.addView(saveState);
+        IconView more = icon(IconView.MORE, t.icon, "Más opciones");
+        more.setOnClickListener(this::moreMenu);
+        top.addView(more, new LinearLayout.LayoutParams(t.dp(44), t.dp(44)));
+        col.addView(top, new LinearLayout.LayoutParams(-1, t.dp(52)));
+
+        scroller = new ScrollView(this);
+        scroller.setFillViewport(true);
+        // Al abrir algo, nada queda en edición hasta que tocas un texto.
+        scroller.setFocusableInTouchMode(true);
+        scroller.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setClipChildren(false);
+        scroller.addView(content, new ViewGroup.LayoutParams(-1, -2));
+        col.addView(scroller, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        cover = new AuroraView(this, t);
+        content.addView(cover, new LinearLayout.LayoutParams(-1, t.dp(170)));
+        ColumnLayout column = new ColumnLayout();
+        column.setClipChildren(false);
+        content.addView(column, new LinearLayout.LayoutParams(-1, -2));
+        pageBox = new LinearLayout(this);
+        pageBox.setOrientation(LinearLayout.VERTICAL);
+        pageBox.setClipChildren(false);
+        column.addView(pageBox);
+        return col;
+    }
+
+    /** Centra la página con un ancho máximo, como en el visor del PC. */
+    private final class ColumnLayout extends ViewGroup {
+        ColumnLayout() { super(MainActivity.this); }
+
+        private int inner(int w) {
+            int pad = w < t.dp(600) ? t.dp(28) : t.dp(64);
+            return Math.max(t.dp(200), Math.min(t.dp(noteId == null ? 980 : 720), w - 2 * pad));
+        }
+
+        @Override protected void onMeasure(int ws, int hs) {
+            int w = MeasureSpec.getSize(ws), h = 0;
+            if (getChildCount() > 0) {
+                View c = getChildAt(0);
+                c.measure(MeasureSpec.makeMeasureSpec(inner(w), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+                h = c.getMeasuredHeight();
+            }
+            setMeasuredDimension(w, h);
+        }
+
+        @Override protected void onLayout(boolean changed, int l, int tp, int r, int b) {
+            if (getChildCount() == 0) return;
+            int w = r - l, in = inner(w), x = (w - in) / 2;
+            View c = getChildAt(0);
+            c.layout(x, 0, x + in, c.getMeasuredHeight());
+        }
+    }
+
+    // ---------------------------------------------------------------- barra lateral
+
+    private void renderSidebar() {
+        noteList.removeAllViews();
+        for (JSONObject n : sortedNotes()) {
+            String id = n.optString("id");
+            String ic = n.optString("icon");
+            LinearLayout r = sideRow(id.equals(noteId));
+            TextView em = text(ic.isEmpty() ? "📄" : ic, 17, t.text, t.regular);
+            em.setGravity(Gravity.CENTER);
+            r.addView(em, new LinearLayout.LayoutParams(t.dp(26), -2));
+            r.addView(sideTitle(n.optString("title"), id.equals(noteId)), new LinearLayout.LayoutParams(0, -2, 1));
+            r.setOnClickListener(v -> openNote(id));
+            r.setOnLongClickListener(v -> { confirmDeleteNote(id); return true; });
+            noteList.addView(r);
+        }
+        if (notes.list().isEmpty()) noteList.addView(sideHint("Aún no hay notas"));
+
+        nbList.removeAllViews();
+        // Agrupados por carpeta; los de sin carpeta primero.
+        TreeMap<String, ArrayList<Ink.Notebook>> groups = new TreeMap<>();
+        for (Ink.Notebook n : store.notebooks()) groups.computeIfAbsent(n.folder, k -> new ArrayList<>()).add(n);
+        for (java.util.Map.Entry<String, ArrayList<Ink.Notebook>> g : groups.entrySet()) {
+            if (!g.getKey().isEmpty()) {
+                TextView f = text("📁  " + g.getKey(), 13, t.faint, t.medium);
+                f.setPadding(t.dp(12), t.dp(10), 0, t.dp(4));
+                nbList.addView(f);
+            }
+            for (Ink.Notebook n : g.getValue()) {
+                LinearLayout r = sideRow(false);
+                View chip = new View(this);
+                chip.setBackground(rounded(n.color, 2));
+                LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(t.dp(12), t.dp(16));
+                clp.leftMargin = t.dp(7);
+                clp.rightMargin = t.dp(7);
+                r.addView(chip, clp);
+                r.addView(sideTitle((n.favorite ? "★ " : "") + n.title, false), new LinearLayout.LayoutParams(0, -2, 1));
+                r.addView(text(String.valueOf(n.pages.size()), 12, t.faint, t.regular));
+                r.setOnClickListener(v -> openNotebook(n, null));
+                r.setOnLongClickListener(v -> { notebookMenu(n); return true; });
+                nbList.addView(r);
+            }
+        }
+        if (store.notebooks().isEmpty()) nbList.addView(sideHint("Aún no hay cuadernos"));
+        View spacer = new View(this);
+        nbList.addView(spacer, new LinearLayout.LayoutParams(-1, t.dp(12)));
+    }
+
+    private LinearLayout sideRow(boolean selected) {
+        LinearLayout r = row();
+        r.setPadding(t.dp(6), 0, t.dp(10), 0);
+        r.setBackground(pressable(selected));
+        r.setLayoutParams(new LinearLayout.LayoutParams(-1, t.dp(38)));
+        return r;
+    }
+
+    private TextView sideTitle(String s, boolean selected) {
+        TextView tv = text(s.isEmpty() ? "Sin título" : s, 15, s.isEmpty() ? t.faint : selected ? t.text : t.muted, selected ? t.medium : t.regular);
+        tv.setSingleLine(true);
+        tv.setEllipsize(TextUtils.TruncateAt.END);
+        tv.setPadding(t.dp(6), 0, t.dp(6), 0);
+        return tv;
+    }
+
+    private TextView sideHint(String s) {
+        TextView tv = text(s, 13, t.faint, t.regular);
+        tv.setPadding(t.dp(14), t.dp(4), 0, t.dp(4));
+        return tv;
+    }
+
+    private void toggleSidebar() {
+        boolean open = sidebar.getVisibility() != View.VISIBLE;
+        sidebar.setVisibility(open ? View.VISIBLE : View.GONE);
+        edge.setVisibility(open ? View.VISIBLE : View.GONE);
+        prefs.edit().putBoolean("sidebar", open).apply();
+    }
+
+    private void toggleTheme() {
+        flushSave();
+        prefs.edit().putInt("theme", t.dark ? 1 : 2).apply();
+        recreate();
     }
 
     @Override
-    public void onStatus(boolean connected, String where) {
-        status.setText(connected ? "Conectado al PC · " + where : "Sin conexión al PC");
-        statusDot.setBackground(Ui.round(connected ? 0xFF34D399 : 0x80FFFFFF, Ui.dp(this, 5)));
+    public void onStatus(boolean connected, String via) {
+        online = connected;
+        where = via;
+        paintConn();
+        paintState();
     }
 
-    /** ¿El cuaderno coincide con la búsqueda (título o textos de sus páginas)? */
-    private boolean matches(Ink.Notebook n, String q) {
-        if (q.isEmpty() || n.title.toLowerCase().contains(q) || n.folder.toLowerCase().contains(q)) return true;
-        for (String id : n.pages) {
-            Ink.Page p = store.page(id);
-            if (p == null) continue;
-            for (Ink.Item it : p.items) {
-                if (it.text != null && it.text.toLowerCase().contains(q)) return true;
-                if (it.isTable()) for (String v : it.values) if (v != null && v.toLowerCase().contains(q)) return true;
-            }
-        }
-        return false;
+    private void paintConn() {
+        if (connText == null) return;
+        connText.setText(online ? "Conectado al PC · " + where : "Sin conexión al PC");
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.OVAL);
+        d.setColor(online ? 0xFF35A86B : t.faint);
+        connDot.setBackground(d);
     }
 
-    private void fill() {
-        fillNav();
-        glass.clear();
-        content.removeAllViews();
-        String q = search.getText().toString().trim().toLowerCase();
-        ArrayList<Ink.Notebook> list = new ArrayList<>();
-        for (Ink.Notebook n : store.notebooks()) {
-            if (section.equals(FAVORITES) && !n.favorite) continue;
-            if (!section.startsWith("\u0000") && !section.equals(n.folder)) continue;
-            if (matches(n, q)) list.add(n);
-        }
-        if (section.equals(RECENT) || section.equals(HOME)) list.sort((a, b) -> Long.compare(b.updated, a.updated));
+    // ---------------------------------------------------------------- Inicio
 
-        String title = !q.isEmpty() ? "Resultados" : section.equals(HOME) ? "Inicio" : section.equals(RECENT) ? "Recientes"
-                : section.equals(FAVORITES) ? "Favoritos" : section;
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout titles = new LinearLayout(this);
-        titles.setOrientation(LinearLayout.VERTICAL);
-        titles.addView(Ui.text(this, title, 30, 0xFFFFFFFF, true));
-        titles.addView(Ui.text(this, list.size() == 1 ? "1 cuaderno" : list.size() + " cuadernos", 14, 0xB3FFFFFF, false));
-        header.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        GlassLayout add = glass(Ui.dp(this, 22));
-        add.setGravity(Gravity.CENTER_VERTICAL);
-        add.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 18), 0);
-        IconView plus = new IconView(this, IconView.PLUS, 0xFFFFFFFF, "");
-        plus.setClickable(false);
-        add.addView(plus);
-        add.addView(Ui.text(this, "Nuevo cuaderno", 15, 0xFFFFFFFF, true));
-        add.setOnClickListener(v -> askNew());
-        header.addView(add, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 48)));
-        content.addView(header);
+    private ArrayList<JSONObject> sortedNotes() {
+        ArrayList<JSONObject> list = notes.list();
+        list.sort((a, b) -> Long.compare(b.optLong("updated"), a.optLong("updated")));
+        return list;
+    }
 
-        if (list.isEmpty()) {
-            TextView none = Ui.text(this, q.isEmpty() ? "Aún no hay cuadernos aquí." : "Nada coincide con «" + q + "».", 16, 0xCCFFFFFF, false);
-            none.setPadding(0, Ui.dp(this, 30), 0, 0);
-            content.addView(none);
-            return;
-        }
-        // Inicio: los recientes en una fila, y después todos.
-        if (section.equals(HOME) && q.isEmpty() && list.size() > 3) {
-            sectionTitle("Recientes");
-            HorizontalScrollView hs = new HorizontalScrollView(this);
-            hs.setHorizontalScrollBarEnabled(false);
-            hs.setClipToPadding(false);
-            LinearLayout row = new LinearLayout(this);
-            for (int i = 0; i < Math.min(4, list.size()); i++) {
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(this, 230), Ui.dp(this, 250));
-                lp.rightMargin = Ui.dp(this, 16);
-                row.addView(card(list.get(i)), lp);
-            }
-            hs.addView(row);
-            hs.setOnScrollChangeListener((v, x, y, ox, oy) -> {
-                for (GlassLayout g : glass) g.invalidate();
-            });
-            content.addView(hs);
-            sectionTitle("Todos los cuadernos");
-            list.sort((a, b) -> a.title.compareToIgnoreCase(b.title));
-        }
-        grid(list);
+    private void showHome() {
+        // Sólo se sube arriba al llegar desde otra cosa, no al repintar.
+        boolean arriving = noteId != null || pageBox.getChildCount() == 0;
+        noteId = null;
+        note = null;
+        editor = null;
+        prefs.edit().remove("last").apply();
+        pageBox.removeAllViews();
+        crumb.setText("🏠  Inicio");
+        saveState.setText("");
+
+        TextView ic = text("🏠", 58, t.text, t.regular);
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(-2, -2);
+        ilp.topMargin = -t.dp(40);
+        pageBox.addView(ic, ilp);
+        TextView title = text("Inicio", 36, t.text, t.bold);
+        title.setPadding(0, t.dp(14), 0, t.dp(6));
+        pageBox.addView(title);
+        int nn = notes.list().size(), nb = store.notebooks().size();
+        pageBox.addView(text((nn == 1 ? "1 nota" : nn + " notas") + " · " + (nb == 1 ? "1 cuaderno" : nb + " cuadernos"), 15, t.faint, t.regular));
+
+        sectionTitle("Notas recientes");
+        ArrayList<JSONObject> recent = sortedNotes();
+        for (int i = 0; i < Math.min(5, recent.size()); i++) pageBox.addView(noteRow(recent.get(i)));
+        TextView add = text("+  Nueva nota", 15, t.faint, t.regular);
+        add.setPadding(t.dp(8), t.dp(12), 0, t.dp(12));
+        add.setBackground(pressable(false));
+        add.setOnClickListener(v -> newNote());
+        pageBox.addView(add, new LinearLayout.LayoutParams(-1, -2));
+
+        sectionTitle("Cuadernos");
+        gallery();
+        View end = new View(this);
+        pageBox.addView(end, new LinearLayout.LayoutParams(-1, t.dp(120)));
+        renderSidebar();
+        if (arriving) scroller.post(() -> scroller.scrollTo(0, 0));
     }
 
     private void sectionTitle(String s) {
-        TextView t = Ui.text(this, s, 17, 0xFFFFFFFF, true);
-        t.setPadding(0, Ui.dp(this, 26), 0, Ui.dp(this, 12));
-        content.addView(t);
+        TextView tv = text(s, 14, t.muted, t.medium);
+        tv.setPadding(t.dp(2), t.dp(34), 0, t.dp(8));
+        pageBox.addView(tv);
+        View line = new View(this);
+        line.setBackgroundColor(t.line);
+        pageBox.addView(line, new LinearLayout.LayoutParams(-1, Math.max(1, t.dp(1))));
     }
 
-    private void grid(ArrayList<Ink.Notebook> list) {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        blp.topMargin = Ui.dp(this, 20);
-        content.addView(box, blp);
-        int width = content.getWidth() - content.getPaddingLeft() - content.getPaddingRight();
-        if (width <= 0) width = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 340);
-        int gap = Ui.dp(this, 16);
-        int cols = Math.max(2, (width + gap) / (Ui.dp(this, 210) + gap));
-        LinearLayout row = null;
-        for (int i = 0; i < list.size(); i++) {
-            if (i % cols == 0) {
-                row = new LinearLayout(this);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 250));
-                lp.bottomMargin = gap;
-                box.addView(row, lp);
-            }
-            row.addView(card(list.get(i)), cell(i % cols, cols, gap));
+    private View noteRow(JSONObject n) {
+        LinearLayout r = row();
+        r.setPadding(t.dp(8), t.dp(10), t.dp(8), t.dp(10));
+        r.setBackground(pressable(false));
+        String ic = n.optString("icon");
+        r.addView(text(ic.isEmpty() ? "📄" : ic, 20, t.text, t.regular), new LinearLayout.LayoutParams(t.dp(34), -2));
+        LinearLayout txt = new LinearLayout(this);
+        txt.setOrientation(LinearLayout.VERTICAL);
+        String title = n.optString("title");
+        TextView name = text(title.isEmpty() ? "Sin título" : title, 16, title.isEmpty() ? t.faint : t.text, t.medium);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        txt.addView(name);
+        String body = Notes.text(n);
+        if (!body.isEmpty()) {
+            TextView snip = text(body, 13, t.faint, t.regular);
+            snip.setSingleLine(true);
+            snip.setEllipsize(TextUtils.TruncateAt.END);
+            snip.setPadding(0, t.dp(4), 0, 0);
+            txt.addView(snip);
         }
-        for (int i = list.size() % cols; i != 0 && i < cols; i++) row.addView(new View(this), cell(i, cols, gap));
+        r.addView(txt, new LinearLayout.LayoutParams(0, -2, 1));
+        String when = n.optLong("updated") > 0
+                ? DateUtils.getRelativeTimeSpanString(n.optLong("updated"), System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString() : "";
+        if (n.optBoolean("dirty") && !online) when = "Se subirá al conectar";
+        r.addView(text(when, 12, t.faint, t.regular));
+        String id = n.optString("id");
+        r.setOnClickListener(v -> openNote(id));
+        r.setOnLongClickListener(v -> { confirmDeleteNote(id); return true; });
+        return r;
     }
 
-    private LinearLayout.LayoutParams cell(int col, int cols, int gap) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
-        if (col != cols - 1) lp.rightMargin = gap;
+    /** Galería de cuadernos: vista previa de la primera página, título y datos. */
+    private void gallery() {
+        GridLayout grid = new GridLayout(this);
+        int width = pageBox.getWidth();
+        if (width <= 0) width = getResources().getDisplayMetrics().widthPixels - t.dp(sidebar.getVisibility() == View.VISIBLE ? 400 : 130);
+        int gap = t.dp(16);
+        int cols = Math.max(2, Math.min(5, (width + gap) / (t.dp(190) + gap)));
+        int cellW = (width - gap * (cols - 1)) / cols;
+        grid.setColumnCount(cols);
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(-1, -2);
+        glp.topMargin = t.dp(16);
+        pageBox.addView(grid, glp);
+        ArrayList<Ink.Notebook> list = new ArrayList<>(store.notebooks());
+        list.sort((a, b) -> Long.compare(b.updated, a.updated));
+        int i = 0;
+        for (Ink.Notebook n : list) grid.addView(card(n), cell(i++, cols, cellW, gap));
+        grid.addView(newCard(), cell(i, cols, cellW, gap));
+    }
+
+    private GridLayout.LayoutParams cell(int i, int cols, int w, int gap) {
+        GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+        lp.width = w;
+        lp.height = Math.round(w * 1.18f);
+        if (i % cols != cols - 1) lp.rightMargin = gap;
+        lp.bottomMargin = gap;
         return lp;
     }
 
-    /** Tarjeta: vista previa de la primera página (como la portada de Notion), título y datos. */
-    private View card(Ink.Notebook n) {
-        GlassLayout g = glass(Ui.dp(this, 22));
-        g.setOrientation(LinearLayout.VERTICAL);
-        int pad = Ui.dp(this, 10);
-        g.setPadding(pad, pad, pad, Ui.dp(this, 12));
-        FrameLayout cover = new FrameLayout(this);
-        cover.setBackground(Ui.round(0xF2FFFFFF, Ui.dp(this, 14)));
-        cover.setClipToOutline(true);
-        ImageView img = new ImageView(this);
-        img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        cover.addView(img, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        View band = new View(this);
-        band.setBackground(Ui.round(n.color, Ui.dp(this, 3)));
-        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 6), Gravity.TOP);
-        cover.addView(band, blp);
-        g.addView(cover, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        preview(n, img);
-
-        TextView t = Ui.text(this, (n.favorite ? "★ " : "") + n.title, 17, 0xFFFFFFFF, true);
-        t.setSingleLine(true);
-        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        t.setPadding(Ui.dp(this, 4), Ui.dp(this, 10), Ui.dp(this, 4), 0);
-        g.addView(t);
-        String info = n.pages.size() == 1 ? "1 página" : n.pages.size() + " páginas";
-        if (!n.folder.isEmpty()) info += " · " + n.folder;
-        if (n.updated > 0) info += " · " + DateUtils.getRelativeTimeSpanString(n.updated, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS);
-        TextView sub = Ui.text(this, info, 12, 0xB3FFFFFF, false);
-        sub.setSingleLine(true);
-        sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        sub.setPadding(Ui.dp(this, 4), Ui.dp(this, 2), Ui.dp(this, 4), 0);
-        g.addView(sub);
-        g.setClickable(true);
-        g.setOnClickListener(v -> startActivity(new Intent(this, PageActivity.class).putExtra("notebook", n.id)));
-        g.setOnLongClickListener(v -> {
-            menu(n);
-            return true;
-        });
-        g.setContentDescription("Cuaderno " + n.title);
-        return g;
+    private LinearLayout cardBox() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable bg = rounded(t.card, 10);
+        bg.setStroke(Math.max(1, t.dp(1)), t.line);
+        c.setBackground(new RippleDrawable(ColorStateList.valueOf(t.hover | 0x22000000), bg, null));
+        c.setClipToOutline(true);
+        c.setElevation(t.px(1));
+        return c;
     }
 
-    /** Vista previa de la primera página, hecha en otro hilo y guardada mientras no cambie. */
-    private void preview(Ink.Notebook n, ImageView into) {
-        if (n.pages.isEmpty()) return;
-        Ink.Page p = store.page(n.pages.get(0));
-        if (p == null) return;
-        Bitmap have = previews.get(n.id);
-        Long v = previewVersions.get(n.id);
-        if (have != null && v != null && v == p.version) {
+    private View card(Ink.Notebook n) {
+        LinearLayout c = cardBox();
+        FrameLayout prev = new FrameLayout(this);
+        prev.setBackgroundColor(t.paper);
+        ImageView img = new ImageView(this);
+        img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        img.setBackgroundColor(0xFFFFFFFF);
+        FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(-1, -1);
+        ilp.setMargins(t.dp(14), t.dp(14), t.dp(14), 0);
+        prev.addView(img, ilp);
+        View band = new View(this);
+        band.setBackgroundColor(n.color);
+        prev.addView(band, new FrameLayout.LayoutParams(-1, t.dp(4), Gravity.TOP));
+        c.addView(prev, new LinearLayout.LayoutParams(-1, 0, 1));
+        if (!n.pages.isEmpty()) {
+            Ink.Page p = store.page(n.pages.get(0));
+            if (p != null) thumbnail(p, t.dp(200), img);
+        }
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setPadding(t.dp(12), t.dp(10), t.dp(12), t.dp(12));
+        TextView name = text((n.favorite ? "★ " : "") + n.title, 15, t.text, t.medium);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        info.addView(name);
+        String sub = n.pages.size() == 1 ? "1 página" : n.pages.size() + " páginas";
+        if (n.updated > 0) sub += " · " + DateUtils.getRelativeTimeSpanString(n.updated, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS);
+        TextView s = text(sub, 12, t.faint, t.regular);
+        s.setSingleLine(true);
+        s.setEllipsize(TextUtils.TruncateAt.END);
+        s.setPadding(0, t.dp(4), 0, 0);
+        info.addView(s);
+        c.addView(info);
+        c.setOnClickListener(v -> openNotebook(n, null));
+        c.setOnLongClickListener(v -> { notebookMenu(n); return true; });
+        c.setContentDescription("Cuaderno " + n.title);
+        return c;
+    }
+
+    private View newCard() {
+        LinearLayout c = cardBox();
+        c.setGravity(Gravity.CENTER);
+        c.addView(icon(IconView.PLUS, t.faint, ""), new LinearLayout.LayoutParams(t.dp(40), t.dp(40)));
+        TextView tv = text("Nuevo cuaderno", 15, t.faint, t.medium);
+        tv.setPadding(0, t.dp(6), 0, 0);
+        c.addView(tv);
+        c.setOnClickListener(v -> askNewNotebook());
+        return c;
+    }
+
+    private void thumbnail(Ink.Page p, int w, ImageView into) {
+        String key = p.id + "@" + p.version + "@" + w;
+        Bitmap have = thumbCache.get(key);
+        if (have != null) {
             into.setImageBitmap(have);
             return;
         }
@@ -408,24 +636,364 @@ public final class MainActivity extends Activity implements SyncClient.Listener 
             Ink.Page copy;
             try {
                 copy = Ink.Page.fromJson(json);
-            } catch (org.json.JSONException e) {
+            } catch (JSONException e) {
                 return;
             }
-            int w = Ui.dp(this, 230), h = Math.round(w * Ink.H / Ink.W);
-            Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-            Canvas c = new Canvas(b);
+            int h = Math.round(w * Ink.H / Ink.W);
+            Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(bmp);
             float k = w / Ink.W;
             c.scale(k, k);
             renderer.drawPage(c, copy, k, null, null);
             main.post(() -> {
-                previews.put(n.id, b);
-                previewVersions.put(n.id, copy.version);
-                into.setImageBitmap(b);
+                thumbCache.put(key, bmp);
+                into.setImageBitmap(bmp);
             });
         });
     }
 
-    // ---- Cuadernos ----
+    private void openNotebook(Ink.Notebook n, String page) {
+        flushSave();
+        Intent i = new Intent(this, PageActivity.class).putExtra("notebook", n.id);
+        if (page != null) i.putExtra("page", page);
+        startActivity(i);
+    }
+
+    // ---------------------------------------------------------------- una nota
+
+    private void openNote(String id) {
+        flushSave();
+        JSONObject n = notes.note(id);
+        if (n == null) { showHome(); return; }
+        noteId = id;
+        prefs.edit().putString("last", id).apply();
+        pageBox.removeAllViews();
+
+        iconView = text("📄", 58, t.text, t.regular);
+        iconView.setContentDescription("Cambiar icono");
+        iconView.setOnClickListener(v -> pickIcon());
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(-2, -2);
+        ilp.topMargin = -t.dp(40);
+        pageBox.addView(iconView, ilp);
+
+        titleView = new EditText(this);
+        titleView.setBackground(null);
+        titleView.setPadding(0, t.dp(14), 0, t.dp(8));
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 36);
+        titleView.setTypeface(t.bold);
+        titleView.setTextColor(t.text);
+        titleView.setHint("Sin título");
+        titleView.setHintTextColor(t.faint);
+        titleView.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        titleView.setHorizontallyScrolling(false);
+        titleView.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) {
+                if (loading || note == null) return;
+                String v = s.toString();
+                if (v.indexOf('\n') >= 0) { // Enter en el título: al primer bloque
+                    s.replace(0, s.length(), v.replace("\n", ""));
+                    editor.focusFirst();
+                    return;
+                }
+                try { note.put("title", v); } catch (JSONException ignored) { }
+                paintCrumb();
+                changed();
+                renderSidebar();
+            }
+        });
+        pageBox.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout blocks = new LinearLayout(this);
+        blocks.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(-1, -2);
+        blp.leftMargin = -t.dp(30); // el asa de cada bloque queda en el margen
+        pageBox.addView(blocks, blp);
+        editor = new BlockEditor(this, t, blocks, this);
+
+        TextView add = text("+  Añadir un bloque", 15, t.faint, t.regular);
+        add.setPadding(0, t.dp(12), 0, t.dp(12));
+        add.setOnClickListener(v -> editor.addAtEnd());
+        pageBox.addView(add, new LinearLayout.LayoutParams(-1, -2));
+        View below = new View(this);
+        below.setOnClickListener(v -> editor.addAtEnd());
+        pageBox.addView(below, new LinearLayout.LayoutParams(-1, t.dp(260)));
+
+        show(n);
+        renderSidebar();
+        scroller.post(() -> scroller.scrollTo(0, 0));
+        if (n.optString("title").isEmpty() && Notes.text(n).isEmpty()) {
+            titleView.requestFocus();
+            titleView.post(() -> {
+                android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                if (imm != null) imm.showSoftInput(titleView, 0);
+            });
+        }
+    }
+
+    private void show(JSONObject n) {
+        loading = true;
+        note = n;
+        String ic = n.optString("icon");
+        iconView.setText(ic.isEmpty() ? "📄" : ic);
+        if (!titleView.getText().toString().equals(n.optString("title"))) titleView.setText(n.optString("title"));
+        paintCrumb();
+        editor.setPage(n);
+        loading = false;
+        paintState();
+    }
+
+    private void paintCrumb() {
+        if (note == null) return;
+        String ic = note.optString("icon"), ti = note.optString("title");
+        crumb.setText((ic.isEmpty() ? "📄" : ic) + "  " + (ti.isEmpty() ? "Sin título" : ti));
+    }
+
+    private boolean isEditing() {
+        return editor != null && (editor.isEditing() || (titleView != null && titleView.hasFocus()));
+    }
+
+    @Override
+    public void changed() {
+        if (loading || note == null) return;
+        // Pendiente desde ya, para que una bajada del PC no lo pise mientras se escribe.
+        try { note.put("dirty", true); } catch (JSONException ignored) { }
+        saveState.setText("Guardando…");
+        main.removeCallbacks(save);
+        main.postDelayed(save, 600);
+    }
+
+    private void flushSave() {
+        main.removeCallbacks(save);
+        if (note != null && note.optBoolean("dirty")) notes.edited(note);
+    }
+
+    private void paintState() {
+        if (note == null) { saveState.setText(""); return; }
+        boolean pending = note.optBoolean("dirty");
+        saveState.setText(!pending ? (online ? "Guardado en el PC" : "Guardado") : online ? "Guardando…" : "Se subirá al conectar");
+    }
+
+    @Override
+    public void onNotesChanged(String changed) {
+        renderSidebar();
+        if (noteId == null) {
+            if (!isFinishing()) showHome();
+            return;
+        }
+        if (changed != null && !changed.equals(noteId)) return;
+        JSONObject now = notes.note(noteId);
+        if (now == null) {
+            Ui.toast(this, "Esta nota se borró");
+            showHome();
+            return;
+        }
+        if (now == note) { paintState(); return; }
+        // Llegó una versión nueva del PC: se aplica cuando no estés escribiendo.
+        if (isEditing()) { pendingRemote = true; return; }
+        pendingRemote = false;
+        show(now);
+    }
+
+    private void newNote() {
+        flushSave();
+        JSONObject n = notes.create();
+        openNote(n.optString("id"));
+    }
+
+    private void pickIcon() {
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(8);
+        grid.setPadding(t.dp(12), t.dp(8), t.dp(12), t.dp(8));
+        final AlertDialog[] dlg = new AlertDialog[1];
+        for (String em : EMOJIS) {
+            TextView e = new TextView(this);
+            e.setText(em);
+            e.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+            e.setGravity(Gravity.CENTER);
+            e.setOnClickListener(v -> {
+                try { note.put("icon", em); } catch (JSONException ignored) { }
+                iconView.setText(em);
+                paintCrumb();
+                changed();
+                renderSidebar();
+                dlg[0].dismiss();
+            });
+            grid.addView(e, new ViewGroup.LayoutParams(t.dp(48), t.dp(48)));
+        }
+        dlg[0] = new AlertDialog.Builder(this).setTitle("Elige un icono").setView(grid).show();
+    }
+
+    private void confirmDeleteNote(String id) {
+        JSONObject n = notes.note(id);
+        if (n == null) return;
+        String name = n.optString("title");
+        new AlertDialog.Builder(this)
+                .setTitle("¿Eliminar «" + (name.isEmpty() ? "Sin título" : name) + "»?")
+                .setMessage("Se borra de la tablet y del PC.")
+                .setPositiveButton("Eliminar", (d, w) -> {
+                    if (id.equals(noteId)) {
+                        main.removeCallbacks(save);
+                        note = null;
+                        noteId = null;
+                    }
+                    notes.delete(id);
+                    showHome();
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
+    }
+
+    private void moreMenu(View anchor) {
+        PopupMenu pm = new PopupMenu(this, anchor);
+        if (note != null) {
+            pm.getMenu().add(0, 1, 1, "Cambiar icono");
+            pm.getMenu().add(0, 2, 2, "Eliminar esta nota");
+        }
+        pm.getMenu().add(0, 3, 3, t.dark ? "Modo claro" : "Modo oscuro");
+        pm.getMenu().add(0, 4, 4, "Conectar por WiFi…");
+        pm.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 1: pickIcon(); break;
+                case 2: confirmDeleteNote(noteId); break;
+                case 3: toggleTheme(); break;
+                default: askWifi();
+            }
+            return true;
+        });
+        pm.show();
+    }
+
+    // ---------------------------------------------------------------- páginas de la tablet dentro de una nota
+
+    private Ink.Notebook notebookOf(String pageId) {
+        for (Ink.Notebook n : store.notebooks()) if (n.pages.contains(pageId)) return n;
+        return null;
+    }
+
+    @Override
+    public View tabletBlock(JSONObject b) {
+        final String pageId = b.optString("page");
+        Ink.Notebook nb = notebookOf(pageId);
+        String lbl = nb == null ? null : nb.title + " · Página " + (nb.pages.indexOf(pageId) + 1);
+        if (lbl != null && !lbl.equals(b.optString("label"))) {
+            try { b.put("label", lbl); } catch (JSONException ignored) { }
+        }
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable bg = rounded(t.card, 8);
+        bg.setStroke(Math.max(1, t.dp(1)), t.line);
+        c.setBackground(bg);
+        c.setClipToOutline(true);
+        LinearLayout head = row();
+        head.setPadding(t.dp(12), 0, t.dp(12), 0);
+        TextView name = text("✏️  " + (lbl != null ? lbl : b.optString("label", "Página de la tablet")), 15, t.text, t.medium);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        head.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        head.addView(text(lbl != null ? "Abrir" : "", 14, t.muted, t.regular));
+        c.addView(head, new LinearLayout.LayoutParams(-1, t.dp(44)));
+        FrameLayout body = new FrameLayout(this);
+        body.setBackgroundColor(t.paper);
+        body.setPadding(t.dp(16), t.dp(16), t.dp(16), t.dp(16));
+        Ink.Page p = store.page(pageId);
+        if (p == null) {
+            body.addView(text("Esta página no está en la tablet.", 14, t.faint, t.regular));
+        } else {
+            ImageView img = new ImageView(this);
+            img.setBackgroundColor(0xFFFFFFFF);
+            img.setElevation(t.px(3));
+            int w = t.dp(320);
+            body.addView(img, new FrameLayout.LayoutParams(w, Math.round(w * Ink.H / Ink.W), Gravity.CENTER_HORIZONTAL));
+            thumbnail(p, w, img);
+            c.setOnClickListener(v -> { if (nb != null) openNotebook(nb, pageId); });
+            c.setContentDescription("Abrir " + lbl);
+        }
+        c.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        return c;
+    }
+
+    @Override
+    public void pickTabletPage(JSONObject b) {
+        final ArrayList<Ink.Notebook> list = new ArrayList<>();
+        for (Ink.Notebook n : store.notebooks()) if (!n.pages.isEmpty()) list.add(n);
+        if (list.isEmpty()) {
+            Ui.toast(this, "Todavía no tienes cuadernos con páginas");
+            return;
+        }
+        String[] names = new String[list.size()];
+        for (int i = 0; i < names.length; i++) names[i] = list.get(i).title + "  ·  " + list.get(i).pages.size() + " pág.";
+        new AlertDialog.Builder(this)
+                .setTitle("¿De qué cuaderno?")
+                .setItems(names, (d, which) -> {
+                    Ink.Notebook nb = list.get(which);
+                    String[] pages = new String[nb.pages.size()];
+                    for (int i = 0; i < pages.length; i++) pages[i] = "Página " + (i + 1);
+                    new AlertDialog.Builder(this)
+                            .setTitle(nb.title)
+                            .setItems(pages, (d2, i) -> editor.setTablet(b, nb.pages.get(i), nb.title + " · Página " + (i + 1)))
+                            .setNegativeButton("Cancelar", null)
+                            .show();
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
+    }
+
+    // ---------------------------------------------------------------- búsqueda
+
+    private void openSearch() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(t.dp(16), t.dp(8), t.dp(16), 0);
+        EditText q = new EditText(this);
+        q.setHint("Busca notas y cuadernos…");
+        q.setSingleLine(true);
+        box.addView(q);
+        LinearLayout results = new LinearLayout(this);
+        results.setOrientation(LinearLayout.VERTICAL);
+        ScrollView sv = new ScrollView(this);
+        sv.addView(results);
+        box.addView(sv, new LinearLayout.LayoutParams(-1, t.dp(360)));
+        AlertDialog dlg = new AlertDialog.Builder(this).setView(box).create();
+        Runnable fill = () -> {
+            results.removeAllViews();
+            String s = q.getText().toString().trim().toLowerCase();
+            for (JSONObject n : sortedNotes()) {
+                String ti = n.optString("title");
+                if (!s.isEmpty() && !ti.toLowerCase().contains(s) && !Notes.text(n).toLowerCase().contains(s)) continue;
+                String ic = n.optString("icon");
+                results.addView(result((ic.isEmpty() ? "📄" : ic) + "  " + (ti.isEmpty() ? "Sin título" : ti), v -> { dlg.dismiss(); openNote(n.optString("id")); }));
+            }
+            for (Ink.Notebook n : store.notebooks()) {
+                if (!s.isEmpty() && !n.title.toLowerCase().contains(s) && !n.folder.toLowerCase().contains(s)) continue;
+                results.addView(result("✏️  " + n.title + "  ·  " + n.pages.size() + " pág.", v -> { dlg.dismiss(); openNotebook(n, null); }));
+            }
+            if (results.getChildCount() == 0) results.addView(sideHint("Nada coincide con «" + s + "»"));
+        };
+        q.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { fill.run(); }
+        });
+        fill.run();
+        dlg.show();
+        q.requestFocus();
+        dlg.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+    }
+
+    private View result(String label, View.OnClickListener l) {
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        tv.setSingleLine(true);
+        tv.setEllipsize(TextUtils.TruncateAt.END);
+        tv.setPadding(t.dp(8), t.dp(12), t.dp(8), t.dp(12));
+        tv.setOnClickListener(l);
+        return tv;
+    }
+
+    // ---------------------------------------------------------------- cuadernos
 
     private EditText field(String value) {
         EditText e = new EditText(this);
@@ -435,7 +1003,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener 
         return e;
     }
 
-    private void askNew() {
+    private void askNewNotebook() {
         EditText e = field("Cuaderno " + (store.notebooks().size() + 1));
         new AlertDialog.Builder(this)
                 .setTitle("Nuevo cuaderno")
@@ -444,34 +1012,30 @@ public final class MainActivity extends Activity implements SyncClient.Listener 
                     String title = e.getText().toString().trim();
                     int color = Ui.COVERS[store.notebooks().size() % Ui.COVERS.length];
                     Ink.Notebook n = store.createNotebook(title.isEmpty() ? "Cuaderno" : title, color);
-                    // Creado dentro de una carpeta abierta: va a esa carpeta.
-                    if (!section.startsWith("\u0000")) {
-                        n.folder = section;
-                        store.saveNotebooks();
-                    }
                     sync.sendNotebook(n);
                     sync.sendPage(store.page(n.pages.get(0)));
-                    startActivity(new Intent(this, PageActivity.class).putExtra("notebook", n.id));
+                    openNotebook(n, null);
                 })
                 .setNegativeButton("Cancelar", null)
                 .show();
     }
 
-    private void menu(Ink.Notebook n) {
+    private void notebookMenu(Ink.Notebook n) {
         new AlertDialog.Builder(this)
                 .setTitle(n.title)
-                .setItems(new String[] {"Renombrar", "Cambiar color", n.favorite ? "Quitar de favoritos" : "Marcar como favorito",
+                .setItems(new String[] {"Abrir", "Renombrar", "Cambiar color", n.favorite ? "Quitar de favoritos" : "Marcar como favorito",
                         "Mover a carpeta…", "Borrar"}, (d, which) -> {
-                    if (which == 0) rename(n);
-                    else if (which == 1) {
+                    if (which == 0) openNotebook(n, null);
+                    else if (which == 1) rename(n);
+                    else if (which == 2) {
                         int i = 0;
                         while (i < Ui.COVERS.length && Ui.COVERS[i] != n.color) i++;
                         n.color = Ui.COVERS[(i + 1) % Ui.COVERS.length];
                         changed(n);
-                    } else if (which == 2) {
+                    } else if (which == 3) {
                         n.favorite = !n.favorite;
                         changed(n);
-                    } else if (which == 3) moveToFolder(n);
+                    } else if (which == 4) moveToFolder(n);
                     else confirmDelete(n);
                 })
                 .show();
@@ -494,7 +1058,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener 
     }
 
     private void moveToFolder(Ink.Notebook n) {
-        TreeSet<String> folders = new TreeSet<>();
+        java.util.TreeSet<String> folders = new java.util.TreeSet<>();
         for (Ink.Notebook o : store.notebooks()) if (!o.folder.isEmpty()) folders.add(o.folder);
         ArrayList<String> items = new ArrayList<>(folders);
         items.add("Nueva carpeta…");
@@ -532,7 +1096,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener 
     private void changed(Ink.Notebook n) {
         store.saveNotebooks();
         sync.sendNotebook(n);
-        fill();
+        renderSidebar();
+        if (noteId == null) showHome();
     }
 
     private void confirmDelete(Ink.Notebook n) {
@@ -542,8 +1107,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener 
                 .setPositiveButton("Borrar", (d, w) -> {
                     store.deleteNotebook(n);
                     sync.send("{\"t\":\"delete_notebook\",\"notebook\":\"" + n.id + "\"}");
-                    previews.remove(n.id);
-                    fill();
+                    renderSidebar();
+                    if (noteId == null) showHome();
                 })
                 .setNegativeButton("Cancelar", null)
                 .show();

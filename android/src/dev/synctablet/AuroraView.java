@@ -5,31 +5,53 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.Shader;
+import android.os.SystemClock;
 import android.view.View;
 
-/** Fondo de la portada: noche con manchas de color difusas, detrás del cristal. */
+/** Portada de la página: manchas de color suaves que se mueven despacio, en claro u oscuro. */
 final class AuroraView extends View {
     private static final float[][] BLOBS = {
-        // x, y (fracción de la vista), radio (fracción del lado mayor)
-        {0.12f, 0.18f, 0.55f}, {0.88f, 0.12f, 0.50f}, {0.70f, 0.92f, 0.60f}, {0.15f, 0.85f, 0.45f},
+        // x, y (0..1), radio (fracción del lado mayor), velocidad, fase
+        {0.18f, 0.22f, 0.55f, 0.00011f, 0.0f},
+        {0.82f, 0.30f, 0.50f, 0.00009f, 1.7f},
+        {0.50f, 0.85f, 0.60f, 0.00007f, 3.1f},
     };
-    private static final int[] COLORS = {0xFF14B8A6, 0xFF6366F1, 0xFFDB2777, 0xFF0EA5E9};
-    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final int[] LIGHT = {0x998FC6F2, 0x88F5C9A6, 0x80C3B5F2};
+    private static final int[] DARK = {0x8834628F, 0x77704C33, 0x774A3C7A};
 
-    AuroraView(Context c) {
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final long start = SystemClock.uptimeMillis();
+    private final boolean dark;
+    private boolean running = true;
+
+    AuroraView(Context c, NoteTheme t) {
         super(c);
+        dark = t.dark;
+    }
+
+    void setRunning(boolean r) {
+        running = r;
+        if (r) postInvalidateOnAnimation();
     }
 
     @Override
-    protected void onDraw(Canvas c) {
-        float w = getWidth(), h = getHeight(), big = Math.max(w, h);
-        c.drawColor(0xFF0A1114);
+    protected void onDraw(Canvas canvas) {
+        int w = getWidth(), h = getHeight();
+        canvas.clipRect(0, 0, w, h);
+        canvas.drawColor(dark ? 0xFF22262B : 0xFFE9F1F8);
+        float t = SystemClock.uptimeMillis() - start;
+        float side = Math.max(w, h);
+        int[] colors = dark ? DARK : LIGHT;
         for (int i = 0; i < BLOBS.length; i++) {
-            float x = BLOBS[i][0] * w, y = BLOBS[i][1] * h, r = BLOBS[i][2] * big;
-            int col = COLORS[i];
-            paint.setShader(new RadialGradient(x, y, r, new int[] {(col & 0xFFFFFF) | 0x8C000000,
-                    (col & 0xFFFFFF) | 0x2E000000, col & 0xFFFFFF}, new float[] {0f, 0.5f, 1f}, Shader.TileMode.CLAMP));
-            c.drawCircle(x, y, r, paint);
+            float[] b = BLOBS[i];
+            float a = t * b[3] * 6.2832f + b[4];
+            float cx = w * (b[0] + 0.06f * (float) Math.cos(a));
+            float cy = h * (b[1] + 0.05f * (float) Math.sin(a * 1.3f));
+            float r = side * b[2];
+            paint.setShader(new RadialGradient(cx, cy, r, colors[i], colors[i] & 0x00FFFFFF, Shader.TileMode.CLAMP));
+            canvas.drawCircle(cx, cy, r, paint);
         }
+        paint.setShader(null);
+        if (running) postInvalidateDelayed(33);
     }
 }

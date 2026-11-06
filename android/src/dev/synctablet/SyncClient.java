@@ -53,6 +53,12 @@ final class SyncClient {
     private final LinkedBlockingQueue<String> out = new LinkedBlockingQueue<>();
     private volatile boolean connected;
     private volatile String where = "";
+    /** Dirección del PC mientras hay conexión (para el HTTP de las notas). */
+    private static volatile String host;
+
+    static String currentHost() {
+        return host;
+    }
 
     private SyncClient(Context app) {
         this.app = app;
@@ -128,10 +134,12 @@ final class SyncClient {
             if (!wifi.isEmpty()) hosts.add(wifi);
             for (String host : hosts) {
                 try (WebSocketClient ws = WebSocketClient.connect(host, PORT, "/ws/ink", 1500)) {
+                    SyncClient.host = host;
                     session(ws, host.equals("127.0.0.1") ? "USB" : "WiFi " + host);
                 } catch (IOException e) {
                     // Sin PC en ese camino: probar el siguiente.
                 }
+                SyncClient.host = null;
                 setStatus(false, "");
             }
             try {
@@ -158,12 +166,17 @@ final class SyncClient {
         writer.start();
         setStatus(true, via);
         main.post(this::sendHello);
+        main.post(() -> Notes.get(app).sync());
         try {
             while (true) {
                 WebSocketClient.Message msg = ws.read();
                 if (msg.opcode != WebSocketClient.TEXT) continue;
                 JSONObject m = new JSONObject(msg.text());
-                if ("want_assets".equals(m.optString("t"))) {
+                String t = m.optString("t");
+                if ("note".equals(t) || "notes".equals(t)) {
+                    // Una nota cambió en el PC.
+                    main.post(() -> Notes.get(app).sync());
+                } else if ("want_assets".equals(t)) {
                     JSONArray ids = m.getJSONArray("ids");
                     for (int i = 0; i < ids.length(); i++) sendAsset(ids.getString(i));
                 } else if ("want".equals(m.optString("t"))) {
