@@ -1468,6 +1468,23 @@ final class InkView extends View {
         selBox.set(l - 6, t - 6, r + 6, b + 6);
     }
 
+    /** La imagen seleccionada, si es lo único seleccionado. */
+    Ink.Item selectedImage() {
+        return selStrokes.isEmpty() && selItems.size() == 1 && selItems.get(0).isImage() ? selItems.get(0) : null;
+    }
+
+    /** Cambia la imagen seleccionada por otra, con su forma. Se puede deshacer. */
+    void replaceSelectedImage(String asset, int width, int height) {
+        Ink.Item it = selectedImage();
+        if (it == null || selPage < 0 || width <= 0 || height <= 0) return;
+        Ink.Page page = pages.get(selPage);
+        String old = page.toJson();
+        it.asset = asset;
+        it.h = it.w * height / width;
+        updateSelBox();
+        commitSnapshot(page, old);
+    }
+
     boolean hasSelection() {
         return selPage >= 0;
     }

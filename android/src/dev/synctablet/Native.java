@@ -38,6 +38,10 @@ final class Native {
     /** Un .pptx con una imagen JPEG por diapositiva, de esa forma. Null si falló. */
     static native byte[] imagesToPptx(byte[][] images, float width, float height);
 
+    /** Una foto editada, como JPEG. El recorte va de 0 a 1 ya girada. Null si falló. */
+    static native byte[] imageEdit(byte[] data, float brightness, float contrast, float saturation, int quarterTurns,
+                                   float left, float top, float right, float bottom, boolean document);
+
     /** Un .docx como JSON {title, blocks}; null si no se pudo leer. */
     static native String docxToNote(byte[] data);
     /** Una nota como .docx; null si no se pudo. */

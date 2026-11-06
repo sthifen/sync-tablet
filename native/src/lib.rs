@@ -4,6 +4,7 @@
 //! un PDF raro no debe hacerlo. Si algo falla, Java usa su camino de siempre.
 
 pub mod deck;
+pub mod image;
 pub mod pdf;
 pub mod word;
 
@@ -11,7 +12,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JIntArray, JObjectArray, JString};
-use jni::sys::{jbyteArray, jfloat, jint, jlong, jstring};
+use jni::sys::{jboolean, jbyteArray, jfloat, jint, jlong, jstring};
 
 fn guarded<T>(fallback: T, f: impl FnOnce() -> Option<T>) -> T {
     catch_unwind(AssertUnwindSafe(f)).ok().flatten().unwrap_or(fallback)
@@ -152,6 +153,38 @@ pub extern "system" fn Java_dev_synctablet_Native_imagesToPptx<'l>(
         }
         let pptx = deck::images_to_pptx(jpegs, f64::from(width), f64::from(height))?;
         Some(env.byte_array_from_slice(&pptx).ok()?.into_raw())
+    })
+}
+
+/// Una foto editada, como JPEG; null si no se pudo.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_dev_synctablet_Native_imageEdit<'l>(
+    env: JNIEnv<'l>,
+    _: JClass<'l>,
+    data: JByteArray<'l>,
+    brightness: jfloat,
+    contrast: jfloat,
+    saturation: jfloat,
+    quarter_turns: jint,
+    left: jfloat,
+    top: jfloat,
+    right: jfloat,
+    bottom: jfloat,
+    document: jboolean,
+) -> jbyteArray {
+    guarded(std::ptr::null_mut(), || {
+        let bytes = env.convert_byte_array(&data).ok()?;
+        let edit = image::Edit {
+            brightness,
+            contrast,
+            saturation,
+            quarter_turns: quarter_turns.rem_euclid(4) as u8,
+            crop: [left, top, right, bottom],
+            document: document != 0,
+        };
+        let jpeg = image::edit(&bytes, &edit)?;
+        Some(env.byte_array_from_slice(&jpeg).ok()?.into_raw())
     })
 }
 

@@ -33,6 +33,11 @@
             android:windowSoftInputMode="adjustNothing|stateHidden" />
 
         <activity
+            android:name=".ImageEditActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
+
+        <activity
             android:name=".PresentActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"

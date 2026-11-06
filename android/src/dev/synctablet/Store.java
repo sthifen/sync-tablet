@@ -73,6 +73,17 @@ final class Store {
         return id;
     }
 
+    /** Guarda un JPEG ya hecho y devuelve su id. */
+    String putAssetBytes(byte[] jpeg) throws IOException {
+        String id = Ink.newId();
+        File f = assetFile(id), tmp = new File(f.getPath() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
+            out.write(jpeg);
+        }
+        if (!tmp.renameTo(f)) throw new IOException("no se pudo guardar la imagen");
+        return id;
+    }
+
     /** Página nueva al final, copia de otra (sus trazos e imágenes). */
     synchronized Ink.Page duplicatePage(Ink.Notebook n, Ink.Page from, int at) {
         Ink.Page p = new Ink.Page(Ink.newId(), n.id);

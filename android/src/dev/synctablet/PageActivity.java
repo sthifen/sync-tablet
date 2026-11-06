@@ -66,7 +66,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private static final String[] PEN_NAMES = {"Pluma", "Lápiz", "Pincel", "Caligrafía"};
     private static final String[] BACKGROUNDS = {Ink.LINES, Ink.GRID, Ink.DOTS, Ink.CORNELL, Ink.TODO, Ink.MUSIC, Ink.PLAIN};
     private static final String[] BACKGROUND_NAMES = {"Rayas", "Cuadros", "Puntos", "Cornell (apuntes)", "Lista de tareas", "Pentagrama", "Lisa"};
-    private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4, PICK_PPTX = 5;
+    private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4, PICK_PPTX = 5, EDIT_IMAGE = 6;
     private static final String PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     /** Acciones para el botón del S Pen (clic y doble clic con el lápiz en el aire). */
     private static final String[] PEN_ACTIONS = {"Cambiar entre pluma y goma", "Deshacer", "Lazo", "Puntero láser", "Resaltador", "Nada"};
@@ -84,7 +84,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private InkView ink;
     private GlassLayout bar, palette, selectionBar, shapeBar;
-    private IconView autoShapeButton;
+    private IconView autoShapeButton, editImage;
     private final IconView[] shapeButtons = new IconView[SHAPE_KINDS.length];
     private TextView title;
     private IconView pen, highlighter, eraser, lasso, shapes, text, tape, laser, undo, redo, finger;
@@ -320,6 +320,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         TextView hint = Ui.text(this, "Arrastra para mover · la esquina cambia el tamaño · un color lo recolorea", 13, Ui.ICON_MUTED, false);
         hint.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 8), 0);
         g.addView(hint);
+        editImage = icon(IconView.SLIDERS, "Editar la imagen", v -> {
+            Ink.Item it = ink.selectedImage();
+            if (it != null) {
+                startActivityForResult(new Intent(this, ImageEditActivity.class).putExtra("asset", it.asset), EDIT_IMAGE);
+            }
+        });
+        g.addView(editImage);
         g.addView(icon(IconView.COPY, "Duplicar", v -> ink.duplicateSelection()));
         g.addView(icon(IconView.TRASH, "Borrar", v -> ink.deleteSelection()));
         g.addView(icon(IconView.CHECK, "Listo", v -> ink.clearSelection()));
@@ -1061,6 +1068,14 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
+        if (request == EDIT_IMAGE) {
+            if (result == RESULT_OK && data != null) {
+                String asset = data.getStringExtra("asset");
+                sync.sendAsset(asset);
+                ink.replaceSelectedImage(asset, data.getIntExtra("w", 0), data.getIntExtra("h", 0));
+            }
+            return;
+        }
         super.onActivityResult(request, result, data);
         if (request == TAKE_PHOTO) {
             if (result == RESULT_OK && photoUri != null) insertImage(photoUri);
@@ -1497,6 +1512,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     @Override
     public void onSelection(boolean active) {
         selectionBar.setVisibility(active ? View.VISIBLE : View.GONE);
+        editImage.setVisibility(active && ink.selectedImage() != null && Native.available() ? View.VISIBLE : View.GONE);
         refreshTools();
     }
 

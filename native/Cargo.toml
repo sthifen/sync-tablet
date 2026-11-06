@@ -17,6 +17,10 @@ deckcraft-geom = { git = "https://github.com/storytold/deckcraft", rev = "9bac60
 deckcraft-model = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
 deckcraft-pptx = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
 deckcraft-render = { git = "https://github.com/storytold/deckcraft", rev = "9bac60ff53029039c82083ee574c22d74c1541f1" }
+photocraft-codecs = { git = "https://github.com/storytold/photocraft", rev = "7c12f647150f8e7b2e07718f7993b1fcaa57fefe" }
+photocraft-compose = { git = "https://github.com/storytold/photocraft", rev = "7c12f647150f8e7b2e07718f7993b1fcaa57fefe" }
+photocraft-doc = { git = "https://github.com/storytold/photocraft", rev = "7c12f647150f8e7b2e07718f7993b1fcaa57fefe" }
+photocraft-geom = { git = "https://github.com/storytold/photocraft", rev = "7c12f647150f8e7b2e07718f7993b1fcaa57fefe" }
 serde_json = "1"
 wordcraft-docx = { git = "https://github.com/storytold/wordcraft", rev = "edfea68101220c9bdc4b2b0ccf4acd9612bedb6e" }
 wordcraft-formats = { git = "https://github.com/storytold/wordcraft", rev = "edfea68101220c9bdc4b2b0ccf4acd9612bedb6e" }
