@@ -751,7 +751,7 @@ final class InkView extends View {
         int t = e.getToolType(idx);
         return t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER
                 || t == MotionEvent.TOOL_TYPE_MOUSE
-                || (fingerDraws && t == MotionEvent.TOOL_TYPE_FINGER && fingers == 0);
+                || ((fingerDraws || tool == LASSO) && t == MotionEvent.TOOL_TYPE_FINGER && fingers == 0);
     }
 
     private static boolean button(MotionEvent e) {
@@ -819,6 +819,13 @@ final class InkView extends View {
                         pointerId = e.getPointerId(idx);
                         start(e, idx);
                         return true;
+                    }
+                } else if (action == MotionEvent.ACTION_POINTER_DOWN && e.getToolType(idx) == MotionEvent.TOOL_TYPE_FINGER) {
+                    // Un segundo dedo: lo que hacía el primero se deja y se mueve la hoja.
+                    int first = e.findPointerIndex(pointerId);
+                    if (first >= 0 && e.getToolType(first) == MotionEvent.TOOL_TYPE_FINGER) {
+                        cancel();
+                        return gesture(e);
                     }
                 }
                 break;
@@ -1392,32 +1399,34 @@ final class InkView extends View {
 
     // ---- Lazo y selección ----
 
-    private static boolean inside(ArrayList<Float> poly, float x, float y) {
-        boolean in = false;
-        int n = poly.size() / 2;
-        for (int i = 0, j = n - 1; i < n; j = i++) {
-            float xi = poly.get(2 * i), yi = poly.get(2 * i + 1), xj = poly.get(2 * j), yj = poly.get(2 * j + 1);
-            if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) in = !in;
-        }
-        return in;
-    }
-
     private void finishLasso() {
-        if (lasso.size() < 6) {
-            lasso.clear();
-            invalidate();
-            return;
-        }
+        if (lasso.size() < 2) return;
         Ink.Page page = pages.get(currentPage);
         clearSelection();
+        float[] path = new float[lasso.size()];
+        for (int i = 0; i < path.length; i++) path[i] = lasso.get(i);
+        ArrayList<float[]> shapes = new ArrayList<>();
         for (Ink.Stroke s : page.strokes) {
-            int in = 0;
-            for (int i = 0; i < s.n; i++) if (inside(lasso, s.x(i), s.y(i))) in++;
-            if (in * 2 >= s.n) selStrokes.add(s);
+            float[] xy = new float[2 * s.n];
+            for (int i = 0; i < s.n; i++) {
+                xy[2 * i] = s.x(i);
+                xy[2 * i + 1] = s.y(i);
+            }
+            shapes.add(xy);
         }
-        for (Ink.Item it : page.items) {
-            float h = renderer.itemHeight(it);
-            if (inside(lasso, it.x + it.w / 2, it.y + h / 2)) selItems.add(it);
+        float pathX = path[0], pathY = path[1];
+        boolean tapped = true;
+        for (int i = 0; i + 1 < path.length; i += 2) tapped &= Math.hypot(path[i] - pathX, path[i + 1] - pathY) < 12;
+        // Un elemento cuenta como una rejilla de puntos, salvo al tocar: ahí se mira si cae encima.
+        if (!tapped) for (Ink.Item it : page.items) shapes.add(itemGrid(it));
+        boolean[] chosen = LassoPicker.pick(path, shapes);
+        for (int i = 0; i < page.strokes.size(); i++) if (chosen[i]) selStrokes.add(page.strokes.get(i));
+        for (int i = 0; i < page.items.size(); i++) {
+            Ink.Item it = page.items.get(i);
+            boolean hit = tapped
+                    ? selStrokes.isEmpty() && pathX >= it.x && pathX <= it.x + it.w && pathY >= it.y && pathY <= it.y + renderer.itemHeight(it)
+                    : chosen[page.strokes.size() + i];
+            if (hit) selItems.add(it);
         }
         lasso.clear();
         if (selStrokes.isEmpty() && selItems.isEmpty()) {
@@ -1433,6 +1442,16 @@ final class InkView extends View {
         }
         listener.onSelection(true);
         invalidate();
+    }
+
+    private float[] itemGrid(Ink.Item it) {
+        float h = renderer.itemHeight(it);
+        float[] xy = new float[18];
+        for (int i = 0; i < 9; i++) {
+            xy[2 * i] = it.x + it.w * (i % 3) / 2;
+            xy[2 * i + 1] = it.y + h * (i / 3) / 2;
+        }
+        return xy;
     }
 
     private void updateSelBox() {

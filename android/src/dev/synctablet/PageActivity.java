@@ -244,7 +244,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             if (ink.tool == InkView.ERASER) chooseEraser();
             else setTool(InkView.ERASER);
         });
-        lasso = icon(IconView.LASSO, "Lazo: seleccionar, mover y cambiar tamaño", v -> setTool(InkView.LASSO));
+        lasso = icon(IconView.LASSO, "Lazo: toca una palabra, rodea o pasa por encima", v -> setTool(InkView.LASSO));
         shapes = icon(IconView.SHAPES, "Figuras (toca otra vez para la galería)", v -> {
             if (ink.tool == InkView.SHAPE) shapeGallery();
             else setTool(InkView.SHAPE);
