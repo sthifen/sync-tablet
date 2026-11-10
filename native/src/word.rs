@@ -320,3 +320,27 @@ mod html_tests {
         assert!(back.contains("<b>") || back.contains("<strong>") || back.contains("bold"), "{back}");
     }
 }
+
+#[cfg(test)]
+mod archivos_reales {
+    /// SUITE_DIR=carpeta cargo test archivos_reales -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn abre_los_word_de_la_carpeta() {
+        let Ok(dir) = std::env::var("SUITE_DIR") else { return };
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("docx") {
+                continue;
+            }
+            let bytes = std::fs::read(&p).unwrap();
+            let html = super::docx_to_html(&bytes).unwrap_or_default();
+            let back = super::html_to_docx(&html).map(|d| d.len()).unwrap_or(0);
+            if let Ok(out) = std::env::var("SUITE_OUT") {
+                let _ = std::fs::write(format!("{out}/{}.html", p.file_stem().unwrap().to_string_lossy()), &html);
+            }
+            println!("{:60} html {:>7}  tablas {:>2}  imágenes {:>2}  vuelta {:>7}", p.file_name().unwrap().to_string_lossy(), html.len(),
+                html.matches("<table").count(), html.matches("<img").count(), back);
+        }
+    }
+}

@@ -2008,8 +2008,12 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHEET), "Excel → hoja de cálculo", false, () -> pickImport(
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel",
                     "application/vnd.oasis.opendocument.spreadsheet", "text/csv", "text/comma-separated-values")));
-            tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDES), "PowerPoint → cuaderno", false, () -> pickImport(
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDES), "PowerPoint → presentación", false, () -> pickImport(
                     "application/vnd.openxmlformats-officedocument.presentationml.presentation")));
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "PowerPoint → cuaderno (para apuntar encima)", false, () -> {
+                pptxToNotebook = true;
+                pickImport("application/vnd.openxmlformats-officedocument.presentationml.presentation");
+            }));
         }
         tiles.add(new OptionDock.Tile(dock.letter("X++"), "Xournal++ → cuaderno", false, () -> pickImport("*/*")));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.CUBE), "Modelo 3D (STL, OBJ)", false, () -> {
@@ -2049,7 +2053,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             importXopp(uri, base);
         } else if (lower.endsWith(".stl") || lower.endsWith(".obj")) {
             startActivity(new Intent(this, ModelActivity.class).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        } else if ((lower.endsWith(".pptx") || (type != null && type.contains("presentation"))) && !pptxToNotebook && Native.available()) {
+            importPresentation(uri, base);
         } else if (lower.endsWith(".pdf") || lower.endsWith(".pptx") || "application/pdf".equals(type) || (type != null && type.contains("presentation"))) {
+            pptxToNotebook = false;
             boolean deck = lower.endsWith(".pptx") || (type != null && type.contains("presentation"));
             Ink.Notebook n = store.createNotebook(base, Ui.COVERS[store.notebooks().size() % Ui.COVERS.length]);
             if (folderView != null) {
@@ -2098,6 +2105,29 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 openNotebook(n, n.pages.get(0));
             });
         }, "xopp").start();
+    }
+
+    /** «PowerPoint → cuaderno» lo pide así; si no, un PowerPoint abre como presentación. */
+    private boolean pptxToNotebook;
+
+    private void importPresentation(android.net.Uri uri, String title) {
+        Ui.toast(this, "Abriendo la presentación…");
+        new Thread(() -> {
+            String id = null;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[1 << 16];
+                for (int k; (k = in.read(buf)) > 0; ) bytes.write(buf, 0, k);
+                id = DeckActivity.importPptx(this, bytes.toByteArray(), title, folderView);
+            } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "importar PowerPoint", e);
+            }
+            String made = id;
+            runOnUiThread(() -> {
+                if (made == null) Ui.toast(this, "No se pudo abrir la presentación");
+                else startActivity(new Intent(this, DeckActivity.class).putExtra("id", made));
+            });
+        }, "pptx").start();
     }
 
     private void importSheet(android.net.Uri uri, String name, String title) {

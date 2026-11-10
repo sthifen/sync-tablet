@@ -63,7 +63,7 @@ public final class GridActivity extends Activity {
     private OptionDock dock;
     private GridCanvas grid;
     private EditText formula;
-    private TextView cellName, titleView, state;
+    private TextView cellName, titleView, state, stats, zoomText;
     private IconView undo, redo;
     private LinearLayout tabs;
     private String[] functions;
@@ -224,7 +224,7 @@ public final class GridActivity extends Activity {
         cellName.setBackground(Ui.round(t.card, t.dp(8)));
         cellName.setOnClickListener(v -> goTo());
         fx.addView(cellName, new LinearLayout.LayoutParams(t.dp(76), t.dp(40)));
-        TextView fxBtn = label("fx", 16, t.accent, true);
+        TextView fxBtn = label("fx", 16, Ribbon.GRID, true);
         fxBtn.setGravity(Gravity.CENTER);
         fxBtn.setContentDescription("Funciones");
         fxBtn.setOnClickListener(v -> functionMenu());
@@ -252,6 +252,7 @@ public final class GridActivity extends Activity {
 
         // La cinta de GridCraft: mismas pestañas y grupos, en el mismo orden.
         Ribbon rb = new Ribbon(this, t, Ribbon.GRID);
+        rb.fileTab(this::moreMenu);
         rb.tab("Inicio");
         rb.group("Portapapeles")
                 .button(IconView.COPY, "Copiar", () -> run("edit.copy", "{}"))
@@ -308,6 +309,14 @@ public final class GridActivity extends Activity {
         sort.letter("A→Z", "Ordenar de menor a mayor", () -> run("data.sortAscending", "{}"));
         sort.letter("Z→A", "Ordenar de mayor a menor", () -> run("data.sortDescending", "{}"));
         sort.button(IconView.SLIDERS, "Filtro", () -> run("data.filter", "{}"));
+        rb.group("Análisis")
+                .button(IconView.TABLE, "Tabla de\nfrecuencias", () -> analysis("freq"))
+                .button(IconView.SLIDERS, "Estadística\ndescriptiva", () -> analysis("desc"))
+                .button(IconView.CHART, "Prueba F\n(Fisher)", () -> analysis("f"))
+                .button(IconView.PAGES, "Kruskal–\nWallis", () -> analysis("kw"))
+                .button(IconView.GRID_DOC, "ANOVA\nun factor", () -> analysis("anova"))
+                .button(IconView.S_AXES, "Regresión", () -> analysis("reg"))
+                .button(IconView.WAND, "Distribu-\nciones", this::distributionMenu);
         rb.group("Herramientas de datos").button(IconView.TRASH, "Quitar\nduplicados", () -> run("data.removeDuplicates", "{}"))
                 .button(IconView.NEXT, "Rellenar\nserie", () -> run("edit.fillSeries", "{}"));
         rb.tab("Vista");
@@ -328,7 +337,29 @@ public final class GridActivity extends Activity {
         tabs.setGravity(Gravity.CENTER_VERTICAL);
         tabs.setPadding(t.dp(8), 0, t.dp(8), 0);
         ts.addView(tabs);
-        root.addView(ts, new LinearLayout.LayoutParams(-1, t.dp(50)));
+        root.addView(ts, new LinearLayout.LayoutParams(-1, t.dp(46)));
+        // Barra de estado como la de Excel de escritorio: Listo · Promedio · Recuento · Suma · zoom.
+        LinearLayout status = new LinearLayout(this);
+        status.setGravity(Gravity.CENTER_VERTICAL);
+        status.setPadding(t.dp(14), 0, t.dp(8), 0);
+        status.setBackgroundColor(t.dark ? 0xFF202020 : 0xFFF3F3F3);
+        TextView ready = label("Listo", 12, t.muted, false);
+        status.addView(ready, new LinearLayout.LayoutParams(0, -2, 1));
+        stats = label("", 12, t.muted, false);
+        stats.setPadding(0, 0, t.dp(16), 0);
+        status.addView(stats);
+        TextView minus = label("−", 18, t.muted, false);
+        minus.setPadding(t.dp(10), 0, t.dp(10), 0);
+        minus.setOnClickListener(v -> grid.zoomBy(1 / 1.15f));
+        status.addView(minus);
+        zoomText = label("100 %", 12, t.muted, false);
+        zoomText.setOnClickListener(v -> grid.zoomBy(0));
+        status.addView(zoomText);
+        TextView plus = label("+", 18, t.muted, false);
+        plus.setPadding(t.dp(10), 0, t.dp(10), 0);
+        plus.setOnClickListener(v -> grid.zoomBy(1.15f));
+        status.addView(plus);
+        root.addView(status, new LinearLayout.LayoutParams(-1, t.dp(30)));
 
         root.setOnApplyWindowInsetsListener((v, in) -> {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -520,7 +551,26 @@ public final class GridActivity extends Activity {
         grid.invalidate();
     }
 
+    /** Promedio, recuento y suma de lo elegido, como en la barra de estado de Excel. */
+    private void paintStats() {
+        if (stats == null || book == 0) return;
+        String out = Native.gridExec(book, "selection.stats", "{}");
+        try {
+            JSONObject o = new JSONObject(out == null ? "{}" : out).optJSONObject("ok");
+            int count = o == null ? 0 : o.optInt("count");
+            if (o == null || (ar == sr && ac == sc) || count == 0) {
+                stats.setText("");
+                return;
+            }
+            stats.setText("Promedio: " + Sheet.format(Math.round(o.optDouble("average") * 1e4) / 1e4) + "    Recuento: " + count
+                    + "    Suma: " + Sheet.format(Math.round(o.optDouble("sum") * 1e4) / 1e4));
+        } catch (JSONException e) {
+            stats.setText("");
+        }
+    }
+
     private void showCell() {
+        paintStats();
         cellName.setText(range());
         String edit = book == 0 ? "" : Native.gridEdit(book, ar, ac);
         formula.setText(edit == null ? "" : edit);
@@ -663,6 +713,93 @@ public final class GridActivity extends Activity {
             pickedChart = -1;
         }));
         dock.tiles("Gráfica", tiles);
+    }
+
+    // ---- análisis de datos ----
+
+    /** Las herramientas de Datos › Análisis, sobre las columnas elegidas; el resultado va a la derecha. */
+    private void analysis(String tool) {
+        int r0 = Math.min(ar, sr), r1 = Math.max(ar, sr), c0 = Math.min(ac, sc), c1 = Math.max(ac, sc);
+        if (r0 == r1) {
+            Ui.toast(this, "Elige primero los datos: mantén el dedo en la primera celda y arrastra (con su título arriba)");
+            return;
+        }
+        ArrayList<Analysis.Column> cols = Analysis.read(this, r0, c0, r1, c1);
+        if (cols.isEmpty()) {
+            Ui.toast(this, "No hay números en lo elegido");
+            return;
+        }
+        // A la derecha de todo lo que ya tiene la hoja: nunca encima de otros datos.
+        int outC = c1 + 2;
+        try {
+            String v = Native.gridView(book, 0, 0, 1, 1);
+            JSONArray used = new JSONObject(v == null ? "{}" : v).optJSONArray("used");
+            if (used != null) outC = Math.max(outC, used.optInt(1) + 2);
+        } catch (JSONException ignored) {
+        }
+        try {
+            String at;
+            switch (tool) {
+                case "freq":
+                    at = Analysis.frequency(this, cols.get(0), r0, outC);
+                    break;
+                case "desc":
+                    at = Analysis.descriptive(this, cols, r0, outC);
+                    break;
+                case "f":
+                    if (cols.size() < 2) {
+                        Ui.toast(this, "La prueba F necesita dos columnas de datos");
+                        return;
+                    }
+                    at = Analysis.fTest(this, cols.get(0), cols.get(1), r0, outC);
+                    break;
+                case "kw":
+                    if (cols.size() < 2) {
+                        Ui.toast(this, "Kruskal–Wallis necesita dos o más columnas (una por grupo)");
+                        return;
+                    }
+                    at = Analysis.kruskal(this, cols, r0, outC);
+                    break;
+                case "anova":
+                    exec("data.analysisToolPak", new JSONObject().put("tool", "anovaSingle").put("range", range()).put("labels", true)
+                            .put("groupedBy", "columns").put("output", Analysis.a1(r0, outC)).put("overwrite", true));
+                    at = Analysis.a1(r0, outC);
+                    break;
+                default: // regresión: primera columna X, segunda Y
+                    if (cols.size() < 2) {
+                        Ui.toast(this, "La regresión necesita dos columnas: X y luego Y");
+                        return;
+                    }
+                    exec("data.analysisToolPak", new JSONObject().put("tool", "regression").put("inputX", Analysis.refs(cols.get(0)).replace("$", ""))
+                            .put("inputY", Analysis.refs(cols.get(1)).replace("$", "")).put("output", Analysis.a1(r0, outC)).put("overwrite", true));
+                    at = Analysis.a1(r0, outC);
+                    break;
+            }
+            changed();
+            int[] a = parse(at);
+            if (a != null) {
+                select(a[0], a[1], a[0], a[1]);
+                grid.reveal(a[0], a[1] + 4);
+            }
+        } catch (JSONException e) {
+            Ui.toast(this, "No se pudo hacer el análisis");
+        }
+    }
+
+    private void distributionMenu() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (String d : Analysis.DISTRIBUTIONS) {
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.CHART), d, false, () -> {
+                int r = Math.min(ar, sr), c = Math.min(ac, sc);
+                try {
+                    Analysis.distribution(this, d, r, c);
+                    changed();
+                } catch (JSONException e) {
+                    Ui.toast(this, "No se pudo");
+                }
+            }));
+        }
+        dock.tiles("Distribución desde " + Analysis.a1(Math.min(ar, sr), Math.min(ac, sc)) + " (cambia los parámetros en la columna de al lado)", tiles);
     }
 
     // ---- a un cuaderno ----
@@ -1157,8 +1294,9 @@ public final class GridActivity extends Activity {
 
         GridCanvas() {
             super(GridActivity.this);
-            setBackgroundColor(t.dark ? 0xFF1E1E1E : 0xFFFFFFFF);
-            lineP.setColor(t.dark ? 0xFF3A3A3A : 0xFFD4D4D8);
+            // Como en Excel de escritorio: la cuadrícula es blanca también en modo oscuro.
+            setBackgroundColor(0xFFFFFFFF);
+            lineP.setColor(0xFFD4D4D8);
             lineP.setStrokeWidth(1);
             headP.setTextAlign(Paint.Align.CENTER);
             headP.setColor(t.muted);
@@ -1213,6 +1351,7 @@ public final class GridActivity extends Activity {
                 @Override public boolean onScale(ScaleGestureDetector d) {
                     float before = zoom;
                     zoom = Math.max(0.4f, Math.min(3f, zoom * d.getScaleFactor()));
+                    zoomText.setText(Math.round(zoom * 100) + " %");
                     float k = zoom / before, fx = d.getFocusX() - headW(), fy = d.getFocusY() - headH();
                     scrollTo((sx + fx) * k - fx, (sy + fy) * k - fy);
                     return true;
@@ -1222,6 +1361,15 @@ public final class GridActivity extends Activity {
 
         float k() {
             return zoom * t.density * 1.1f;
+        }
+
+        /** Botones de zoom de la barra de estado (0 = volver al 100 %). */
+        void zoomBy(float f) {
+            zoom = f == 0 ? 1f : Math.max(0.4f, Math.min(3f, zoom * f));
+            zoomText.setText(Math.round(zoom * 100) + " %");
+            viewR0 = -1;
+            refresh();
+            invalidate();
         }
 
         float headW() {
@@ -1437,7 +1585,7 @@ public final class GridActivity extends Activity {
                         boolean b = cell.optBoolean("b"), it = cell.optBoolean("i");
                         textP.setTypeface(Typeface.create(Typeface.DEFAULT, (b ? Typeface.BOLD : 0) | (it ? Typeface.ITALIC : 0)));
                         String fc = cell.optString("fc", null);
-                        textP.setColor(fc != null ? Ink.parseColor(fc, t.text) : (t.dark ? 0xFFE5E5E5 : 0xFF111827));
+                        textP.setColor(fc != null ? Ink.parseColor(fc, 0xFF111827) : 0xFF111827);
                         String a = cell.optString("a", "l");
                         float tw = textP.measureText(s), pad = 3 * k;
                         if ("r".equals(a) && tw > cw - 2 * pad) {
@@ -1470,7 +1618,7 @@ public final class GridActivity extends Activity {
                 drawPrims(c, ch.optJSONArray("prims") == null ? new JSONArray() : ch.optJSONArray("prims"), chartP, path);
                 if (i == pickedChart) {
                     chartP.setStyle(Paint.Style.STROKE);
-                    chartP.setColor(t.accent);
+                    chartP.setColor(Ribbon.GRID);
                     chartP.setStrokeWidth(2.5f / k * t.density);
                     c.drawRect(0, 0, (float) ch.optDouble("w"), (float) ch.optDouble("h"), chartP);
                 }
@@ -1480,16 +1628,16 @@ public final class GridActivity extends Activity {
             int sr0 = Math.min(ar, sr), sr1 = Math.max(ar, sr), sc0 = Math.min(ac, sc), sc1 = Math.max(ac, sc);
             float selL = hw + colLeft(sc0) * k - sx, selT = hh + rowTop(sr0) * k - sy;
             float selR = sc1 > 16000 ? w : hw + colLeft(sc1 + 1) * k - sx, selB = sr1 > 1000000 ? h : hh + rowTop(sr1 + 1) * k - sy;
-            fillP.setColor(t.accent & 0xFFFFFF | 0x22000000);
+            fillP.setColor(Ribbon.GRID & 0xFFFFFF | 0x22000000);
             c.drawRect(selL, selT, selR, selB, fillP);
             Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
             border.setStyle(Paint.Style.STROKE);
-            border.setColor(t.accent);
+            border.setColor(Ribbon.GRID);
             border.setStrokeWidth(t.px(2));
             c.drawRect(selL, selT, selR, selB, border);
             c.restore();
             // Cabeceras.
-            fillP.setColor(t.dark ? 0xFF262626 : 0xFFF5F5F4);
+            fillP.setColor(0xFFF3F3F3);
             c.drawRect(0, 0, w, hh, fillP);
             c.drawRect(0, 0, hw, h, fillP);
             headP.setTextSize(t.px(12));
@@ -1497,7 +1645,7 @@ public final class GridActivity extends Activity {
             for (int col = c0; x < w; col++) {
                 float cw = colWidth(col) * k;
                 boolean on = col >= sc0 && col <= sc1;
-                headP.setColor(on ? t.accent : t.muted);
+                headP.setColor(on ? Ribbon.GRID : 0xFF555555);
                 headP.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
                 if (x + cw > hw) c.drawText(col(col), x + cw / 2, hh / 2 - (headP.ascent() + headP.descent()) / 2, headP);
                 c.drawLine(x, 0, x, hh, lineP);
@@ -1507,7 +1655,7 @@ public final class GridActivity extends Activity {
             for (int r = r0; y < h; r++) {
                 float rh = rowHeight(r) * k;
                 boolean on = r >= sr0 && r <= sr1;
-                headP.setColor(on ? t.accent : t.muted);
+                headP.setColor(on ? Ribbon.GRID : 0xFF555555);
                 headP.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
                 if (y + rh > hh) c.drawText(String.valueOf(r + 1), hw / 2, y + rh / 2 - (headP.ascent() + headP.descent()) / 2, headP);
                 c.drawLine(0, y, hw, y, lineP);

@@ -237,6 +237,43 @@ public final class DeckActivity extends Activity {
         }
     }
 
+    /** Un PowerPoint como presentación: cada diapositiva con su diseño original de fondo (DeckCraft). Devuelve el id o null. */
+    static String importPptx(Context c, byte[] data, String title, String folder) {
+        long deck = Native.deckOpen(data);
+        if (deck == 0) return null;
+        String id = Ink.newId();
+        try {
+            JSONArray slidesJson = new JSONArray();
+            int[] size = new int[2];
+            for (int i = 0, n = Native.deckSlides(deck); i < n; i++) {
+                byte[] rgba = Native.deckRender(deck, i, SW, size);
+                if (rgba == null) continue;
+                Bitmap b = Bitmap.createBitmap(size[0], size[1], Bitmap.Config.ARGB_8888);
+                b.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(rgba));
+                String asset = id + "-" + Ink.newId() + ".jpg";
+                try (FileOutputStream out = new FileOutputStream(new File(dir(c), asset))) {
+                    b.compress(Bitmap.CompressFormat.JPEG, 90, out);
+                }
+                float k = Math.min(SW / size[0], SH / size[1]), w = size[0] * k, h = size[1] * k;
+                b.recycle();
+                El e = new El("image", (SW - w) / 2, (SH - h) / 2, w, h);
+                e.asset = asset;
+                slidesJson.put(new JSONObject().put("els", new JSONArray().put(e.json())));
+            }
+            if (slidesJson.length() == 0) return null;
+            // Tema "Minimal": fondo blanco detrás de las diapositivas que no son 16:9.
+            JSONObject o = new JSONObject().put("id", id).put("title", title).put("theme", 1).put("folder", folder == null ? "" : folder)
+                    .put("updated", System.currentTimeMillis()).put("slides", slidesJson);
+            write(new File(dir(c), id + ".json"), o.toString());
+            return id;
+        } catch (IOException | JSONException | RuntimeException | OutOfMemoryError e) {
+            android.util.Log.w("SyncTablet", "importar PowerPoint", e);
+            return null;
+        } finally {
+            Native.deckClose(deck);
+        }
+    }
+
     /** Una diapositiva nueva al final con la imagen (una gráfica de la hoja de cálculo, por ejemplo). */
     static boolean addImageSlide(Context c, String id, Bitmap img, String heading) {
         File f = new File(dir(c), id + ".json");
@@ -618,7 +655,7 @@ public final class DeckActivity extends Activity {
     private OptionDock dock;
     private SlideView view;
     private LinearLayout strip, selBar;
-    private TextView titleView;
+    private TextView titleView, slideStatus;
     private IconView penBtn;
     private FrameLayout frame;
     private PresentView presenter;
@@ -813,6 +850,7 @@ public final class DeckActivity extends Activity {
         }
         penBtn = icon(IconView.PEN, "Dibujar", v -> togglePen());
         Ribbon rb = new Ribbon(this, t, Ribbon.DECK);
+        rb.fileTab(this::exportMenu);
         rb.tab("Inicio");
         rb.group("Diapositivas").button(IconView.PLUS, "Nueva\ndiapositiva", this::addSlideMenu)
                 .button(IconView.COPY, "Duplicar", () -> slideMenu(current));
@@ -860,6 +898,12 @@ public final class DeckActivity extends Activity {
         stage.addView(selScroll, slp);
         body.addView(stage, new LinearLayout.LayoutParams(0, -1, 1));
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+        // Barra de estado como la de PowerPoint.
+        slideStatus = Ui.text(this, "", 12, t.muted, false);
+        slideStatus.setGravity(Gravity.CENTER_VERTICAL);
+        slideStatus.setPadding(t.dp(14), 0, t.dp(14), 0);
+        slideStatus.setBackgroundColor(t.dark ? 0xFF202020 : 0xFFF3F3F3);
+        root.addView(slideStatus, new LinearLayout.LayoutParams(-1, t.dp(30)));
         root.setOnApplyWindowInsetsListener((v, in) -> {
             @SuppressWarnings("deprecation") int l = in.getSystemWindowInsetLeft(), tp = in.getSystemWindowInsetTop(), r = in.getSystemWindowInsetRight(), b = in.getSystemWindowInsetBottom();
             v.setPadding(l, tp, r, b);
@@ -872,6 +916,7 @@ public final class DeckActivity extends Activity {
     }
 
     private void refreshStrip() {
+        if (slideStatus != null) slideStatus.setText("Diapositiva " + (current + 1) + " de " + slides.size() + "      Español (Costa Rica)      Tema: " + THEMES[theme].name);
         strip.removeAllViews();
         for (int i = 0; i < slides.size(); i++) {
             int index = i;

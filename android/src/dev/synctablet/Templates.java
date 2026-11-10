@@ -8,9 +8,10 @@ import org.json.JSONObject;
 final class Templates {
     private Templates() {}
 
-    static final String[] SHEETS = {"blank", "function", "budget", "grades", "lab", "schedule", "tasks"};
-    static final String[] SHEET_NAMES = {"En blanco", "Graficar funciones", "Presupuesto", "Calificaciones", "Laboratorio", "Horario", "Tareas"};
-    static final String[] SHEET_ICONS = {"▦", "📈", "💰", "🎓", "🧪", "🗓️", "✅"};
+    static final String[] SHEETS = {"blank", "loan", "depreciation", "money", "npv", "function", "budget", "grades", "lab", "schedule", "tasks"};
+    static final String[] SHEET_NAMES = {"En blanco", "Préstamo y amortización", "Depreciación", "Valor del dinero", "VPN y TIR", "Graficar funciones",
+            "Presupuesto", "Calificaciones", "Laboratorio", "Horario", "Tareas"};
+    static final String[] SHEET_ICONS = {"▦", "🚗", "🏭", "⏳", "📊", "📈", "💰", "🎓", "🧪", "🗓️", "✅"};
 
     private static JSONArray rows(Object[][] data) {
         JSONArray a = new JSONArray();
@@ -39,6 +40,132 @@ final class Templates {
     static void sheet(GridActivity g, String name) {
         try {
             switch (name) {
+                case "loan": {
+                    // Financiamiento (caso del vehículo o del electrodoméstico): cuota y cuadro de amortización.
+                    put(g, "A1", new Object[][] {
+                        {"Financiamiento", null},
+                        {"Precio del artículo", 15000000},
+                        {"Prima (%)", 0.2},
+                        {"Monto de la prima", "=B2*B3"},
+                        {"Gastos de formalización", 350000},
+                        {"Monto financiado", "=B2-B4+B5"},
+                        {"Tasa anual nominal", 0.12},
+                        {"Plazo (meses)", 60},
+                        {"Tasa mensual", "=B7/12"},
+                        {"Cuota mensual", "=PMT(B9,B8,-B6)"},
+                        {"Tasa efectiva anual", "=EFFECT(B7,12)"},
+                        {"Total pagado en cuotas", "=B10*B8"},
+                        {"Total de intereses", "=B12-B6"},
+                        {"Costo total (prima + cuotas)", "=B4+B12"}});
+                    bold(g, "A1", null);
+                    bold(g, "A10:B10", "#FDE68A");
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B2").put("format", "Currency"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B4:B6").put("format", "Currency"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B10").put("format", "Currency"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B12:B14").put("format", "Currency"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B3").put("format", "Percentage"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B7").put("format", "Percentage"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B9").put("code", "0.0000%"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B11").put("code", "0.00%"));
+                    Object[][] t = new Object[61][];
+                    t[0] = new Object[] {"Mes", "Saldo inicial", "Cuota", "Interés", "Amortización", "Saldo final"};
+                    for (int m = 1; m <= 60; m++) {
+                        int r = m + 1;
+                        t[m] = new Object[] {m, m == 1 ? "=B6" : "=I" + (r - 1), "=IF(D" + r + "<=$B$8,$B$10,0)", "=E" + r + "*$B$9", "=F" + r + "-G" + r, "=E" + r + "-H" + r};
+                    }
+                    // Mes en D, saldo inicial E, cuota F, interés G, amortización H, saldo final I.
+                    put(g, "D1", t);
+                    bold(g, "D1:I1", "#DBEAFE");
+                    g.exec("home.numberFormat", new JSONObject().put("range", "E2:I61").put("code", "#,##0.00"));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "A:A").put("width", 190));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "B:B").put("width", 120));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "E:I").put("width", 105));
+                    g.exec("insert.chart", new JSONObject().put("range", "D1:D61,G1:H61").put("type", "column").put("subtype", "stacked")
+                            .put("title", "Interés y amortización por mes").put("at", "K2").put("width", 460).put("height", 280));
+                    break;
+                }
+                case "depreciation": {
+                    put(g, "A1", new Object[][] {
+                        {"Depreciación del activo", null},
+                        {"Costo del activo (B)", 100000},
+                        {"Valor de salvamento (VS)", 10000},
+                        {"Vida útil n (años)", 5},
+                        {"Tasa de impuestos", 0.3}});
+                    bold(g, "A1", null);
+                    Object[][] t = new Object[7][];
+                    t[0] = new Object[] {"Año", "LR: depreciación", "LR: valor en libros", "SDD: depreciación", "SDD: valor en libros",
+                            "SDA: depreciación", "SDA: valor en libros", "Ahorro fiscal (LR)"};
+                    for (int y = 1; y <= 5; y++) {
+                        int r = y + 7;
+                        t[y] = new Object[] {y, "=SLN($B$2,$B$3,$B$4)", y == 1 ? "=$B$2-B" + r : "=C" + (r - 1) + "-B" + r,
+                                "=DDB($B$2,$B$3,$B$4,A" + r + ")", y == 1 ? "=$B$2-D" + r : "=E" + (r - 1) + "-D" + r,
+                                "=SYD($B$2,$B$3,$B$4,A" + r + ")", y == 1 ? "=$B$2-F" + r : "=G" + (r - 1) + "-F" + r, "=B" + r + "*$B$5"};
+                    }
+                    t[6] = new Object[] {"Total", "=SUM(B8:B12)", null, "=SUM(D8:D12)", null, "=SUM(F8:F12)", null, "=SUM(H8:H12)"};
+                    put(g, "A7", t);
+                    bold(g, "A7:H7", "#FED7AA");
+                    bold(g, "A13:H13", "#E5E7EB");
+                    put(g, "A15", new Object[][] {{"LR = línea recta (SLN), SDD = saldo doble decreciente (DDB), SDA = suma de dígitos de los años (SYD)."}});
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B8:H13").put("code", "#,##0.00"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B5").put("format", "Percentage"));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "A:A").put("width", 170));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "B:H").put("width", 120));
+                    g.exec("insert.chart", new JSONObject().put("range", "A7:A12,C7:C12,E7:E12,G7:G12").put("type", "line").put("subtype", "markers")
+                            .put("title", "Valor en libros por método").put("at", "J2").put("width", 460).put("height", 280));
+                    break;
+                }
+                case "money":
+                    put(g, "A1", new Object[][] {
+                        {"Valor del dinero en el tiempo", null, null},
+                        {"Valor presente VP", 1000, null},
+                        {"Tasa de interés por periodo i", 0.08, null},
+                        {"Número de periodos n", 10, null},
+                        {"Pago periódico (anualidad)", 0, null},
+                        {null, null, null},
+                        {"Resultado", "Valor", "Fórmula de Excel"},
+                        {"Valor futuro VF = VP(1+i)^n", "=FV(B3,B4,-B5,-B2)", "VF(tasa; nper; pago; va)"},
+                        {"Valor presente de VF", "=PV(B3,B4,-B5,-B8)", "VA(tasa; nper; pago; vf)"},
+                        {"Interés compuesto ganado", "=B8-B2", null},
+                        {"Interés simple (VP·i·n)", "=B2*B3*B4", null},
+                        {"Tasa que lleva VP a VF", "=RATE(B4,-B5,-B2,B8)", "TASA(nper; pago; va; vf)"},
+                        {"Periodos para duplicar", "=NPER(B3,0,-1,2)", "NPER(tasa; pago; va; vf)"},
+                        {"Tasa efectiva anual (si i es mensual)", "=(1+B3)^12-1", null}});
+                    bold(g, "A1", null);
+                    bold(g, "A7:C7", "#DBEAFE");
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B3").put("format", "Percentage"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B8:B11").put("format", "Currency"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B12").put("code", "0.00%"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B14").put("code", "0.00%"));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "A:A").put("width", 240));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "C:C").put("width", 180));
+                    break;
+                case "npv": {
+                    put(g, "A1", new Object[][] {
+                        {"Evaluación de proyecto: VPN y TIR", null},
+                        {"TMAR (tasa mínima aceptable)", 0.12},
+                        {null, null},
+                        {"Año", "Flujo neto de efectivo"},
+                        {0, -500000}, {1, 150000}, {2, 160000}, {3, 170000}, {4, 180000}, {5, 200000},
+                        {null, null},
+                        {"VPN", "=NPV(B2,B6:B10)+B5"},
+                        {"TIR", "=IRR(B5:B10)"},
+                        {"Decisión", "=IF(B12>0,\"Se acepta: VPN > 0 y TIR > TMAR\",\"Se rechaza: VPN ≤ 0\")"},
+                        {"Periodo de recuperación (años)", "=MATCH(TRUE,INDEX(C5:C10>=0,0),0)-1"}});
+                    put(g, "C4", new Object[][] {{"Flujo acumulado"}, {"=B5"}, {"=C5+B6"}, {"=C6+B7"}, {"=C7+B8"}, {"=C8+B9"}, {"=C9+B10"}});
+                    put(g, "D4", new Object[][] {{"Valor presente del flujo"}, {"=B5/(1+$B$2)^A5"}, {"=B6/(1+$B$2)^A6"}, {"=B7/(1+$B$2)^A7"}, {"=B8/(1+$B$2)^A8"},
+                            {"=B9/(1+$B$2)^A9"}, {"=B10/(1+$B$2)^A10"}});
+                    bold(g, "A1", null);
+                    bold(g, "A4:D4", "#BBF7D0");
+                    bold(g, "A12:B14", "#FDE68A");
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B2").put("format", "Percentage"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B13").put("code", "0.00%"));
+                    g.exec("home.numberFormat", new JSONObject().put("range", "B5:D12").put("code", "#,##0.00"));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "A:A").put("width", 200));
+                    g.exec("home.columnWidth", new JSONObject().put("cols", "B:D").put("width", 140));
+                    g.exec("insert.chart", new JSONObject().put("range", "A4:B10").put("type", "column").put("title", "Flujos de efectivo")
+                            .put("at", "F2").put("width", 420).put("height", 260));
+                    break;
+                }
                 case "function": {
                     // x de −2π a 2π; cambia las fórmulas de B y C (y «Rellenar ↓») para graficar otra cosa.
                     int n = 41;

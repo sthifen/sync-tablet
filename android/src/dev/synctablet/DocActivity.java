@@ -152,6 +152,7 @@ public final class DocActivity extends Activity {
             else if (span instanceof BackgroundColorSpan) o.put("k", "bg").put("v", ((BackgroundColorSpan) span).getBackgroundColor());
             else if (span instanceof AlignmentSpan) o.put("k", "align").put("v", ((AlignmentSpan) span).getAlignment().name());
             else if (span instanceof BulletSpan) o.put("k", "bullet");
+            else if (span instanceof TableSpan) o.put("k", "table").put("v", ((TableSpan) span).rows.toString());
             else if (span instanceof android.text.style.ImageSpan && String.valueOf(((android.text.style.ImageSpan) span).getSource()).startsWith("asset:"))
                 o.put("k", "img").put("v", ((android.text.style.ImageSpan) span).getSource().substring(6));
             else continue;
@@ -181,6 +182,16 @@ public final class DocActivity extends Activity {
 
     /** HTML (de WordCraft o de una plantilla) a texto con estilos; los tamaños en pt pasan a relativos. */
     static Spanned fromHtml(Context ctx, String docId, String html) {
+        // Las tablas salen antes: Android no sabe leerlas. Su sitio lo guarda una marca.
+        ArrayList<JSONArray> tables = new ArrayList<>();
+        Matcher tm = Pattern.compile("(?is)<table.*?</table>").matcher(html);
+        StringBuffer tb = new StringBuffer();
+        while (tm.find()) {
+            tables.add(TableSpan.parse(tm.group()));
+            tm.appendReplacement(tb, "<p>" + TABLE_MARK + "</p>");
+        }
+        tm.appendTail(tb);
+        html = tb.toString();
         // Android no lee font-size: se cambia por etiquetas propias que lee el TagHandler.
         Matcher m = Pattern.compile("<span style=\"([^\"]*)\">(.*?)</span>", Pattern.DOTALL).matcher(html);
         StringBuffer sb = new StringBuffer();
@@ -243,11 +254,140 @@ public final class DocActivity extends Activity {
                 @Override public String getSource() { return "asset:" + ((Pending) im.getDrawable()).name; }
             }, st, en, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
+        int ti = 0;
+        for (int i = 0; i < fixed.length() && ti < tables.size(); i++) {
+            if (fixed.charAt(i) != TABLE_MARK) continue;
+            fixed.setSpan(new TableSpan(tables.get(ti++), 600), i, i + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
         sp = fixed;
         // Html deja un salto de línea al final.
         SpannableStringBuilder b = new SpannableStringBuilder(sp);
         while (b.length() > 0 && b.charAt(b.length() - 1) == '\n') b.delete(b.length() - 1, b.length());
         return b;
+    }
+
+    /** Carácter que ocupa el lugar de una tabla en el texto. */
+    static final char TABLE_MARK = '\u25A6';
+
+    /**
+     * Una tabla dentro del texto: se dibuja con bordes y encabezado, a lo ancho
+     * de la hoja; cada celda parte su texto en líneas. Se toca para editarla.
+     */
+    static final class TableSpan extends android.text.style.ReplacementSpan {
+        final JSONArray rows;
+        int width;
+        private int[] rowHeights;
+        private StaticLayout[][] cells;
+        private float lastSize;
+
+        TableSpan(JSONArray rows, int width) {
+            this.rows = rows;
+            this.width = width;
+        }
+
+        int cols() {
+            int n = 1;
+            for (int r = 0; r < rows.length(); r++) n = Math.max(n, rows.optJSONArray(r) == null ? 0 : rows.optJSONArray(r).length());
+            return n;
+        }
+
+        private void layout(android.graphics.Paint base) {
+            if (cells != null && lastSize == base.getTextSize()) return;
+            lastSize = base.getTextSize();
+            int cols = cols(), cw = Math.max(20, width / cols), pad = Math.round(base.getTextSize() * 0.35f);
+            cells = new StaticLayout[rows.length()][cols];
+            rowHeights = new int[rows.length()];
+            for (int r = 0; r < rows.length(); r++) {
+                JSONArray line = rows.optJSONArray(r);
+                int h = Math.round(base.getTextSize() * 1.6f);
+                for (int c = 0; c < cols; c++) {
+                    String txt = line == null ? "" : line.optString(c, "");
+                    TextPaint tp = new TextPaint(base);
+                    tp.setTextSize(base.getTextSize() * 0.9f);
+                    tp.setFakeBoldText(r == 0);
+                    tp.setColor(0xFF111827);
+                    StaticLayout l = StaticLayout.Builder.obtain(txt, 0, txt.length(), tp, Math.max(10, cw - 2 * pad))
+                            .setAlignment(Layout.Alignment.ALIGN_CENTER).build();
+                    cells[r][c] = l;
+                    h = Math.max(h, l.getHeight() + 2 * pad);
+                }
+                rowHeights[r] = h;
+            }
+        }
+
+        int height(android.graphics.Paint p) {
+            layout(p);
+            int h = 0;
+            for (int x : rowHeights) h += x;
+            return h + Math.round(p.getTextSize() * 0.6f);
+        }
+
+        @Override
+        public int getSize(android.graphics.Paint paint, CharSequence text, int start, int end, android.graphics.Paint.FontMetricsInt fm) {
+            int h = height(paint);
+            if (fm != null) {
+                fm.ascent = fm.top = -h;
+                fm.descent = fm.bottom = 0;
+            }
+            return width;
+        }
+
+        @Override
+        public void draw(Canvas c, CharSequence text, int start, int end, float x, int top, int y, int bottom, android.graphics.Paint paint) {
+            layout(paint);
+            int cols = cols(), cw = Math.max(20, width / cols), pad = Math.round(paint.getTextSize() * 0.35f);
+            float yy = y - height(paint) + paint.getTextSize() * 0.3f;
+            android.graphics.Paint line = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            line.setStyle(android.graphics.Paint.Style.STROKE);
+            line.setStrokeWidth(Math.max(1, paint.getTextSize() / 16));
+            line.setColor(0xFF9CA3AF);
+            android.graphics.Paint head = new android.graphics.Paint();
+            head.setColor(0xFFE8EEFC);
+            for (int r = 0; r < rows.length(); r++) {
+                int h = rowHeights[r];
+                if (r == 0) c.drawRect(x, yy, x + cw * cols, yy + h, head);
+                for (int col = 0; col < cols; col++) {
+                    float cx = x + col * cw;
+                    c.drawRect(cx, yy, cx + cw, yy + h, line);
+                    StaticLayout l = cells[r][col];
+                    c.save();
+                    c.translate(cx + pad, yy + (h - l.getHeight()) / 2f);
+                    l.draw(c);
+                    c.restore();
+                }
+                yy += h;
+            }
+        }
+
+        /** La tabla como HTML para el Word. */
+        String html() {
+            StringBuilder b = new StringBuilder("<table style=\"border-collapse:collapse\">");
+            for (int r = 0; r < rows.length(); r++) {
+                b.append("<tr>");
+                JSONArray line = rows.optJSONArray(r);
+                for (int c = 0; c < cols(); c++) {
+                    String tag = r == 0 ? "th" : "td";
+                    String txt = line == null ? "" : line.optString(c, "");
+                    b.append('<').append(tag).append(" style=\"border:1px solid #999;padding:4px 6px;text-align:center\">")
+                            .append(txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")).append("</").append(tag).append('>');
+                }
+                b.append("</tr>");
+            }
+            return b.append("</table>").toString();
+        }
+
+        /** Una tabla de HTML (de WordCraft) a filas de texto. */
+        static JSONArray parse(String html) {
+            JSONArray rows = new JSONArray();
+            Matcher tr = Pattern.compile("(?is)<tr[^>]*>(.*?)</tr>").matcher(html);
+            while (tr.find()) {
+                JSONArray line = new JSONArray();
+                Matcher td = Pattern.compile("(?is)<t[dh][^>]*>(.*?)</t[dh]>").matcher(tr.group(1));
+                while (td.find()) line.put(Html.fromHtml(td.group(1), Html.FROM_HTML_MODE_COMPACT).toString().trim());
+                if (line.length() > 0) rows.put(line);
+            }
+            return rows;
+        }
     }
 
     /** Marca de una imagen recién guardada mientras se lee el HTML. */
@@ -324,7 +464,7 @@ public final class DocActivity extends Activity {
     private NoteTheme t;
     private String id, title, folder = "";
     private EditText body;
-    private TextView titleView, state;
+    private TextView titleView, state, wordStatus;
     private OptionDock dock;
     private boolean loading;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -364,10 +504,11 @@ public final class DocActivity extends Activity {
         JSONArray a = o.optJSONArray("spans");
         if (a != null) for (int i = 0; i < a.length(); i++) {
             JSONObject s = a.getJSONObject(i);
-            Object span = "img".equals(s.optString("k")) ? imageSpan(this, s.optString("v"), pageWidth()) : make(s);
+            Object span = "img".equals(s.optString("k")) ? imageSpan(this, s.optString("v"), pageWidth())
+                    : "table".equals(s.optString("k")) ? new TableSpan(new JSONArray(s.optString("v", "[]")), pageWidth()) : make(s);
             int st = s.optInt("s"), en = Math.min(b.length(), s.optInt("e"));
             if (span != null && st < en) b.setSpan(span, st, en, span instanceof AlignmentSpan || span instanceof BulletSpan
-                    ? Spanned.SPAN_PARAGRAPH : span instanceof android.text.style.ImageSpan ? Spanned.SPAN_EXCLUSIVE_EXCLUSIVE : Spanned.SPAN_EXCLUSIVE_INCLUSIVE);
+                    ? Spanned.SPAN_PARAGRAPH : span instanceof android.text.style.ImageSpan || span instanceof TableSpan ? Spanned.SPAN_EXCLUSIVE_EXCLUSIVE : Spanned.SPAN_EXCLUSIVE_INCLUSIVE);
         }
         loading = true;
         int cursor = body.getSelectionStart();
@@ -408,6 +549,136 @@ public final class DocActivity extends Activity {
                 changed();
             });
         }).start();
+    }
+
+    // ---- tablas ----
+
+    private void insertTable(int rowsN, int colsN) {
+        JSONArray rows = new JSONArray();
+        for (int r = 0; r < rowsN; r++) {
+            JSONArray line = new JSONArray();
+            for (int c = 0; c < colsN; c++) line.put(r == 0 ? "Columna " + (c + 1) : "");
+            rows.put(line);
+        }
+        Editable e = body.getText();
+        int at = Math.max(0, body.getSelectionStart());
+        String before = at > 0 && e.charAt(at - 1) != '\n' ? "\n" : "";
+        e.insert(at, before + TABLE_MARK + "\n");
+        int pos = at + before.length();
+        TableSpan ts = new TableSpan(rows, pageWidth());
+        e.setSpan(ts, pos, pos + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        changed();
+        editTable(ts);
+    }
+
+    private void tableMenu() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        int[][] sizes = {{2, 2}, {3, 3}, {4, 3}, {5, 4}, {6, 2}, {8, 4}, {11, 4}, {12, 6}};
+        for (int[] z : sizes) tiles.add(new OptionDock.Tile(dock.letter(z[0] + "×" + z[1]), z[0] + " filas, " + z[1] + " columnas", false, () -> insertTable(z[0], z[1])).stays());
+        dock.tiles("Insertar tabla", tiles);
+    }
+
+    /** Editar las celdas de una tabla (la primera fila es el encabezado). */
+    private void editTable(TableSpan ts) {
+        JSONArray rows = ts.rows;
+        int rN = rows.length(), cN = ts.cols();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(t.dp(12), 0, t.dp(12), t.dp(8));
+        android.widget.GridLayout grid = new android.widget.GridLayout(this);
+        grid.setColumnCount(cN);
+        ArrayList<EditText> fields = new ArrayList<>();
+        for (int r = 0; r < rN; r++) {
+            JSONArray line = rows.optJSONArray(r);
+            for (int c = 0; c < cN; c++) {
+                EditText f = dock.field(line == null ? "" : line.optString(c, ""), r == 0 ? "Título" : "");
+                f.setTextSize(14);
+                if (r == 0) f.setTypeface(Typeface.DEFAULT_BOLD);
+                android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams();
+                lp.width = t.dp(Math.max(90, 560 / cN));
+                lp.setMargins(t.dp(2), t.dp(2), t.dp(2), t.dp(2));
+                grid.addView(f, lp);
+                fields.add(f);
+            }
+        }
+        HorizontalScrollView hs = new HorizontalScrollView(this);
+        hs.addView(grid);
+        box.addView(hs);
+        Runnable read = () -> {
+            JSONArray out = new JSONArray();
+            for (int r = 0; r < rN; r++) {
+                JSONArray line = new JSONArray();
+                for (int c = 0; c < cN; c++) line.put(fields.get(r * cN + c).getText().toString());
+                out.put(line);
+            }
+            replaceTable(ts, out);
+        };
+        LinearLayout more = new LinearLayout(this);
+        String[] names = {"+ Fila", "− Fila", "+ Columna", "− Columna", "Borrar tabla"};
+        for (int k = 0; k < names.length; k++) {
+            int which = k;
+            TextView b = dock.chip(names[k], false);
+            b.setOnClickListener(v -> {
+                read.run();
+                TableSpan now = current(ts);
+                if (now == null) return;
+                JSONArray rr = now.rows;
+                try {
+                    if (which == 0) {
+                        JSONArray line = new JSONArray();
+                        for (int c = 0; c < cN; c++) line.put("");
+                        rr.put(line);
+                    } else if (which == 1 && rr.length() > 1) {
+                        rr.remove(rr.length() - 1);
+                    } else if (which == 2) {
+                        for (int r = 0; r < rr.length(); r++) rr.getJSONArray(r).put(r == 0 ? "Columna " + (cN + 1) : "");
+                    } else if (which == 3 && cN > 1) {
+                        for (int r = 0; r < rr.length(); r++) rr.getJSONArray(r).remove(rr.getJSONArray(r).length() - 1);
+                    } else if (which == 4) {
+                        Editable e = body.getText();
+                        int st = e.getSpanStart(now), en = e.getSpanEnd(now);
+                        e.removeSpan(now);
+                        if (st >= 0) e.delete(st, Math.min(e.length(), en + (en < e.length() && e.charAt(en) == '\n' ? 1 : 0)));
+                        changed();
+                        dock.close();
+                        return;
+                    }
+                } catch (JSONException ignored) {
+                }
+                replaceTable(now, rr);
+                editTable(current(now) == null ? now : current(now));
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, t.dp(42));
+            lp.rightMargin = t.dp(6);
+            more.addView(b, lp);
+        }
+        HorizontalScrollView ms = new HorizontalScrollView(this);
+        ms.addView(more);
+        box.addView(ms);
+        dock.show("Tabla", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Guardar", true, read));
+    }
+
+    private TableSpan lastReplaced;
+
+    /** La tabla que hay ahora en lugar de `old` (al editar se cambia el span). */
+    private TableSpan current(TableSpan old) {
+        Editable e = body.getText();
+        if (e.getSpanStart(old) >= 0) return old;
+        return lastReplaced;
+    }
+
+    private void replaceTable(TableSpan ts, JSONArray rows) {
+        Editable e = body.getText();
+        int st = e.getSpanStart(ts), en = e.getSpanEnd(ts);
+        if (st < 0) return;
+        e.removeSpan(ts);
+        TableSpan fresh = new TableSpan(rows, pageWidth());
+        lastReplaced = fresh;
+        e.setSpan(fresh, st, en, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        // Que el texto se vuelva a medir con la tabla nueva.
+        e.replace(st, en, String.valueOf(TABLE_MARK));
+        if (e.getSpanStart(fresh) < 0) e.setSpan(fresh, st, st + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        changed();
     }
 
     // ---- deshacer ----
@@ -451,6 +722,16 @@ public final class DocActivity extends Activity {
         state.setText("Sin guardar");
         main.removeCallbacks(autosave);
         main.postDelayed(autosave, 800);
+    }
+
+    private void paintWordStatus() {
+        if (wordStatus == null) return;
+        String txt = body.getText().toString().trim();
+        int words = txt.isEmpty() ? 0 : txt.split("\\s+").length;
+        // Una hoja A4 a lo ancho de la página en pantalla (como en Word, «Página 1 de N»).
+        int pageH = Math.max(1, Math.round(body.getWidth() * PAGE_H / PAGE_W));
+        int pages = Math.max(1, (int) Math.ceil(body.getHeight() / (float) pageH));
+        wordStatus.setText("Página 1 de " + pages + "      " + words + (words == 1 ? " palabra" : " palabras") + "      Español (Costa Rica)");
     }
 
     private void save() {
@@ -530,6 +811,7 @@ public final class DocActivity extends Activity {
 
         // La cinta de WordCraft: Inicio (Fuente, Párrafo, Estilos), Insertar, Vista.
         Ribbon rb = new Ribbon(this, t, Ribbon.WORD);
+        rb.fileTab(this::exportMenu);
         rb.tab("Inicio");
         Ribbon.Group f = rb.group("Fuente");
         f.letter("B", "Negrita", () -> fmt(() -> toggleStyle(Typeface.BOLD))).setTypeface(Typeface.DEFAULT_BOLD);
@@ -553,9 +835,13 @@ public final class DocActivity extends Activity {
         styles.word("Título 1", () -> fmt(() -> heading(1.8f))).setTypeface(Typeface.DEFAULT_BOLD);
         styles.word("Título 2", () -> fmt(() -> heading(1.35f))).setTypeface(Typeface.DEFAULT_BOLD);
         rb.tab("Insertar");
+        rb.group("Tablas").button(IconView.TABLE, "Tabla", this::tableMenu);
         rb.group("Ilustraciones").button(IconView.IMAGE, "Imágenes", () -> startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), PICK_IMAGE));
-        rb.tab("Archivo");
-        rb.group("Exportar").button(IconView.DOC, "Word", this::exportMenu).button(IconView.FILE, "PDF", this::exportPdf);
+        rb.tab("Diseño");
+        rb.group("Formato del documento").button(IconView.TEXT, "Título 1", () -> fmt(() -> heading(1.8f)))
+                .button(IconView.TEXT, "Título 2", () -> fmt(() -> heading(1.35f)));
+        rb.tab("Revisar");
+        rb.group("Revisión").button(IconView.SEARCH, "Contar\npalabras", () -> Ui.toast(this, wordStatus.getText().toString()));
         rb.tab("Vista");
         rb.group("Ver").button(IconView.EXPAND, "Pantalla\ncompleta", () -> Ui.setFullscreen(this, !Ui.fullscreen(this)));
         rb.group("Ayuda").button(IconView.HELP, "Tutorial", () -> Tutorial.show(this, dock, "doc"));
@@ -580,10 +866,27 @@ public final class DocActivity extends Activity {
         int pad = t.dp(56);
         body.setPadding(pad, pad, pad, pad);
         body.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        body.addOnLayoutChangeListener((v, l, tp, r, b, ol, ot, or, ob) -> paintWordStatus());
+        // Tocar una tabla abre su editor.
+        body.setOnTouchListener((v, ev) -> {
+            if (ev.getActionMasked() != android.view.MotionEvent.ACTION_UP) return false;
+            int off = body.getOffsetForPosition(ev.getX(), ev.getY());
+            Editable e = body.getText();
+            for (TableSpan ts : e.getSpans(Math.max(0, off - 1), Math.min(e.length(), off + 1), TableSpan.class)) {
+                android.text.Layout l = body.getLayout();
+                int line = l == null ? 0 : l.getLineForOffset(e.getSpanStart(ts));
+                float y = ev.getY() - body.getTotalPaddingTop() + body.getScrollY();
+                if (l != null && (y < l.getLineTop(line) || y > l.getLineBottom(line))) continue;
+                editTable(ts);
+                return true;
+            }
+            return false;
+        });
         body.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void afterTextChanged(Editable s) {
+                paintWordStatus();
                 if (loading) return;
                 state.setText("Sin guardar");
                 main.removeCallbacks(autosave);
@@ -597,6 +900,12 @@ public final class DocActivity extends Activity {
         body.setMinHeight(Math.round(w * PAGE_H / PAGE_W));
         desk.addView(body, blp);
         root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
+        // Barra de estado como la de Word: página y palabras.
+        wordStatus = Ui.text(this, "", 12, t.muted, false);
+        wordStatus.setGravity(Gravity.CENTER_VERTICAL);
+        wordStatus.setPadding(t.dp(14), 0, t.dp(14), 0);
+        wordStatus.setBackgroundColor(t.dark ? 0xFF202020 : 0xFFF3F3F3);
+        root.addView(wordStatus, new LinearLayout.LayoutParams(-1, t.dp(30)));
         root.setOnApplyWindowInsetsListener((v, in) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets s = in.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime());
@@ -830,7 +1139,24 @@ public final class DocActivity extends Activity {
     }
 
     private String html() {
-        String h = Html.toHtml(body.getText(), Html.TO_HTML_PARAGRAPH_LINES_INDIVIDUAL);
+        SpannableStringBuilder copy = new SpannableStringBuilder(body.getText());
+        ArrayList<String> tables = new ArrayList<>();
+        TableSpan[] ts = copy.getSpans(0, copy.length(), TableSpan.class);
+        java.util.Arrays.sort(ts, (x, y) -> Integer.compare(copy.getSpanStart(y), copy.getSpanStart(x)));
+        for (TableSpan t0 : ts) {
+            int st = copy.getSpanStart(t0), en = copy.getSpanEnd(t0);
+            copy.removeSpan(t0);
+            tables.add(0, t0.html());
+            copy.replace(st, en, "[[TABLA]]");
+        }
+        String h = Html.toHtml(copy, Html.TO_HTML_PARAGRAPH_LINES_INDIVIDUAL);
+        for (String table : tables) {
+            int i = h.indexOf("[[TABLA]]");
+            if (i < 0) break;
+            int ps = h.lastIndexOf("<p", i), pe = h.indexOf("</p>", i);
+            if (ps >= 0 && pe > i && !h.substring(ps, i).contains("</p>")) h = h.substring(0, ps) + table + h.substring(pe + 4);
+            else h = h.substring(0, i) + table + h.substring(i + 9);
+        }
         // Las imágenes van dentro del Word: en base64 y con su tamaño en la hoja.
         Matcher m = Pattern.compile("<img src=\"asset:([^\"]+)\"\\s*/?>").matcher(h);
         StringBuffer sb = new StringBuffer();
@@ -903,6 +1229,11 @@ public final class DocActivity extends Activity {
             k = h / bmp.getHeight();
             d.setBounds(0, 0, Math.round(bmp.getWidth() * k), Math.round(h));
             text.setSpan(new android.text.style.ImageSpan(d), st, en, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        for (TableSpan t0 : text.getSpans(0, text.length(), TableSpan.class)) {
+            int st = text.getSpanStart(t0), en = text.getSpanEnd(t0);
+            text.removeSpan(t0);
+            text.setSpan(new TableSpan(t0.rows, Math.round(width)), st, en, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
         StaticLayout layout = StaticLayout.Builder.obtain(text, 0, text.length(), paint, Math.round(width)).setLineSpacing(0, 1.2f).build();
         PdfDocument pdf = new PdfDocument();

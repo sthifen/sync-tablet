@@ -117,6 +117,19 @@ final class Ribbon {
                 Ui.round(0xFFFFFFFF, t.dp(6)));
     }
 
+    /** La pestaña «Archivo» del color de la app, que abre su menú (guardar, exportar…). */
+    Ribbon fileTab(Runnable open) {
+        TextView tv = Ui.text(a, "Archivo", 14, 0xFFFFFFFF, true);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(t.dp(16), 0, t.dp(16), 0);
+        tv.setBackground(Ui.round(accent, t.dp(4)));
+        tv.setOnClickListener(v -> open.run());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -1);
+        lp.setMargins(0, t.dp(4), t.dp(6), t.dp(4));
+        tabRow.addView(tv, lp);
+        return this;
+    }
+
     /** Una pestaña nueva; sus grupos se añaden con group(). */
     Ribbon tab(String name) {
         int index = tabs.size();
@@ -190,8 +203,12 @@ final class Ribbon {
     static void paintTitleBar(Activity a, View bar, int accent) {
         bar.setBackgroundColor(accent);
         a.getWindow().setStatusBarColor(accent);
-        if (android.os.Build.VERSION.SDK_INT >= 30 && a.getWindow().getInsetsController() != null) {
-            a.getWindow().getInsetsController().setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS);
-        }
+        // Iconos claros en la barra de estado, cuando la ventana ya existe.
+        View decor = a.getWindow().getDecorView();
+        decor.post(() -> {
+            if (android.os.Build.VERSION.SDK_INT >= 30 && a.getWindow().getInsetsController() != null) {
+                a.getWindow().getInsetsController().setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS);
+            }
+        });
     }
 }
