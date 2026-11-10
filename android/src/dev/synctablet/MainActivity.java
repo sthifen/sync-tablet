@@ -2008,6 +2008,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDES), "PowerPoint → cuaderno", false, () -> pickImport(
                     "application/vnd.openxmlformats-officedocument.presentationml.presentation")));
         }
+        tiles.add(new OptionDock.Tile(dock.letter("X++"), "Xournal++ → cuaderno", false, () -> pickImport("*/*")));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.CUBE), "Modelo 3D (STL, OBJ)", false, () -> {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
             startActivityForResult(i, PICK_MODEL);
@@ -2041,6 +2042,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         } else if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".ods") || lower.endsWith(".csv")
                 || (type != null && (type.contains("spreadsheet") || type.contains("excel") || type.contains("csv")))) {
             importSheet(uri, name, base);
+        } else if (lower.endsWith(".xopp") || lower.endsWith(".xoj")) {
+            importXopp(uri, base);
         } else if (lower.endsWith(".stl") || lower.endsWith(".obj")) {
             startActivity(new Intent(this, ModelActivity.class).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
         } else if (lower.endsWith(".pdf") || lower.endsWith(".pptx") || "application/pdf".equals(type) || (type != null && type.contains("presentation"))) {
@@ -2057,6 +2060,41 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         } else {
             Ui.toast(this, "Ese archivo no se puede abrir aquí: usa PDF, Word, Excel, PowerPoint, STL u OBJ");
         }
+    }
+
+    /** Apuntes de Xournal++: un cuaderno nuevo con sus páginas. */
+    private void importXopp(android.net.Uri uri, String title) {
+        Ui.toast(this, "Importando de Xournal++…");
+        Ink.Notebook n = store.createNotebook(title, Ui.COVERS[store.notebooks().size() % Ui.COVERS.length]);
+        String blank = n.pages.get(0);
+        if (folderView != null) n.folder = folderView;
+        new Thread(() -> {
+            int pages = 0;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                pages = Xopp.read(in, store, n);
+            } catch (java.io.IOException | RuntimeException e) {
+                android.util.Log.w("SyncTablet", "importar xopp", e);
+            }
+            int made = pages;
+            runOnUiThread(() -> {
+                if (made == 0) {
+                    store.deleteNotebook(n);
+                    Ui.toast(this, "No se pudo leer ese archivo de Xournal++");
+                    showHome();
+                    return;
+                }
+                store.deletePage(n, blank);
+                sync.sendNotebook(n);
+                for (String id : n.pages) {
+                    Ink.Page pg = store.page(id);
+                    if (pg == null) continue;
+                    for (Ink.Item it : pg.items) if (it.isImage()) sync.sendAsset(it.asset);
+                    sync.sendPage(pg);
+                }
+                Ui.toast(this, made == 1 ? "1 página importada" : made + " páginas importadas");
+                openNotebook(n, n.pages.get(0));
+            });
+        }, "xopp").start();
     }
 
     private void importSheet(android.net.Uri uri, String name, String title) {

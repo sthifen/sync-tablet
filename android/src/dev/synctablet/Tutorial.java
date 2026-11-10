@@ -21,7 +21,7 @@ final class Tutorial {
         {"start", IconView.HOME, "Primeros pasos", new String[] {
             "Inicio|Aquí están tus notas recientes, tus cuadernos y carpetas. Toca un cuaderno para escribir a mano; una nota para escribir con teclado.",
             "Crear|«Nuevo cuaderno» crea uno con hojas para el lápiz. «Nueva carpeta» agrupa cuadernos por materia.",
-            "Importar|El botón «Importar PDF, Word o Excel» convierte un PDF o PowerPoint en cuaderno, un Word en nota y un Excel en hoja de cálculo.",
+            "Importar|El botón «Importar PDF, Word o Excel» convierte un PDF, PowerPoint o archivo de Xournal++ en cuaderno, un Word en documento y un Excel en hoja de cálculo.",
             "Con el PC|Conecta la tablet por USB y el PC ve tus apuntes al instante. Por WiFi: menú ⋯ › Conectar por WiFi, con el código de 6 dígitos."}},
         {"pen", IconView.PEN, "Lápiz y goma", new String[] {
             "Lápiz|Toca el lápiz para escribir. Tócalo otra vez para elegir pluma, lápiz, pincel, caligrafía o un lápiz tuyo.",
@@ -40,6 +40,11 @@ final class Tutorial {
             "Plantilla|En el título de la hoja › Plantilla eliges rayas, cuadros, puntos, Cornell, partida a la mitad, milimetrada, isométrica, ingeniería y más.",
             "Hoja oscura|«Hoja oscura» se ve oscura en la tablet; al exportar sale blanca y con tinta negra para imprimir.",
             "Páginas|«Ordenar páginas» mueve, duplica o borra páginas. Tira hacia abajo al final para añadir otra."}},
+        {"guides", IconView.RULER, "Regla y compás", new String[] {
+            "Abrir|En la hoja, el botón de la regla: regla, escuadra de 45°, escuadra de 30° y 60°, transportador o compás.",
+            "Mover y girar|Un dedo sobre la guía la arrastra; dos dedos la giran (se pega a 0°, 15°, 30°, 45°…). El ángulo se ve en el centro.",
+            "Líneas rectas|Empieza a escribir con el lápiz cerca de un borde y la línea sigue el borde, recta, aunque tiembles.",
+            "Compás|Pon la aguja con el dedo. La distancia del lápiz a la aguja es el radio: dibuja y sale el arco o el círculo. Arriba se ve el radio en cm."}},
         {"stickers", IconView.STICKER, "Stickers", new String[] {
             "Poner un sticker|En la hoja, Insertar › Stickers. Toca uno y aparece en la página.",
             "Moverlo|Es una imagen más: con el lazo o con el dedo lo mueves, lo agrandas o lo giras."}},
