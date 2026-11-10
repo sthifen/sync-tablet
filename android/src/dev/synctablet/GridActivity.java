@@ -706,6 +706,13 @@ public final class GridActivity extends Activity {
                 putInNotebook(store, n, img);
             }));
         }
+        for (DocActivity.Info d : DocActivity.list(this)) {
+            box.addView(dock.row("📄  " + d.title + " (documento)", v -> {
+                dock.close();
+                boolean ok = DocActivity.appendImage(this, d.id, img);
+                Ui.toast(this, ok ? "Puesta al final de «" + d.title + "»" : "No se pudo poner en el documento");
+            }));
+        }
         for (DeckActivity.Info d : DeckActivity.list(this)) {
             box.addView(dock.row("🖥️  " + d.title + " (presentación)", v -> {
                 dock.close();

@@ -125,7 +125,7 @@ public final class DocActivity extends Activity {
     /** Un documento nuevo desde HTML (plantilla o Word importado); devuelve su id. */
     static String create(Context c, String title, String html, String folder) {
         String id = Ink.newId();
-        Spanned text = fromHtml(html);
+        Spanned text = fromHtml(c, id, html);
         try {
             JSONObject o = new JSONObject().put("id", id).put("title", title).put("folder", folder == null ? "" : folder)
                     .put("updated", System.currentTimeMillis()).put("text", text.toString()).put("spans", spans(text));
@@ -152,6 +152,8 @@ public final class DocActivity extends Activity {
             else if (span instanceof BackgroundColorSpan) o.put("k", "bg").put("v", ((BackgroundColorSpan) span).getBackgroundColor());
             else if (span instanceof AlignmentSpan) o.put("k", "align").put("v", ((AlignmentSpan) span).getAlignment().name());
             else if (span instanceof BulletSpan) o.put("k", "bullet");
+            else if (span instanceof android.text.style.ImageSpan && String.valueOf(((android.text.style.ImageSpan) span).getSource()).startsWith("asset:"))
+                o.put("k", "img").put("v", ((android.text.style.ImageSpan) span).getSource().substring(6));
             else continue;
             a.put(o);
         }
@@ -178,7 +180,7 @@ public final class DocActivity extends Activity {
     }
 
     /** HTML (de WordCraft o de una plantilla) a texto con estilos; los tamaños en pt pasan a relativos. */
-    static Spanned fromHtml(String html) {
+    static Spanned fromHtml(Context ctx, String docId, String html) {
         // Android no lee font-size: se cambia por etiquetas propias que lee el TagHandler.
         Matcher m = Pattern.compile("<span style=\"([^\"]*)\">(.*?)</span>", Pattern.DOTALL).matcher(html);
         StringBuffer sb = new StringBuffer();
@@ -217,11 +219,96 @@ public final class DocActivity extends Activity {
                 if (start < output.length()) output.setSpan(new RelativeSizeSpan(pct / 100f), start, output.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
         };
-        Spanned sp = Html.fromHtml(body, Html.FROM_HTML_MODE_COMPACT, null, sizes);
+        // Las imágenes de un Word llegan en base64: se guardan junto al documento.
+        Html.ImageGetter images = src -> {
+            if (src == null || !src.startsWith("data:image")) return null;
+            try {
+                byte[] data = android.util.Base64.decode(src.substring(src.indexOf(',') + 1), android.util.Base64.DEFAULT);
+                android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length);
+                if (bmp == null) return null;
+                String name = saveImage(ctx, docId, bmp);
+                return name == null ? null : new Pending(name);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        };
+        Spanned sp = Html.fromHtml(body, Html.FROM_HTML_MODE_COMPACT, images, sizes);
+        // ImageSpan con fuente "asset:…", para guardarla y exportarla igual.
+        SpannableStringBuilder fixed = new SpannableStringBuilder(sp);
+        for (android.text.style.ImageSpan im : fixed.getSpans(0, fixed.length(), android.text.style.ImageSpan.class)) {
+            if (!(im.getDrawable() instanceof Pending)) continue;
+            int st = fixed.getSpanStart(im), en = fixed.getSpanEnd(im);
+            fixed.removeSpan(im);
+            fixed.setSpan(new android.text.style.ImageSpan(ctx, android.net.Uri.EMPTY) {
+                @Override public String getSource() { return "asset:" + ((Pending) im.getDrawable()).name; }
+            }, st, en, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        sp = fixed;
         // Html deja un salto de línea al final.
         SpannableStringBuilder b = new SpannableStringBuilder(sp);
         while (b.length() > 0 && b.charAt(b.length() - 1) == '\n') b.delete(b.length() - 1, b.length());
         return b;
+    }
+
+    /** Marca de una imagen recién guardada mientras se lee el HTML. */
+    private static final class Pending extends android.graphics.drawable.ColorDrawable {
+        final String name;
+
+        Pending(String name) {
+            super(0);
+            this.name = name;
+            setBounds(0, 0, 1, 1);
+        }
+    }
+
+    /** Guarda la imagen junto al documento (como mucho 1400 px) y devuelve su nombre. */
+    static String saveImage(Context c, String docId, android.graphics.Bitmap bmp) {
+        int max = 1400;
+        if (Math.max(bmp.getWidth(), bmp.getHeight()) > max) {
+            float k = max / (float) Math.max(bmp.getWidth(), bmp.getHeight());
+            bmp = android.graphics.Bitmap.createScaledBitmap(bmp, Math.round(bmp.getWidth() * k), Math.round(bmp.getHeight() * k), true);
+        }
+        String name = docId + "-" + Ink.newId() + ".png";
+        try (FileOutputStream out = new FileOutputStream(new File(dir(c), name))) {
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out);
+            return name;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** La imagen como span, a lo ancho de `width` píxeles como mucho. */
+    static android.text.style.ImageSpan imageSpan(Context c, String name, int width) {
+        android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeFile(new File(dir(c), name).getPath());
+        android.graphics.drawable.Drawable d = bmp == null ? new android.graphics.drawable.ColorDrawable(0xFFE5E7EB)
+                : new android.graphics.drawable.BitmapDrawable(c.getResources(), bmp);
+        int iw = bmp == null ? width : bmp.getWidth(), ih = bmp == null ? width / 2 : bmp.getHeight();
+        float k = Math.min(1f, width / (float) iw);
+        d.setBounds(0, 0, Math.round(iw * k), Math.round(ih * k));
+        return new android.text.style.ImageSpan(d, "asset:" + name);
+    }
+
+    /** Una imagen al final del documento (una gráfica de la hoja de cálculo, por ejemplo). */
+    static boolean appendImage(Context c, String id, android.graphics.Bitmap bmp) {
+        File f = new File(dir(c), id + ".json");
+        try {
+            JSONObject o = new JSONObject(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+            String name = saveImage(c, id, bmp);
+            if (name == null) return false;
+            String text = o.optString("text");
+            String add = (text.isEmpty() ? "" : "\n") + "\uFFFC";
+            int at = text.length() + add.length() - 1;
+            o.put("text", text + add);
+            JSONArray spans = o.optJSONArray("spans");
+            if (spans == null) spans = new JSONArray();
+            spans.put(new JSONObject().put("k", "img").put("v", name).put("s", at).put("e", at + 1));
+            o.put("spans", spans);
+            o.put("updated", System.currentTimeMillis());
+            write(f, o.toString());
+            return true;
+        } catch (IOException | JSONException e) {
+            return false;
+        }
     }
 
     private static final class SizeMark {
@@ -277,16 +364,50 @@ public final class DocActivity extends Activity {
         JSONArray a = o.optJSONArray("spans");
         if (a != null) for (int i = 0; i < a.length(); i++) {
             JSONObject s = a.getJSONObject(i);
-            Object span = make(s);
+            Object span = "img".equals(s.optString("k")) ? imageSpan(this, s.optString("v"), pageWidth()) : make(s);
             int st = s.optInt("s"), en = Math.min(b.length(), s.optInt("e"));
             if (span != null && st < en) b.setSpan(span, st, en, span instanceof AlignmentSpan || span instanceof BulletSpan
-                    ? Spanned.SPAN_PARAGRAPH : Spanned.SPAN_EXCLUSIVE_INCLUSIVE);
+                    ? Spanned.SPAN_PARAGRAPH : span instanceof android.text.style.ImageSpan ? Spanned.SPAN_EXCLUSIVE_EXCLUSIVE : Spanned.SPAN_EXCLUSIVE_INCLUSIVE);
         }
         loading = true;
         int cursor = body.getSelectionStart();
         body.setText(b);
         body.setSelection(Math.max(0, Math.min(b.length(), cursor)));
         loading = false;
+    }
+
+    private int pageWidth() {
+        return Math.min(getResources().getDisplayMetrics().widthPixels - t.dp(32), t.dp(820)) - 2 * t.dp(56);
+    }
+
+    private static final int PICK_IMAGE = 92;
+
+    private void insertImage(Uri uri) {
+        new Thread(() -> {
+            android.graphics.Bitmap bmp = null;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                android.graphics.BitmapFactory.Options op = new android.graphics.BitmapFactory.Options();
+                op.inSampleSize = 1;
+                bmp = android.graphics.BitmapFactory.decodeStream(in, null, op);
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "imagen del documento", e);
+            }
+            android.graphics.Bitmap img = bmp;
+            String name = img == null ? null : saveImage(this, id, img);
+            main.post(() -> {
+                if (name == null) {
+                    Ui.toast(this, "No se pudo abrir la imagen");
+                    return;
+                }
+                Editable e = body.getText();
+                int at = Math.max(0, body.getSelectionStart());
+                String before = at > 0 && e.charAt(at - 1) != '\n' ? "\n" : "";
+                e.insert(at, before + "\uFFFC\n");
+                int pos = at + before.length();
+                e.setSpan(imageSpan(this, name, pageWidth()), pos, pos + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                changed();
+            });
+        }).start();
     }
 
     // ---- deshacer ----
@@ -420,6 +541,7 @@ public final class DocActivity extends Activity {
         chip(bar, "• Lista", this::bullets);
         chip(bar, "1. Lista", this::numbers);
         chip(bar, "Sin formato", this::clear);
+        chip(bar, "🖼 Imagen", () -> startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), PICK_IMAGE));
         root.addView(hs, new LinearLayout.LayoutParams(-1, -2));
 
         // La hoja: blanca, de ancho A4 a escala, sobre el escritorio.
@@ -685,12 +807,36 @@ public final class DocActivity extends Activity {
     }
 
     private String html() {
-        return Html.toHtml(body.getText(), Html.TO_HTML_PARAGRAPH_LINES_INDIVIDUAL);
+        String h = Html.toHtml(body.getText(), Html.TO_HTML_PARAGRAPH_LINES_INDIVIDUAL);
+        // Las imágenes van dentro del Word: en base64 y con su tamaño en la hoja.
+        Matcher m = Pattern.compile("<img src=\"asset:([^\"]+)\"\\s*/?>").matcher(h);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            File f = new File(dir(this), m.group(1));
+            String rep = "";
+            try {
+                byte[] data = Files.readAllBytes(f.toPath());
+                android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                o.inJustDecodeBounds = true;
+                android.graphics.BitmapFactory.decodeFile(f.getPath(), o);
+                float w = Math.min(600, o.outWidth), hgt = w * o.outHeight / Math.max(1, o.outWidth);
+                rep = "<img src=\"data:image/png;base64," + android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)
+                        + "\" width=\"" + Math.round(w) + "\" height=\"" + Math.round(hgt) + "\">";
+            } catch (IOException ignored) {
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(rep));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == PICK_IMAGE && result == RESULT_OK && data != null && data.getData() != null) {
+            insertImage(data.getData());
+            return;
+        }
         if (request != SAVE_DOCX || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         String html = html();
@@ -710,13 +856,31 @@ public final class DocActivity extends Activity {
         }).start();
     }
 
+    private static float usableHeight() {
+        return PAGE_H - 2 * MARGIN - 20;
+    }
+
     /** PDF en hojas A4, con el mismo formato que en pantalla. */
     private void exportPdf() {
         TextPaint paint = new TextPaint(TextPaint.ANTI_ALIAS_FLAG);
         paint.setColor(0xFF111827);
         paint.setTextSize(11.5f);
         float width = PAGE_W - 2 * MARGIN;
-        Editable text = body.getText();
+        SpannableStringBuilder text = new SpannableStringBuilder(body.getText());
+        for (android.text.style.ImageSpan im : text.getSpans(0, text.length(), android.text.style.ImageSpan.class)) {
+            String src = im.getSource();
+            if (src == null || !src.startsWith("asset:")) continue;
+            int st = text.getSpanStart(im), en = text.getSpanEnd(im);
+            text.removeSpan(im);
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeFile(new File(dir(this), src.substring(6)).getPath());
+            if (bmp == null) continue;
+            android.graphics.drawable.BitmapDrawable d = new android.graphics.drawable.BitmapDrawable(getResources(), bmp);
+            float k = Math.min(1f, width / bmp.getWidth());
+            float h = Math.min(usableHeight(), bmp.getHeight() * k);
+            k = h / bmp.getHeight();
+            d.setBounds(0, 0, Math.round(bmp.getWidth() * k), Math.round(h));
+            text.setSpan(new android.text.style.ImageSpan(d), st, en, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
         StaticLayout layout = StaticLayout.Builder.obtain(text, 0, text.length(), paint, Math.round(width)).setLineSpacing(0, 1.2f).build();
         PdfDocument pdf = new PdfDocument();
         float usable = PAGE_H - 2 * MARGIN;

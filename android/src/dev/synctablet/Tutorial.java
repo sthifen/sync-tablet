@@ -58,7 +58,7 @@ final class Tutorial {
             "Excel|Se guarda sola. ⋯ › Guardar como Excel exporta un .xlsx que abre Excel, LibreOffice o Google Sheets."}},
         {"doc", IconView.DOC, "Documentos Word", new String[] {
             "Nuevo documento|En Inicio, Crear › Documento (Word) y eliges plantilla: informe, laboratorio, carta, ensayo… Se escribe en una hoja A4.",
-            "Formato|Elige el texto y usa la barra: Título, Subtítulo, negrita, cursiva, subrayado, tachado, tamaño, color, resaltar, alinear y listas.",
+            "Formato|Elige el texto y usa la barra: Título, Subtítulo, negrita, cursiva, subrayado, tachado, tamaño, color, resaltar, alinear, listas e «Imagen» para poner fotos. Las gráficas de una hoja de cálculo se mandan aquí con «Poner en…».",
             "Word y PDF|El botón de exportar guarda un .docx con su formato (WordCraft) o un PDF en hojas A4. Importar › Word abre un .docx para seguir editándolo."}},
         {"slides", IconView.SLIDES, "Presentaciones", new String[] {
             "Crear|En Inicio, Crear › Presentación y elige un estilo. Ya trae portada, agenda, secciones y cierre: toca un texto para cambiarlo.",
