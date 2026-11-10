@@ -92,6 +92,7 @@ public final class ModelActivity extends Activity {
                 for (int k; (k = in.read(buf)) > 0; ) bytes.write(buf, 0, k);
                 byte[] data = bytes.toByteArray();
                 tris = name.toLowerCase(Locale.ROOT).endsWith(".obj") ? obj(data) : stl(data);
+                smooth(tris, 35);
             } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
                 error = e.getMessage();
             }
@@ -277,6 +278,49 @@ public final class ModelActivity extends Activity {
             tri(out, i * 18, v);
         }
         return out;
+    }
+
+    /**
+     * Normales suaves: en cada vértice se promedian las caras que forman menos de
+     * `maxDeg` grados con la suya; las aristas vivas de una pieza siguen marcadas.
+     */
+    static void smooth(float[] m, float maxDeg) {
+        int n = m.length / 6;
+        if (n == 0 || n > 3_000_000) return;
+        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
+        for (int i = 0; i < m.length; i += 6) {
+            minX = Math.min(minX, Math.min(m[i], Math.min(m[i + 1], m[i + 2])));
+            maxX = Math.max(maxX, Math.max(m[i], Math.max(m[i + 1], m[i + 2])));
+        }
+        float q = Math.max(1e-6f, (maxX - minX) * 1e-5f);
+        java.util.HashMap<Long, java.util.ArrayList<Integer>> at = new java.util.HashMap<>();
+        for (int v = 0; v < n; v++) {
+            long key = (Math.round(m[v * 6] / q) * 73856093L) ^ (Math.round(m[v * 6 + 1] / q) * 19349663L) ^ (Math.round(m[v * 6 + 2] / q) * 83492791L);
+            at.computeIfAbsent(key, k -> new java.util.ArrayList<>()).add(v);
+        }
+        float cos = (float) Math.cos(Math.toRadians(maxDeg));
+        float[] face = new float[n * 3];
+        for (int v = 0; v < n; v++) System.arraycopy(m, v * 6 + 3, face, v * 3, 3);
+        for (java.util.ArrayList<Integer> same : at.values()) {
+            if (same.size() < 2) continue;
+            for (int v : same) {
+                float sx = 0, sy = 0, sz = 0;
+                for (int o : same) {
+                    float d = face[v * 3] * face[o * 3] + face[v * 3 + 1] * face[o * 3 + 1] + face[v * 3 + 2] * face[o * 3 + 2];
+                    if (d >= cos) {
+                        sx += face[o * 3];
+                        sy += face[o * 3 + 1];
+                        sz += face[o * 3 + 2];
+                    }
+                }
+                float len = (float) Math.sqrt(sx * sx + sy * sy + sz * sz);
+                if (len > 0) {
+                    m[v * 6 + 3] = sx / len;
+                    m[v * 6 + 4] = sy / len;
+                    m[v * 6 + 5] = sz / len;
+                }
+            }
+        }
     }
 
     private static void tri(float[] out, int at, float[] v) {
