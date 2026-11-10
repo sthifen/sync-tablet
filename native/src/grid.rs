@@ -352,6 +352,11 @@ mod tests {
         assert!(view.contains("1.7"), "media 1,74: {view}");
         let r = b.exec("data.analysisToolPak", r#"{"tool":"histogram","range":"A2:A51","output":"F1"}"#);
         assert!(r.contains("ok"), "{r}");
+        // Gráficos de la tabla de frecuencias: rangos separados por coma (como el histograma y la ojiva).
+        b.exec("range.setValues", r#"{"range":"P1","values":[["Clase"],["[0, 1)"],["[1, 2)"],["[2, 3]"]]}"#);
+        b.exec("range.setValues", r#"{"range":"R1","values":[["fi"],[7],[13],[15]]}"#);
+        let r = b.exec("insert.chart", r#"{"range":"P1:P4,R1:R4","type":"line","title":"Ojiva","at":"J1"}"#);
+        assert!(r.contains("ok"), "histograma con dos áreas: {r}");
     }
 
     #[test]

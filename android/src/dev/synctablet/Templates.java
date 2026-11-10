@@ -80,7 +80,7 @@ final class Templates {
                     g.exec("home.columnWidth", new JSONObject().put("cols", "A:A").put("width", 190));
                     g.exec("home.columnWidth", new JSONObject().put("cols", "B:B").put("width", 120));
                     g.exec("home.columnWidth", new JSONObject().put("cols", "E:I").put("width", 105));
-                    g.exec("insert.chart", new JSONObject().put("range", "D1:D61,G1:H61").put("type", "column").put("subtype", "stacked")
+                    g.exec("insert.chart", new JSONObject().put("range", "G1:H61").put("type", "column").put("subtype", "stacked")
                             .put("title", "Interés y amortización por mes").put("at", "K2").put("width", 460).put("height", 280));
                     break;
                 }
@@ -97,9 +97,10 @@ final class Templates {
                             "SDA: depreciación", "SDA: valor en libros", "Ahorro fiscal (LR)"};
                     for (int y = 1; y <= 5; y++) {
                         int r = y + 7;
-                        t[y] = new Object[] {y, "=SLN($B$2,$B$3,$B$4)", y == 1 ? "=$B$2-B" + r : "=C" + (r - 1) + "-B" + r,
-                                "=DDB($B$2,$B$3,$B$4,A" + r + ")", y == 1 ? "=$B$2-D" + r : "=E" + (r - 1) + "-D" + r,
-                                "=SYD($B$2,$B$3,$B$4,A" + r + ")", y == 1 ? "=$B$2-F" + r : "=G" + (r - 1) + "-F" + r, "=B" + r + "*$B$5"};
+                        // «Año n» como texto: así sirve de categoría para el gráfico.
+                        t[y] = new Object[] {"Año " + y, "=SLN($B$2,$B$3,$B$4)", y == 1 ? "=$B$2-B" + r : "=C" + (r - 1) + "-B" + r,
+                                "=DDB($B$2,$B$3,$B$4," + y + ")", y == 1 ? "=$B$2-D" + r : "=E" + (r - 1) + "-D" + r,
+                                "=SYD($B$2,$B$3,$B$4," + y + ")", y == 1 ? "=$B$2-F" + r : "=G" + (r - 1) + "-F" + r, "=B" + r + "*$B$5"};
                     }
                     t[6] = new Object[] {"Total", "=SUM(B8:B12)", null, "=SUM(D8:D12)", null, "=SUM(F8:F12)", null, "=SUM(H8:H12)"};
                     put(g, "A7", t);

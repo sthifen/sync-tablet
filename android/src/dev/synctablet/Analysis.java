@@ -169,8 +169,8 @@ final class Analysis {
         // Gráficos: histograma (fᵢ por clase), polígono (fᵢ por marca) y ojiva (Fᵢ por límite superior).
         String cls = a1(t, c) + ":" + a1(end, c), f = a1(t, c + 4) + ":" + a1(end, c + 4);
         chart(g, cls + "," + f, "column", "Histograma de " + data.name, a1(t, c + 10));
-        chart(g, a1(t, c + 3) + ":" + a1(end, c + 4), "line", "Polígono de frecuencias", a1(t + 16, c + 10));
-        chart(g, a1(t, c + 2) + ":" + a1(end, c + 2) + "," + a1(t, c + 5) + ":" + a1(end, c + 5), "line", "Ojiva (frecuencia acumulada)", a1(t + 32, c + 10));
+        chart(g, cls + "," + f, "line", "Polígono de frecuencias", a1(t + 16, c + 10));
+        chart(g, cls + "," + a1(t, c + 5) + ":" + a1(end, c + 5), "line", "Ojiva (frecuencia acumulada)", a1(t + 32, c + 10));
         return a1(r, c);
     }
 
