@@ -56,8 +56,11 @@
 - **Presentaciones al estilo Canva:** diez estilos con portada, agenda, secciones y
   cierre; textos, fotos, figuras, stickers y dibujo a mano; presentar a pantalla
   completa (pasa diapositivas con el S Pen) y exportar a PowerPoint o PDF.
-- **Documentos:** plantillas de informe, laboratorio, carta, ensayo, resumen y acta,
-  que se exportan a Word.
+- **Documentos como en Word:** hoja A4 con títulos, negrita, cursiva, subrayado,
+  colores, resaltado, alineación, listas e imágenes; plantillas (informe, laboratorio,
+  carta, ensayo, resumen, acta); exporta e importa `.docx` con su formato (WordCraft)
+  y exporta PDF. Hojas de cálculo y documentos llegan solos al PC en
+  `~/SyncTablet/Hojas de cálculo` y `~/SyncTablet/Documentos`.
 - **Más:** lápices propios (trazo, grosor, color y opacidad con nombre), regla,
   escuadras, transportador y compás, 18 hojas (partida a la mitad, milimetrada,
   ingeniería, isométrica…), stickers, visor de modelos 3D (STL y OBJ), importar
