@@ -213,6 +213,7 @@ public final class GridActivity extends Activity {
         top.addView(icon(IconView.HELP, "Tutorial de hojas de cálculo", v -> Tutorial.show(this, dock, "sheet")));
         top.addView(icon(IconView.MORE, "Más", v -> moreMenu()));
         root.addView(top, new LinearLayout.LayoutParams(-1, t.dp(54)));
+        whiteBar(top, Ribbon.GRID);
 
         // La barra de fórmulas.
         LinearLayout fx = new LinearLayout(this);
@@ -248,44 +249,74 @@ public final class GridActivity extends Activity {
         fx.addView(formula, new LinearLayout.LayoutParams(0, t.dp(40), 1));
         IconView ok = icon(IconView.CHECK, "Aceptar", v -> commit(1, 0));
         fx.addView(ok);
-        root.addView(fx, new LinearLayout.LayoutParams(-1, -2));
 
-        // Cinta de herramientas.
-        HorizontalScrollView hs = new HorizontalScrollView(this);
-        hs.setHorizontalScrollBarEnabled(false);
-        LinearLayout ribbon = new LinearLayout(this);
-        ribbon.setGravity(Gravity.CENTER_VERTICAL);
-        ribbon.setPadding(t.dp(8), 0, t.dp(8), t.dp(6));
-        hs.addView(ribbon);
-        chip(ribbon, "B", "Negrita", () -> run("home.bold", "{}")).setTypeface(Typeface.DEFAULT_BOLD);
-        chip(ribbon, "I", "Cursiva", () -> run("home.italic", "{}")).setTypeface(Typeface.defaultFromStyle(Typeface.ITALIC));
-        chip(ribbon, "Relleno", "Color de relleno", () -> colorMenu(true));
-        chip(ribbon, "Color", "Color del texto", () -> colorMenu(false));
-        chip(ribbon, "⇤", "Alinear a la izquierda", () -> run("home.alignLeft", "{}"));
-        chip(ribbon, "↔", "Centrar", () -> run("home.alignCenter", "{}"));
-        chip(ribbon, "⇥", "Alinear a la derecha", () -> run("home.alignRight", "{}"));
-        chip(ribbon, "123", "Formato de número", this::formatMenu);
-        chip(ribbon, "%", "Porcentaje", () -> run("home.numberFormat", "{\"format\":\"Percentage\"}"));
-        chip(ribbon, ".0", "Más decimales", () -> run("home.increaseDecimal", "{}"));
-        chip(ribbon, ".00→.0", "Menos decimales", () -> run("home.decreaseDecimal", "{}"));
-        chip(ribbon, "Σ", "Autosuma", () -> run("formulas.autoSum", "{\"function\":\"SUM\"}"));
-        chip(ribbon, "A→Z", "Ordenar de menor a mayor", () -> run("data.sortAscending", "{}"));
-        chip(ribbon, "Z→A", "Ordenar de mayor a menor", () -> run("data.sortDescending", "{}"));
-        chip(ribbon, "Filtro", "Filtro", () -> run("data.filter", "{}"));
-        chip(ribbon, "Rellenar ↓", "Rellenar hacia abajo", () -> run("edit.fillDown", "{}"));
-        chip(ribbon, "Serie", "Rellenar serie", () -> run("edit.fillSeries", "{}"));
-        chip(ribbon, "Combinar", "Combinar y centrar", () -> run("home.mergeCenter", "{}"));
-        chip(ribbon, "+ Fila", "Insertar fila", () -> run("home.insertRows", "{}"));
-        chip(ribbon, "+ Columna", "Insertar columna", () -> run("home.insertColumns", "{}"));
-        chip(ribbon, "− Fila", "Borrar fila", () -> run("home.deleteRows", "{}"));
-        chip(ribbon, "− Columna", "Borrar columna", () -> run("home.deleteColumns", "{}"));
-        chip(ribbon, "Fijar fila 1", "Inmovilizar la fila de arriba", () -> run("view.freezeTopRow", "{}"));
-        chip(ribbon, "Quitar duplicados", "Quitar duplicados", () -> run("data.removeDuplicates", "{}"));
-        chip(ribbon, "Tabla", "Dar formato de tabla", () -> run("insert.table", "{}"));
-        chip(ribbon, "Ajustar ancho", "Ajustar el ancho de la columna", () -> run("home.autofitColumnWidth", "{}"));
-        chip(ribbon, "Borrar", "Borrar el contenido", () -> run("edit.clearContents", "{}"));
-        chip(ribbon, "Fórmulas", "Ver fórmulas", () -> run("formulas.showFormulas", "{}"));
-        root.addView(hs, new LinearLayout.LayoutParams(-1, -2));
+        // La cinta de GridCraft: mismas pestañas y grupos, en el mismo orden.
+        Ribbon rb = new Ribbon(this, t, Ribbon.GRID);
+        rb.tab("Inicio");
+        rb.group("Portapapeles")
+                .button(IconView.COPY, "Copiar", () -> run("edit.copy", "{}"))
+                .button(IconView.PASTE, "Pegar", () -> run("edit.paste", "{}"));
+        Ribbon.Group font = rb.group("Fuente");
+        font.letter("B", "Negrita", () -> run("home.bold", "{}")).setTypeface(Typeface.DEFAULT_BOLD);
+        font.letter("I", "Cursiva", () -> run("home.italic", "{}")).setTypeface(Typeface.defaultFromStyle(Typeface.ITALIC));
+        TextView un = font.letter("U", "Subrayado", () -> run("home.underline", "{}"));
+        un.setPaintFlags(un.getPaintFlags() | Paint.UNDERLINE_TEXT_FLAG);
+        font.letter("A+", "Aumentar tamaño", () -> run("home.increaseFontSize", "{}"));
+        font.letter("A−", "Disminuir tamaño", () -> run("home.decreaseFontSize", "{}"));
+        font.button(IconView.HIGHLIGHTER, "Relleno", () -> colorMenu(true)).button(IconView.TEXT, "Color", () -> colorMenu(false));
+        rb.group("Alineación")
+                .button(IconView.TEXT, "Izquierda", () -> run("home.alignLeft", "{}"))
+                .button(IconView.TEXT, "Centrar", () -> run("home.alignCenter", "{}"))
+                .button(IconView.TEXT, "Derecha", () -> run("home.alignRight", "{}"))
+                .button(IconView.TABLE, "Combinar", () -> run("home.mergeCenter", "{}"));
+        Ribbon.Group num = rb.group("Número");
+        num.button(IconView.SLIDERS, "Formato", this::formatMenu);
+        num.letter("$", "Moneda", () -> run("home.numberFormat", "{\"format\":\"Currency\"}"));
+        num.letter("%", "Porcentaje", () -> run("home.numberFormat", "{\"format\":\"Percentage\"}"));
+        num.letter(".0", "Más decimales", () -> run("home.increaseDecimal", "{}"));
+        num.letter(".00", "Menos decimales", () -> run("home.decreaseDecimal", "{}"));
+        rb.group("Estilos").button(IconView.SHEET, "Formato\nde tabla", () -> run("insert.table", "{}"));
+        rb.group("Celdas")
+                .button(IconView.PLUS, "Insertar\nfila", () -> run("home.insertRows", "{}"))
+                .button(IconView.PLUS, "Insertar\ncolumna", () -> run("home.insertColumns", "{}"))
+                .button(IconView.TRASH, "Eliminar\nfila", () -> run("home.deleteRows", "{}"))
+                .button(IconView.TRASH, "Eliminar\ncolumna", () -> run("home.deleteColumns", "{}"))
+                .button(IconView.EXPAND, "Autoajustar", () -> run("home.autofitColumnWidth", "{}"));
+        Ribbon.Group edit = rb.group("Edición");
+        edit.letter("Σ", "Autosuma", () -> run("formulas.autoSum", "{\"function\":\"SUM\"}"));
+        edit.button(IconView.NEXT, "Rellenar", () -> run("edit.fillDown", "{}"))
+                .button(IconView.ERASER, "Borrar", () -> run("edit.clearContents", "{}"))
+                .button(IconView.SEARCH, "Buscar", this::goTo);
+        rb.tab("Insertar");
+        rb.group("Tablas").button(IconView.TABLE, "Tabla", () -> run("insert.table", "{}"));
+        rb.group("Gráficos").button(IconView.CHART, "Gráficos recomendados", this::chartMenu)
+                .button(IconView.CHART, "Columnas", () -> insertChart("column"))
+                .button(IconView.S_LINE, "Líneas", () -> insertChart("line"))
+                .button(IconView.S_ELLIPSE, "Circular", () -> insertChart("pie"))
+                .button(IconView.DOTS, "Dispersión", () -> insertChart("scatter"));
+        rb.tab("Fórmulas");
+        Ribbon.Group lib = rb.group("Biblioteca de funciones");
+        lib.letter("fx", "Insertar función", this::functionMenu);
+        lib.letter("Σ", "Autosuma", () -> run("formulas.autoSum", "{\"function\":\"SUM\"}"));
+        lib.word("Promedio", () -> run("formulas.autoSum", "{\"function\":\"AVERAGE\"}"));
+        lib.word("Máx", () -> run("formulas.autoSum", "{\"function\":\"MAX\"}"));
+        lib.word("Mín", () -> run("formulas.autoSum", "{\"function\":\"MIN\"}"));
+        rb.group("Auditoría de fórmulas").button(IconView.SEARCH, "Mostrar\nfórmulas", () -> run("formulas.showFormulas", "{}"));
+        rb.group("Cálculo").button(IconView.FLIP, "Calcular\nahora", () -> run("formulas.calculateNow", "{}"));
+        rb.tab("Datos");
+        Ribbon.Group sort = rb.group("Ordenar y filtrar");
+        sort.letter("A→Z", "Ordenar de menor a mayor", () -> run("data.sortAscending", "{}"));
+        sort.letter("Z→A", "Ordenar de mayor a menor", () -> run("data.sortDescending", "{}"));
+        sort.button(IconView.SLIDERS, "Filtro", () -> run("data.filter", "{}"));
+        rb.group("Herramientas de datos").button(IconView.TRASH, "Quitar\nduplicados", () -> run("data.removeDuplicates", "{}"))
+                .button(IconView.NEXT, "Rellenar\nserie", () -> run("edit.fillSeries", "{}"));
+        rb.tab("Vista");
+        rb.group("Ventana").button(IconView.PAGES, "Inmovilizar\nfila", () -> run("view.freezeTopRow", "{}"))
+                .button(IconView.EXPAND, "Pantalla\ncompleta", () -> Ui.setFullscreen(this, !Ui.fullscreen(this)));
+        rb.group("Ayuda").button(IconView.HELP, "Tutorial", () -> Tutorial.show(this, dock, "sheet"));
+        rb.select(0);
+        root.addView(rb.view, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(fx, new LinearLayout.LayoutParams(-1, -2));
 
         grid = new GridCanvas();
         root.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -311,6 +342,16 @@ public final class GridActivity extends Activity {
         });
         dock = new OptionDock(this, frame, null, t.dark ? 0xF7262626 : 0xF7FFFFFF, t.dark);
         setContentView(frame);
+    }
+
+    /** Barra del título con el color de la app: título, estado e iconos en blanco. */
+    private void whiteBar(LinearLayout top, int accent) {
+        Ribbon.paintTitleBar(this, top, accent);
+        for (int i = 0; i < top.getChildCount(); i++) {
+            View v = top.getChildAt(i);
+            if (v instanceof TextView) ((TextView) v).setTextColor(v == state ? 0xCCFFFFFF : 0xFFFFFFFF);
+            if (v instanceof IconView) ((IconView) v).setColor(0xFFFFFFFF);
+        }
     }
 
     private TextView chip(LinearLayout parent, String text, String label, Runnable run) {

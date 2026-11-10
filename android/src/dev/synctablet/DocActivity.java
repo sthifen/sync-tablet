@@ -521,35 +521,46 @@ public final class DocActivity extends Activity {
         top.addView(icon(IconView.EXPORT, "Exportar a Word o PDF", v -> exportMenu()));
         top.addView(icon(IconView.HELP, "Tutorial", v -> Tutorial.show(this, dock, "doc")));
         root.addView(top, new LinearLayout.LayoutParams(-1, t.dp(54)));
+        Ribbon.paintTitleBar(this, top, Ribbon.WORD);
+        for (int i = 0; i < top.getChildCount(); i++) {
+            View v = top.getChildAt(i);
+            if (v instanceof TextView) ((TextView) v).setTextColor(0xFFFFFFFF);
+            if (v instanceof IconView) ((IconView) v).setColor(0xFFFFFFFF);
+        }
 
-        HorizontalScrollView hs = new HorizontalScrollView(this);
-        hs.setHorizontalScrollBarEnabled(false);
-        hs.setBackgroundColor(t.bar);
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(t.dp(8), 0, t.dp(8), t.dp(6));
-        hs.addView(bar);
-        chip(bar, "Título", () -> heading(1.8f)).setTypeface(Typeface.DEFAULT_BOLD);
-        chip(bar, "Subtítulo", () -> heading(1.35f)).setTypeface(Typeface.DEFAULT_BOLD);
-        chip(bar, "Normal", () -> heading(1f));
-        chip(bar, "B", () -> toggleStyle(Typeface.BOLD)).setTypeface(Typeface.DEFAULT_BOLD);
-        chip(bar, "I", () -> toggleStyle(Typeface.ITALIC)).setTypeface(Typeface.defaultFromStyle(Typeface.ITALIC));
-        TextView u = chip(bar, "U", () -> toggle(UnderlineSpan.class, UnderlineSpan::new));
+        // La cinta de WordCraft: Inicio (Fuente, Párrafo, Estilos), Insertar, Vista.
+        Ribbon rb = new Ribbon(this, t, Ribbon.WORD);
+        rb.tab("Inicio");
+        Ribbon.Group f = rb.group("Fuente");
+        f.letter("B", "Negrita", () -> fmt(() -> toggleStyle(Typeface.BOLD))).setTypeface(Typeface.DEFAULT_BOLD);
+        f.letter("I", "Cursiva", () -> fmt(() -> toggleStyle(Typeface.ITALIC))).setTypeface(Typeface.defaultFromStyle(Typeface.ITALIC));
+        TextView u = f.letter("U", "Subrayado", () -> fmt(() -> toggle(UnderlineSpan.class, UnderlineSpan::new)));
         u.setPaintFlags(u.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
-        TextView st = chip(bar, "S", () -> toggle(StrikethroughSpan.class, StrikethroughSpan::new));
+        TextView st = f.letter("ab", "Tachado", () -> fmt(() -> toggle(StrikethroughSpan.class, StrikethroughSpan::new)));
         st.setPaintFlags(st.getPaintFlags() | android.graphics.Paint.STRIKE_THRU_TEXT_FLAG);
-        chip(bar, "A−", () -> size(0.85f));
-        chip(bar, "A+", () -> size(1.18f));
-        chip(bar, "Color", () -> colorMenu(false));
-        chip(bar, "Resaltar", () -> colorMenu(true));
-        chip(bar, "⇤", () -> align(Layout.Alignment.ALIGN_NORMAL));
-        chip(bar, "↔", () -> align(Layout.Alignment.ALIGN_CENTER));
-        chip(bar, "⇥", () -> align(Layout.Alignment.ALIGN_OPPOSITE));
-        chip(bar, "• Lista", this::bullets);
-        chip(bar, "1. Lista", this::numbers);
-        chip(bar, "Sin formato", this::clear);
-        chip(bar, "🖼 Imagen", () -> startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), PICK_IMAGE));
-        root.addView(hs, new LinearLayout.LayoutParams(-1, -2));
+        f.letter("A+", "Agrandar fuente", () -> fmt(() -> size(1.18f)));
+        f.letter("A−", "Reducir fuente", () -> fmt(() -> size(0.85f)));
+        f.button(IconView.HIGHLIGHTER, "Resaltar", () -> colorMenu(true)).button(IconView.TEXT, "Color", () -> colorMenu(false))
+                .button(IconView.ERASER, "Borrar\nformato", () -> fmt(this::clear));
+        rb.group("Párrafo")
+                .button(IconView.DOTS, "Viñetas", () -> fmt(this::bullets))
+                .button(IconView.PAGES, "Numeración", () -> fmt(this::numbers))
+                .button(IconView.TEXT, "Izquierda", () -> fmt(() -> align(Layout.Alignment.ALIGN_NORMAL)))
+                .button(IconView.TEXT, "Centrar", () -> fmt(() -> align(Layout.Alignment.ALIGN_CENTER)))
+                .button(IconView.TEXT, "Derecha", () -> fmt(() -> align(Layout.Alignment.ALIGN_OPPOSITE)));
+        Ribbon.Group styles = rb.group("Estilos");
+        styles.word("Normal", () -> fmt(() -> heading(1f)));
+        styles.word("Título 1", () -> fmt(() -> heading(1.8f))).setTypeface(Typeface.DEFAULT_BOLD);
+        styles.word("Título 2", () -> fmt(() -> heading(1.35f))).setTypeface(Typeface.DEFAULT_BOLD);
+        rb.tab("Insertar");
+        rb.group("Ilustraciones").button(IconView.IMAGE, "Imágenes", () -> startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), PICK_IMAGE));
+        rb.tab("Archivo");
+        rb.group("Exportar").button(IconView.DOC, "Word", this::exportMenu).button(IconView.FILE, "PDF", this::exportPdf);
+        rb.tab("Vista");
+        rb.group("Ver").button(IconView.EXPAND, "Pantalla\ncompleta", () -> Ui.setFullscreen(this, !Ui.fullscreen(this)));
+        rb.group("Ayuda").button(IconView.HELP, "Tutorial", () -> Tutorial.show(this, dock, "doc"));
+        rb.select(0);
+        root.addView(rb.view, new LinearLayout.LayoutParams(-1, -2));
 
         // La hoja: blanca, de ancho A4 a escala, sobre el escritorio.
         ScrollView sv = new ScrollView(this);
@@ -595,6 +606,11 @@ public final class DocActivity extends Activity {
         });
         dock = new OptionDock(this, frame, null, t.dark ? 0xF7262626 : 0xF7FFFFFF, t.dark);
         setContentView(frame);
+    }
+
+    private void fmt(Runnable r) {
+        r.run();
+        body.requestFocus();
     }
 
     private TextView chip(LinearLayout parent, String text, Runnable run) {

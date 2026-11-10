@@ -49,6 +49,11 @@ final class IconView extends View {
         setMinimumHeight(Ui.dp(c, 44));
     }
 
+    void setColor(int c) {
+        color = c;
+        invalidate();
+    }
+
     void setActive(boolean a) {
         if (active != a) {
             active = a;

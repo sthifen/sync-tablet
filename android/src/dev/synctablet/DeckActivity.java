@@ -788,42 +788,53 @@ public final class DeckActivity extends Activity {
         root.setBackgroundColor(t.paper);
         frame.addView(root, new FrameLayout.LayoutParams(-1, -1));
 
-        HorizontalScrollView topScroll = new HorizontalScrollView(this);
-        topScroll.setHorizontalScrollBarEnabled(false);
-        topScroll.setBackgroundColor(t.bar);
+        // Barra del título naranja de DeckCraft y su cinta.
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
         top.setPadding(t.dp(6), 0, t.dp(6), 0);
-        topScroll.addView(top);
         top.addView(icon(IconView.BACK, "Volver", v -> finish()));
         titleView = Ui.text(this, title, 17, t.text, true);
         titleView.setPadding(t.dp(6), 0, t.dp(14), 0);
         titleView.setSingleLine(true);
-        titleView.setMaxWidth(t.dp(260));
         titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         titleView.setOnClickListener(v -> rename());
-        top.addView(titleView);
-        top.addView(icon(IconView.TEXT, "Texto", v -> addText()));
-        top.addView(icon(IconView.IMAGE, "Imagen", v -> startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), PICK_IMAGE)));
-        top.addView(icon(IconView.SHAPES, "Figura", v -> shapeMenu()));
-        top.addView(icon(IconView.STICKER, "Stickers", v -> Stickers.choose(this, dock, 0, this::addSticker)));
-        penBtn = icon(IconView.PEN, "Dibujar", v -> {
-            drawing = !drawing;
-            penBtn.setActive(drawing);
-            if (drawing) {
-                selected = null;
-                paintSelBar();
-                penMenu();
-            }
-        });
-        top.addView(penBtn);
+        top.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(icon(IconView.UNDO, "Deshacer", v -> stepHistory(true)));
         top.addView(icon(IconView.REDO, "Rehacer", v -> stepHistory(false)));
-        top.addView(icon(IconView.WAND, "Estilo", v -> themeMenu()));
         top.addView(icon(IconView.PLAY, "Presentar", v -> present()));
         top.addView(icon(IconView.EXPORT, "Exportar", v -> exportMenu()));
         top.addView(icon(IconView.HELP, "Tutorial", v -> Tutorial.show(this, dock, "slides")));
-        root.addView(topScroll, new LinearLayout.LayoutParams(-1, t.dp(54)));
+        root.addView(top, new LinearLayout.LayoutParams(-1, t.dp(54)));
+        Ribbon.paintTitleBar(this, top, Ribbon.DECK);
+        for (int i = 0; i < top.getChildCount(); i++) {
+            View v = top.getChildAt(i);
+            if (v instanceof TextView) ((TextView) v).setTextColor(0xFFFFFFFF);
+            if (v instanceof IconView) ((IconView) v).setColor(0xFFFFFFFF);
+        }
+        penBtn = icon(IconView.PEN, "Dibujar", v -> togglePen());
+        Ribbon rb = new Ribbon(this, t, Ribbon.DECK);
+        rb.tab("Inicio");
+        rb.group("Diapositivas").button(IconView.PLUS, "Nueva\ndiapositiva", this::addSlideMenu)
+                .button(IconView.COPY, "Duplicar", () -> slideMenu(current));
+        rb.group("Dibujo").button(IconView.TEXT, "Cuadro\nde texto", this::addText).button(IconView.SHAPES, "Formas", this::shapeMenu);
+        rb.group("Diseñador").button(IconView.WAND, "Ideas de\ndiseño", this::themeMenu);
+        rb.tab("Insertar");
+        rb.group("Imágenes").button(IconView.IMAGE, "Imágenes", () -> startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE), PICK_IMAGE))
+                .button(IconView.STICKER, "Stickers", () -> Stickers.choose(this, dock, 0, this::addSticker));
+        rb.group("Ilustraciones").button(IconView.SHAPES, "Formas", this::shapeMenu);
+        rb.group("Texto").button(IconView.TEXT, "Cuadro\nde texto", this::addText);
+        rb.tab("Dibujar");
+        rb.group("Herramientas").button(IconView.PEN, "Lápiz", this::togglePen).button(IconView.SLIDERS, "Color", this::penMenu);
+        rb.tab("Diseño");
+        rb.group("Temas").button(IconView.WAND, "Temas", this::themeMenu);
+        rb.tab("Presentación");
+        rb.group("Iniciar presentación").button(IconView.PLAY, "Desde el\nprincipio", () -> {
+            current = 0;
+            present();
+        }).button(IconView.NEXT, "Desde la\nactual", this::present);
+        rb.group("Exportar").button(IconView.SLIDES, "PowerPoint", () -> export(true)).button(IconView.FILE, "PDF", () -> export(false));
+        rb.select(0);
+        root.addView(rb.view, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout body = new LinearLayout(this);
         ScrollView ss = new ScrollView(this);
@@ -973,6 +984,17 @@ public final class DeckActivity extends Activity {
             }));
         }
         dock.tiles("Figura", tiles);
+    }
+
+    private void togglePen() {
+        drawing = !drawing;
+        penBtn.setActive(drawing);
+        Ui.toast(this, drawing ? "Dibujar: escribe sobre la diapositiva" : "Dibujar: apagado");
+        if (drawing) {
+            selected = null;
+            paintSelBar();
+            penMenu();
+        }
     }
 
     private void penMenu() {
