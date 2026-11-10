@@ -47,6 +47,23 @@
   la sigue sola si cambias de página o de cuaderno.
 - **Sin conexión:** la tablet guarda todo y, al volver a conectar, el PC se pone al
   día solo.
+- **Hojas de cálculo (0.3):** con el motor de [GridCraft](https://github.com/storytold/gridcraft)
+  en la tablet: todas sus funciones (en español o inglés: `=SUMA`, `=SI`, `=BUSCARV`…),
+  formato, ordenar, filtros, varias hojas, gráficas (columnas, líneas, circular,
+  dispersión, cascada…), `.xlsx`/`.csv`/`.ods` de entrada y salida, plantillas
+  (presupuesto, notas, laboratorio, graficar funciones) y gráficas que se pasan a un
+  cuaderno o a una presentación. Las tablas dentro de las hojas usan el mismo motor.
+- **Presentaciones al estilo Canva:** diez estilos con portada, agenda, secciones y
+  cierre; textos, fotos, figuras, stickers y dibujo a mano; presentar a pantalla
+  completa (pasa diapositivas con el S Pen) y exportar a PowerPoint o PDF.
+- **Documentos:** plantillas de informe, laboratorio, carta, ensayo, resumen y acta,
+  que se exportan a Word.
+- **Más:** lápices propios (trazo, grosor, color y opacidad con nombre), regla,
+  escuadras, transportador y compás, 18 hojas (partida a la mitad, milimetrada,
+  ingeniería, isométrica…), stickers, visor de modelos 3D (STL y OBJ), importar
+  Xournal++ (`.xopp`), seleccionar varios para mover o borrar, pantalla completa,
+  tutorial de cada cosa, copia automática en Google Drive y **escribir desde el PC**
+  (casilla «Escribir desde el PC» en el visor; la tablet guarda el trazo).
 
 ## Cómo se usa
 

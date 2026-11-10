@@ -1,6 +1,6 @@
 [package]
 name = "synctablet"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Apuntes a mano en la tablet Android que aparecen en vivo en tu PC con Linux"
 license = "MIT"
