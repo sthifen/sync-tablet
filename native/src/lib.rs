@@ -306,3 +306,23 @@ pub extern "system" fn Java_dev_synctablet_Native_gridEvalTable<'l>(mut env: JNI
         Some(arr.into_raw())
     })
 }
+
+/// HTML del editor de documentos como `.docx`; null si no se pudo.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_htmlToDocx<'l>(mut env: JNIEnv<'l>, _: JClass<'l>, html: JString<'l>) -> jbyteArray {
+    guarded(std::ptr::null_mut(), || {
+        let html: String = env.get_string(&html).ok()?.into();
+        let docx = word::html_to_docx(&html)?;
+        Some(env.byte_array_from_slice(&docx).ok()?.into_raw())
+    })
+}
+
+/// Un `.docx` como HTML; null si no se pudo leer.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_synctablet_Native_docxToHtml<'l>(env: JNIEnv<'l>, _: JClass<'l>, data: JByteArray<'l>) -> jstring {
+    guarded(std::ptr::null_mut(), || {
+        let bytes = env.convert_byte_array(&data).ok()?;
+        let html = word::docx_to_html(&bytes)?;
+        Some(env.new_string(html).ok()?.into_raw())
+    })
+}

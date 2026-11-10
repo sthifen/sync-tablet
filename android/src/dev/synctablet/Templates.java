@@ -201,6 +201,40 @@ final class Templates {
         }
     }
 
+    private static String esc(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>");
+    }
+
+    /** La plantilla como HTML con formato, para el editor de documentos. */
+    static String docHtml(String name) {
+        StringBuilder b = new StringBuilder();
+        boolean inList = false;
+        int n = 0;
+        for (String raw : (String[]) doc(name)[2]) {
+            String[] p = raw.split("\\|", 2);
+            String type = p[0], text = esc(p.length > 1 ? p[1] : "");
+            boolean list = "bullet".equals(type);
+            if (inList && !list) b.append("</ul>");
+            if (list && !inList) b.append("<ul>");
+            inList = list;
+            if (!"number".equals(type)) n = 0;
+            switch (type) {
+                case "h1": b.append("<p><span style=\"font-size:1.80em;\"><b>").append(text).append("</b></span></p>"); break;
+                case "h2": b.append("<p><span style=\"font-size:1.35em;\"><b>").append(text).append("</b></span></p>"); break;
+                case "h3": b.append("<p><span style=\"font-size:1.15em;\"><b>").append(text).append("</b></span></p>"); break;
+                case "bullet": b.append("<li>").append(text).append("</li>"); break;
+                case "number": b.append("<p>").append(++n).append(". ").append(text).append("</p>"); break;
+                case "todo": b.append("<p>☐ ").append(text).append("</p>"); break;
+                case "quote": b.append("<p><i>“").append(text).append("”</i></p>"); break;
+                case "callout": b.append("<p><font color=\"#0F766E\">").append(text).append("</font></p>"); break;
+                case "divider": b.append("<p>―――――――――――――</p>"); break;
+                default: b.append("<p>").append(text).append("</p>");
+            }
+        }
+        if (inList) b.append("</ul>");
+        return b.toString();
+    }
+
     /** El JSON {title, blocks} que entiende Notes.createFrom. */
     static String docJson(String name) {
         Object[] d = doc(name);

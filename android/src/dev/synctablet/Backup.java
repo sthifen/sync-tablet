@@ -192,6 +192,13 @@ final class Backup {
                     } else if (n.equals("files/sheets/index.json")) sheetIndex = text(zip);
                     else if (n.startsWith("files/sheets/") && n.endsWith(".xlsx")) sheets.put(n.substring(13, n.length() - 5), bytes(zip));
                     else if (n.startsWith("files/decks/")) decks.put(n.substring(12), bytes(zip));
+                    else if (n.startsWith("files/docs/")) {
+                        File f = new File(a.getFilesDir(), n.substring(6));
+                        if (!f.exists()) {
+                            copy(zip, f);
+                            count[3]++;
+                        }
+                    }
                     else if (n.startsWith("files/looks/")) {
                         File f = new File(a.getFilesDir(), n.substring(6));
                         if (!f.exists()) copy(zip, f);
@@ -257,7 +264,7 @@ final class Backup {
             String err = error;
             a.runOnUiThread(() -> {
                 if (err != null) Ui.toast(a, "No se pudo leer la copia");
-                else Ui.toast(a, "Recuperado: " + count[0] + " cuadernos nuevos, " + count[2] + " hojas de cálculo y " + count[3] + " presentaciones");
+                else Ui.toast(a, "Recuperado: " + count[0] + " cuadernos nuevos, " + count[2] + " hojas de cálculo y " + count[3] + " documentos y presentaciones");
                 SyncClient.get(a);
                 done.run();
             });

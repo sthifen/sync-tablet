@@ -67,5 +67,9 @@ final class Native {
     /** Tabla de una página: lo escrito por filas → lo que se ve. Null si falló. */
     static native String[] gridEvalTable(String[] cells, int rows, int cols);
 
+    /** Documentos con formato: HTML ↔ .docx (WordCraft). Null si falló. */
+    static native byte[] htmlToDocx(String html);
+    static native String docxToHtml(byte[] data);
+
     private Native() {}
 }

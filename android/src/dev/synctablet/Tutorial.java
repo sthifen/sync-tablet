@@ -57,9 +57,9 @@ final class Tutorial {
             "Formato|La cinta tiene negrita, colores, alinear, formato de número, ordenar, filtros, insertar filas y más. Desliza la cinta para verla entera.",
             "Excel|Se guarda sola. ⋯ › Guardar como Excel exporta un .xlsx que abre Excel, LibreOffice o Google Sheets."}},
         {"doc", IconView.DOC, "Documentos Word", new String[] {
-            "Nuevo documento|En Inicio, Crear › Documento (Word) y eliges plantilla: informe, carta, laboratorio, ensayo…",
-            "Escribir|Escribe por bloques: «/» abre los tipos (títulos, listas, tablas, citas, código).",
-            "Exportar|Menú ⋯ › Exportar a Word guarda un .docx."}},
+            "Nuevo documento|En Inicio, Crear › Documento (Word) y eliges plantilla: informe, laboratorio, carta, ensayo… Se escribe en una hoja A4.",
+            "Formato|Elige el texto y usa la barra: Título, Subtítulo, negrita, cursiva, subrayado, tachado, tamaño, color, resaltar, alinear y listas.",
+            "Word y PDF|El botón de exportar guarda un .docx con su formato (WordCraft) o un PDF en hojas A4. Importar › Word abre un .docx para seguir editándolo."}},
         {"slides", IconView.SLIDES, "Presentaciones", new String[] {
             "Crear|En Inicio, Crear › Presentación y elige un estilo. Ya trae portada, agenda, secciones y cierre: toca un texto para cambiarlo.",
             "Editar|Arriba: texto, imagen, figuras, stickers y lápiz para dibujar. Toca algo para moverlo; la bolita de la esquina lo agranda. Doble toque edita un texto. «+ Diapositiva» trae diseños listos.",

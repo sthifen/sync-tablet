@@ -291,3 +291,32 @@ mod tests {
         assert_eq!(plain("antes ![foto](a.png) después"), "antes  después");
     }
 }
+
+/// HTML (el del editor de documentos de la tablet) como `.docx`.
+pub fn html_to_docx(html: &str) -> Option<Vec<u8>> {
+    // Letra de documento moderno en vez de la Times de serie.
+    let html = format!("<html><body style=\"font-family:Calibri,Arial,sans-serif\">{html}</body></html>");
+    let doc = wordcraft_formats::import("html", html.as_bytes())?.ok()?;
+    wordcraft_docx::write(&doc).ok()
+}
+
+/// Un `.docx` como HTML para el editor de documentos.
+pub fn docx_to_html(bytes: &[u8]) -> Option<String> {
+    let doc = wordcraft_docx::read(bytes).ok()?;
+    String::from_utf8(wordcraft_formats::export("html", &doc)?.ok()?).ok()
+}
+
+#[cfg(test)]
+mod html_tests {
+    #[test]
+    fn ida_y_vuelta_con_formato() {
+        let html = r#"<p dir="ltr" style="text-align:center;"><span style="font-size:1.80em;"><b>Informe</b></span></p>
+<p dir="ltr">Texto con <b>negrita</b>, <i>cursiva</i>, <u>subrayado</u> y <span style="color:#DC2626;">rojo</span>.</p>
+<ul><li dir="ltr">uno</li><li dir="ltr">dos</li></ul>"#;
+        let docx = super::html_to_docx(html).expect("docx");
+        let back = super::docx_to_html(&docx).expect("html");
+        println!("{back}");
+        assert!(back.contains("negrita"));
+        assert!(back.contains("<b>") || back.contains("<strong>") || back.contains("bold"), "{back}");
+    }
+}

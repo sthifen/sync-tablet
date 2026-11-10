@@ -770,6 +770,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         int docs = inside.size() + notesIn(folder).size();
         for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(folder)) docs++;
         for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(folder)) docs++;
+        for (DocActivity.Info d : DocActivity.list(this)) if (d.folder.equals(folder)) docs++;
         TextView s = text(docs == 0 ? "Vacía" : docs == 1 ? "1 documento" : docs + " documentos", 12, t.faint, t.regular);
         s.setPadding(0, t.dp(4), 0, 0);
         info.addView(s);
@@ -2003,7 +2004,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         tiles.add(new OptionDock.Tile(dock.letter("PDF"), "PDF → cuaderno", false, () -> pickImport("application/pdf")));
         if (Native.available()) {
-            tiles.add(new OptionDock.Tile(dock.glyph(IconView.DOC), "Word → documento", false, this::pickDocx));
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.DOC), "Word → documento", false, () -> pickImport(DOCX)));
             tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHEET), "Excel → hoja de cálculo", false, () -> pickImport(
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel",
                     "application/vnd.oasis.opendocument.spreadsheet", "text/csv", "text/comma-separated-values")));
@@ -2040,7 +2041,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         String type = getContentResolver().getType(uri);
         String base = name.contains(".") ? name.substring(0, name.lastIndexOf('.')) : name;
         if (lower.endsWith(".docx") || (type != null && type.contains("wordprocessing"))) {
-            importDocx(uri);
+            importWordDoc(uri, base);
         } else if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".ods") || lower.endsWith(".csv")
                 || (type != null && (type.contains("spreadsheet") || type.contains("excel") || type.contains("csv")))) {
             importSheet(uri, name, base);
@@ -2151,26 +2152,42 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private void newDocMenu() {
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         for (int i = 0; i < Templates.DOCS.length; i++) {
-            String key = Templates.DOCS[i];
-            tiles.add(new OptionDock.Tile(dock.letter(Templates.DOC_ICONS[i]), Templates.DOC_NAMES[i], false, () -> {
+            String key = Templates.DOCS[i], name = Templates.DOC_NAMES[i];
+            tiles.add(new OptionDock.Tile(dock.letter(Templates.DOC_ICONS[i]), name, false, () -> {
                 flushSave();
-                try {
-                    JSONObject n = notes.createFrom(Templates.docJson(key), "Documento");
-                    n.put("icon", Templates.doc(key)[1]);
-                    notes.edited(n);
-                    if (folderView != null) {
-                        HashMap<String, String> map = noteFolders();
-                        map.put(n.optString("id"), folderView);
-                        keepNoteFolders(map);
-                    }
-                    openNote(n.optString("id"));
-                    Tutorial.offerOnce(this, dock, "doc");
-                } catch (JSONException e) {
-                    Ui.toast(this, "No se pudo crear");
-                }
+                String id = DocActivity.create(this, "blank".equals(key) ? "Documento" : name, Templates.docHtml(key), folderView);
+                if (id == null) Ui.toast(this, "No se pudo crear");
+                else openDoc(id);
             }));
         }
         dock.tiles("Documento nuevo", tiles);
+    }
+
+    private void openDoc(String id) {
+        flushSave();
+        startActivity(new Intent(this, DocActivity.class).putExtra("id", id));
+    }
+
+    /** Un Word con su formato, como documento editable. */
+    private void importWordDoc(android.net.Uri uri, String title) {
+        Ui.toast(this, "Importando el Word…");
+        new Thread(() -> {
+            String id = null;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[1 << 16];
+                for (int k; (k = in.read(buf)) > 0; ) bytes.write(buf, 0, k);
+                String html = Native.docxToHtml(bytes.toByteArray());
+                if (html != null) id = DocActivity.create(this, title, html, folderView);
+            } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "importar Word", e);
+            }
+            String made = id;
+            runOnUiThread(() -> {
+                if (made == null) Ui.toast(this, "No se pudo leer ese Word");
+                else openDoc(made);
+            });
+        }, "word").start();
     }
 
     private void newSheetMenu() {
@@ -2202,8 +2219,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             art.getChildAt(1).setVisibility(View.GONE);
             views.add(card);
         }
+        for (DocActivity.Info d : DocActivity.list(this)) if (d.folder.equals(folder)) views.add(fileCard("doc:" + d.id, IconView.DOC, 0xFF2563EB, d.title,
+                "Documento", d.updated, () -> openDoc(d.id), () -> docMenu(d)));
         if (views.isEmpty()) return;
-        sectionTitle("Hojas de cálculo y presentaciones");
+        sectionTitle("Documentos, hojas de cálculo y presentaciones");
         grid(views);
     }
 
@@ -2259,6 +2278,22 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         }).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Borrar «" + d.title + "»?", "No se puede deshacer.", "Borrar", () -> {
             SheetFiles.delete(this, d.id);
+            showHome();
+        })).stays());
+        dock.tiles(d.title, tiles);
+    }
+
+    private void docMenu(DocActivity.Info d) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.DOC), "Abrir", false, () -> openDoc(d.id)));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Mover a carpeta", false, () -> {
+            picked.clear();
+            selecting = true;
+            picked.add("doc:" + d.id);
+            movePicked();
+        }).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Borrar «" + d.title + "»?", "No se puede deshacer.", "Borrar", () -> {
+            DocActivity.delete(this, d.id);
             showHome();
         })).stays());
         dock.tiles(d.title, tiles);
@@ -2390,6 +2425,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         for (JSONObject n : folderView == null ? sortedNotes() : notesIn(here)) picked.add("note:" + n.optString("id"));
         for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(here)) picked.add("sheet:" + d.id);
         for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(here)) picked.add("deck:" + d.id);
+        for (DocActivity.Info d : DocActivity.list(this)) if (d.folder.equals(here)) picked.add("doc:" + d.id);
         paintPickBar();
         int y = scroller.getScrollY();
         showHome();
@@ -2443,6 +2479,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 }
             } else if (key.startsWith("deck:")) {
                 DeckActivity.setFolder(this, key.substring(5), folder);
+            } else if (key.startsWith("doc:")) {
+                DocActivity.setFolder(this, key.substring(4), folder);
             }
         }
         store.saveNotebooks();
@@ -2474,6 +2512,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                     SheetFiles.delete(this, key.substring(6));
                 } else if (key.startsWith("deck:")) {
                     DeckActivity.delete(this, key.substring(5));
+                } else if (key.startsWith("doc:")) {
+                    DocActivity.delete(this, key.substring(4));
                 }
             }
             setSelecting(false);
