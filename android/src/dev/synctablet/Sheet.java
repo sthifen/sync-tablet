@@ -25,6 +25,27 @@ final class Sheet {
 
     /** Lo que se ve en cada celda, por filas. */
     static String[] evaluate(String[] cells, int rows, int cols) {
+        // Con la librería nativa, todas las funciones de GridCraft (SI, BUSCARV, FECHA…).
+        Engine e = engine;
+        if (e != null) {
+            try {
+                String[] out = e.eval(cells, rows, cols);
+                if (out != null && out.length == rows * cols) return out;
+            } catch (UnsatisfiedLinkError err) {
+                engine = null; // una librería vieja sin hojas de cálculo
+            }
+        }
+        return evaluateJava(cells, rows, cols);
+    }
+
+    /** Quién calcula de verdad: GridCraft si está la librería (lo pone Native). */
+    interface Engine {
+        String[] eval(String[] cells, int rows, int cols);
+    }
+
+    static volatile Engine engine;
+
+    static String[] evaluateJava(String[] cells, int rows, int cols) {
         Sheet s = new Sheet(cells, rows, cols);
         for (int i = 0; i < rows * cols; i++) s.value(i);
         return s.values;

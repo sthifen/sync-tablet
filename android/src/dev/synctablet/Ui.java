@@ -85,5 +85,37 @@ final class Ui {
         b.setTypeface(active ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
     }
 
+    /** Pantalla completa: sin barra de estado ni barra de apps abajo (se asoman deslizando desde el borde). */
+    static boolean fullscreen(Context c) {
+        return c.getSharedPreferences("ui", Context.MODE_PRIVATE).getBoolean("fullscreen", false);
+    }
+
+    static void setFullscreen(android.app.Activity a, boolean on) {
+        a.getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putBoolean("fullscreen", on).apply();
+        applyFullscreen(a);
+    }
+
+    @SuppressWarnings("deprecation")
+    static void applyFullscreen(android.app.Activity a) {
+        boolean on = fullscreen(a);
+        android.view.View decor = a.getWindow().getDecorView();
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsetsController ic = a.getWindow().getInsetsController();
+            if (ic == null) return;
+            if (on) {
+                ic.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                ic.hide(android.view.WindowInsets.Type.systemBars());
+            } else {
+                ic.show(android.view.WindowInsets.Type.systemBars());
+            }
+        } else {
+            int keep = decor.getSystemUiVisibility() & (android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            int full = android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+            decor.setSystemUiVisibility(keep | (on ? full : 0));
+        }
+    }
+
     private Ui() {}
 }

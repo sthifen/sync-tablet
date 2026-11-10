@@ -15,7 +15,8 @@ final class IconView extends View {
     static final int BACK = 0, PEN = 1, HIGHLIGHTER = 2, ERASER = 3, SHAPES = 4, UNDO = 5, REDO = 6,
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
             LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29,
-            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44, CAMERA = 45, FILE = 46, TABLE = 47, PASTE = 48, SLIDES = 49, GRID_DOC = 50, FOLDER = 51, NEURON = 52;
+            S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44, CAMERA = 45, FILE = 46, TABLE = 47, PASTE = 48, SLIDES = 49, GRID_DOC = 50, FOLDER = 51, NEURON = 52,
+            EXPAND = 53, SELECT = 54, CUBE = 55, STICKER = 56, HELP = 57, CLOUD = 58, CHART = 59, IMPORT = 60, SHEET = 61, DOC = 62;
 
     private final int icon;
     private final Path path;
@@ -319,6 +320,49 @@ final class IconView extends View {
                     else p.lineTo(x, y);
                 }
                 p.close();
+                break;
+            case EXPAND:
+                p.moveTo(4, 9); p.lineTo(4, 4); p.lineTo(9, 4); p.moveTo(15, 4); p.lineTo(20, 4); p.lineTo(20, 9);
+                p.moveTo(20, 15); p.lineTo(20, 20); p.lineTo(15, 20); p.moveTo(9, 20); p.lineTo(4, 20); p.lineTo(4, 15);
+                break;
+            case SELECT:
+                p.addRoundRect(new RectF(4, 4, 20, 20), 3, 3, Path.Direction.CW);
+                p.moveTo(8, 12.5f); p.lineTo(11, 15.5f); p.lineTo(16.5f, 9);
+                break;
+            case CUBE:
+                p.moveTo(12, 3); p.lineTo(20, 7.5f); p.lineTo(20, 16.5f); p.lineTo(12, 21); p.lineTo(4, 16.5f); p.lineTo(4, 7.5f); p.close();
+                p.moveTo(4, 7.5f); p.lineTo(12, 12); p.lineTo(20, 7.5f); p.moveTo(12, 12); p.lineTo(12, 21);
+                break;
+            case STICKER:
+                p.moveTo(4, 4); p.lineTo(20, 4); p.lineTo(20, 13); p.lineTo(13, 20); p.lineTo(4, 20); p.close();
+                p.moveTo(20, 13); p.lineTo(13, 13); p.lineTo(13, 20);
+                p.addCircle(9, 9.5f, 0.6f, Path.Direction.CW); p.addCircle(14.5f, 9.5f, 0.6f, Path.Direction.CW);
+                p.moveTo(8, 14); p.quadTo(9.5f, 16, 11, 15.5f);
+                break;
+            case HELP:
+                p.addCircle(12, 12, 8.5f, Path.Direction.CW);
+                p.moveTo(9.3f, 9.5f); p.quadTo(9.5f, 6.8f, 12, 6.8f); p.quadTo(14.7f, 6.8f, 14.7f, 9.3f); p.quadTo(14.7f, 11, 12, 12.3f); p.lineTo(12, 13.8f);
+                p.addCircle(12, 17, 0.6f, Path.Direction.CW);
+                break;
+            case CLOUD:
+                p.moveTo(7, 18.5f); p.quadTo(3, 18.5f, 3, 14.8f); p.quadTo(3, 11.2f, 7, 11); p.quadTo(8, 6, 12.5f, 6);
+                p.quadTo(17, 6, 17.6f, 10.5f); p.quadTo(21, 11, 21, 14.6f); p.quadTo(21, 18.5f, 17, 18.5f); p.close();
+                break;
+            case CHART:
+                p.moveTo(4, 4); p.lineTo(4, 20); p.lineTo(20, 20);
+                p.moveTo(8, 17); p.lineTo(8, 12); p.moveTo(12, 17); p.lineTo(12, 8); p.moveTo(16, 17); p.lineTo(16, 13.5f);
+                break;
+            case IMPORT:
+                p.moveTo(12, 3.5f); p.lineTo(12, 15); p.moveTo(7.5f, 10.5f); p.lineTo(12, 15); p.lineTo(16.5f, 10.5f);
+                p.moveTo(4, 15.5f); p.lineTo(4, 20); p.lineTo(20, 20); p.lineTo(20, 15.5f);
+                break;
+            case SHEET:
+                p.addRoundRect(new RectF(4, 4, 20, 20), 2, 2, Path.Direction.CW);
+                p.moveTo(4, 9.3f); p.lineTo(20, 9.3f); p.moveTo(4, 14.6f); p.lineTo(20, 14.6f); p.moveTo(10, 4); p.lineTo(10, 20);
+                break;
+            case DOC:
+                p.moveTo(6, 3.5f); p.lineTo(14, 3.5f); p.lineTo(18.5f, 8); p.lineTo(18.5f, 20.5f); p.lineTo(6, 20.5f); p.close();
+                p.moveTo(8.5f, 11); p.lineTo(9.8f, 16.5f); p.lineTo(11.2f, 12.5f); p.lineTo(12.6f, 16.5f); p.lineTo(14, 11);
                 break;
             case WIFI:
                 p.arcTo(new RectF(2.5f, 8.5f, 21.5f, 27.5f), 225, 90, true);

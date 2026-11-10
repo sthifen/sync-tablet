@@ -85,6 +85,13 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private boolean loading, pendingRemote;
     private final Runnable save = () -> { if (note != null) notes.edited(note); };
 
+    /** Selección de varios: "nb:<id>" y "note:<id>". */
+    private boolean selecting;
+    private final java.util.LinkedHashSet<String> picked = new java.util.LinkedHashSet<>();
+    private FrameLayout frame;
+    private LinearLayout pickBar;
+    private TextView pickCount;
+
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -97,6 +104,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         build();
         String last = saved != null ? saved.getString("note") : prefs.getString("last", null);
         if (last != null && notes.note(last) != null) openNote(last); else showHome();
+        reopenDock();
         checkUpdate(false);
     }
 
@@ -122,6 +130,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         renderSidebar();
         // Al volver de la hoja: miniaturas y cuadernos al día.
         if (noteId == null) showHome(); else if (editor != null) editor.refresh();
+        Backup.auto(this);
     }
 
     @Override
@@ -207,11 +216,15 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             if (pendingRemote && !isEditing()) main.postDelayed(() -> onNotesChanged(noteId), 400);
         });
         // El dock de opciones flota sobre todo.
-        FrameLayout frame = new FrameLayout(this);
+        frame = new FrameLayout(this);
         wall = new ImageView(this);
         wall.setScaleType(ImageView.ScaleType.CENTER_CROP);
         frame.addView(wall, new FrameLayout.LayoutParams(-1, -1));
         frame.addView(root, new FrameLayout.LayoutParams(-1, -1));
+        pickBar = buildPickBar();
+        FrameLayout.LayoutParams plp = new FrameLayout.LayoutParams(-2, t.dp(60), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        plp.bottomMargin = t.dp(26);
+        frame.addView(pickBar, plp);
         dock = new OptionDock(this, frame, null, t.dark ? 0xF7262626 : 0xF7FFFFFF, t.dark);
         setContentView(frame);
         applyLooks();
@@ -494,9 +507,25 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     }
 
     private void toggleTheme() {
+        toggleTheme(null);
+    }
+
+    /** `reopen`: el dock que estaba abierto vuelve a abrirse ya con el tema nuevo. */
+    private void toggleTheme(String reopen) {
         flushSave();
-        prefs.edit().putInt("theme", t.dark ? 1 : 2).apply();
+        prefs.edit().putInt("theme", t.dark ? 1 : 2).putString("reopen", reopen).apply();
         recreate();
+    }
+
+    /** Tras cambiar de tema: el mismo dock, sin que el usuario lo pierda de vista. */
+    private void reopenDock() {
+        String which = prefs.getString("reopen", null);
+        if (which == null) return;
+        prefs.edit().remove("reopen").apply();
+        main.post(() -> {
+            if ("personalize".equals(which)) personalize();
+            else if ("more".equals(which)) moreMenu(null);
+        });
     }
 
     @Override
@@ -549,6 +578,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         pageBox.addView(title);
         int nn = notes.list().size(), nb = store.notebooks().size();
         pageBox.addView(text((nn == 1 ? "1 nota" : nn + " notas") + " · " + (nb == 1 ? "1 cuaderno" : nb + " cuadernos"), 15, t.faint, t.regular));
+        pageBox.addView(homeActions());
 
         sectionTitle("Notas recientes");
         ArrayList<JSONObject> recent = sortedNotes();
@@ -561,6 +591,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
         sectionTitle("Cuadernos");
         gallery();
+        documentsSection("");
         View end = new View(this);
         pageBox.addView(end, new LinearLayout.LayoutParams(-1, t.dp(120)));
         renderSidebar();
@@ -594,6 +625,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         actions.addView(pill("‹  Inicio", v -> { setFolderView(null); showHome(); }));
         String here = folderView;
         actions.addView(pill("Opciones de la carpeta", v -> folderMenu(here)));
+        actions.addView(pill(selecting ? "Terminar selección" : "Seleccionar", v -> setSelecting(!selecting)));
         pageBox.addView(actions);
         gallery();
         View end = new View(this);
@@ -648,8 +680,14 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         if (n.optBoolean("dirty") && !online) when = "Se subirá al conectar";
         r.addView(text(when, 12, t.faint, t.regular));
         String id = n.optString("id");
+        if (selecting) {
+            boolean on = picked.contains("note:" + id);
+            r.addView(checkMark(on), 0, new LinearLayout.LayoutParams(t.dp(30), t.dp(30)));
+            r.setOnClickListener(v -> togglePick("note:" + id));
+            return r;
+        }
         r.setOnClickListener(v -> openNote(id));
-        r.setOnLongClickListener(v -> { confirmDeleteNote(id); return true; });
+        r.setOnLongClickListener(v -> { setSelecting(true); togglePick("note:" + id); return true; });
         return r;
     }
 
@@ -685,6 +723,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             sectionTitle("Notas");
             for (JSONObject n : inside) pageBox.addView(noteRow(n));
         }
+        documentsSection(here);
         sectionTitle("Agregar");
         views = new ArrayList<>();
         views.add(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()));
@@ -812,8 +851,17 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         s.setPadding(0, t.dp(4), 0, 0);
         info.addView(s);
         c.addView(info);
-        c.setOnClickListener(v -> openNotebook(n, null));
-        c.setOnLongClickListener(v -> { notebookMenu(n); return true; });
+        if (selecting) {
+            boolean on = picked.contains("nb:" + n.id);
+            FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(t.dp(30), t.dp(30), Gravity.TOP | Gravity.END);
+            mlp.setMargins(0, t.dp(8), t.dp(8), 0);
+            prev.addView(checkMark(on), mlp);
+            if (on) prev.setForeground(new android.graphics.drawable.ColorDrawable(0x220F766E));
+            c.setOnClickListener(v -> togglePick("nb:" + n.id));
+        } else {
+            c.setOnClickListener(v -> openNotebook(n, null));
+            c.setOnLongClickListener(v -> { notebookMenu(n); return true; });
+        }
         c.setContentDescription("Cuaderno " + n.title);
         return c;
     }
@@ -1055,7 +1103,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         }
         if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Importar Word", false, this::pickDocx));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPORT), "Buscar actualización", false, () -> checkUpdate(true)).stays());
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, this::toggleTheme));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, () -> toggleTheme("more")).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.WIFI), "Conectar por WiFi", false, this::askWifi).stays());
         if (note != null) tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Eliminar esta nota", false, () -> confirmDeleteNote(noteId)).stays());
         dock.tiles("Opciones", tiles);
@@ -1063,7 +1111,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     // ---------------------------------------------------------------- Word
 
-    private static final int PICK_DOCX = 41, SAVE_DOCX = 42, PICK_LOOK = 43, OPEN_GRAPH = 44;
+    private static final int PICK_DOCX = 41, SAVE_DOCX = 42, PICK_LOOK = 43, OPEN_GRAPH = 44, PICK_IMPORT = 45, PICK_MODEL = 46,
+            PICK_BACKUP_DEST = 47, PICK_BACKUP_RESTORE = 48;
     private static final String DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     private void pickDocx() {
@@ -1100,7 +1149,11 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                     editLook(key, title, glass);
                 });
             }).start();
-        } else if (request == PICK_DOCX) importDocx(data.getData());
+        } else if (request == PICK_IMPORT) importFile(data.getData());
+        else if (request == PICK_MODEL) startActivity(new Intent(this, ModelActivity.class).setData(data.getData()).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        else if (request == PICK_BACKUP_DEST) Backup.chosen(this, data.getData());
+        else if (request == PICK_BACKUP_RESTORE) Backup.restore(this, data.getData(), () -> { renderSidebar(); showHome(); });
+        else if (request == PICK_DOCX) importDocx(data.getData());
         else if (request == SAVE_DOCX) exportDocx(data.getData());
     }
 
@@ -1505,7 +1558,13 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         tiles.add(new OptionDock.Tile(lookTile(Looks.APP), "Fondo de la app", false, () -> editLook(Looks.APP, "Fondo de la app", true)).stays());
         tiles.add(new OptionDock.Tile(lookTile(Looks.HOME), "Portada de Inicio", false, () -> editLook(Looks.HOME, "Portada de Inicio", false)).stays());
         tiles.add(new OptionDock.Tile(lookTile(Looks.DESK), "Detrás de las hojas", false, () -> editLook(Looks.DESK, "Detrás de las hojas", false)).stays());
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, this::toggleTheme));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, () -> toggleTheme("personalize")).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.CLOUD), "Copia en Drive", false, () -> Backup.menu(this, dock)).stays());
+        boolean full = Ui.fullscreen(this);
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPAND), full ? "Salir de pantalla completa" : "Pantalla completa", full, () -> {
+            Ui.setFullscreen(this, !full);
+            personalize();
+        }).stays());
         dock.tiles("Personalizar", tiles);
     }
 
@@ -1934,6 +1993,446 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         if (noteId == null) showHome();
     }
 
+    // ---- Importar y crear ----
+
+    private void importMenu() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(dock.letter("PDF"), "PDF → cuaderno", false, () -> pickImport("application/pdf")));
+        if (Native.available()) {
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.DOC), "Word → documento", false, this::pickDocx));
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHEET), "Excel → hoja de cálculo", false, () -> pickImport(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel",
+                    "application/vnd.oasis.opendocument.spreadsheet", "text/csv", "text/comma-separated-values")));
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDES), "PowerPoint → cuaderno", false, () -> pickImport(
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation")));
+        }
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.CUBE), "Modelo 3D (STL, OBJ)", false, () -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+            startActivityForResult(i, PICK_MODEL);
+        }));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Cualquier archivo", false, () -> pickImport("*/*")));
+        dock.tiles("Importar", tiles);
+    }
+
+    private void pickImport(String... types) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(types.length == 1 ? types[0] : "*/*");
+        if (types.length > 1) i.putExtra(Intent.EXTRA_MIME_TYPES, types);
+        startActivityForResult(i, PICK_IMPORT);
+    }
+
+    private String displayName(android.net.Uri uri) {
+        try (android.database.Cursor c = getContentResolver().query(uri, new String[] {android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) return c.getString(0);
+        } catch (RuntimeException ignored) {
+        }
+        return "Archivo";
+    }
+
+    /** Según la extensión: PDF y PowerPoint a cuaderno, Word a nota, Excel a hoja de cálculo, STL/OBJ al visor. */
+    private void importFile(android.net.Uri uri) {
+        String name = displayName(uri);
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        String type = getContentResolver().getType(uri);
+        String base = name.contains(".") ? name.substring(0, name.lastIndexOf('.')) : name;
+        if (lower.endsWith(".docx") || (type != null && type.contains("wordprocessing"))) {
+            importDocx(uri);
+        } else if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".ods") || lower.endsWith(".csv")
+                || (type != null && (type.contains("spreadsheet") || type.contains("excel") || type.contains("csv")))) {
+            importSheet(uri, name, base);
+        } else if (lower.endsWith(".stl") || lower.endsWith(".obj")) {
+            startActivity(new Intent(this, ModelActivity.class).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        } else if (lower.endsWith(".pdf") || lower.endsWith(".pptx") || "application/pdf".equals(type) || (type != null && type.contains("presentation"))) {
+            boolean deck = lower.endsWith(".pptx") || (type != null && type.contains("presentation"));
+            Ink.Notebook n = store.createNotebook(base, Ui.COVERS[store.notebooks().size() % Ui.COVERS.length]);
+            if (folderView != null) {
+                n.folder = folderView;
+                store.saveNotebooks();
+            }
+            sync.sendNotebook(n);
+            Intent i = new Intent(this, PageActivity.class).putExtra("notebook", n.id).setData(uri)
+                    .putExtra("importKind", deck ? "pptx" : "pdf").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(i);
+        } else {
+            Ui.toast(this, "Ese archivo no se puede abrir aquí: usa PDF, Word, Excel, PowerPoint, STL u OBJ");
+        }
+    }
+
+    private void importSheet(android.net.Uri uri, String name, String title) {
+        Ui.toast(this, "Abriendo la hoja de cálculo…");
+        new Thread(() -> {
+            String id = null;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[1 << 16];
+                for (int k; (k = in.read(buf)) > 0; ) bytes.write(buf, 0, k);
+                long h = Native.gridOpen(name, bytes.toByteArray());
+                if (h != 0) {
+                    byte[] xlsx = Native.gridSave(h, "xlsx");
+                    Native.gridClose(h);
+                    if (xlsx != null) {
+                        id = Ink.newId();
+                        SheetFiles.save(this, id, title, xlsx);
+                        if (folderView != null) {
+                            SheetFiles.Doc d = SheetFiles.get(this, id);
+                            d.folder = folderView;
+                            SheetFiles.update(this, d);
+                        }
+                    }
+                }
+            } catch (java.io.IOException | RuntimeException | OutOfMemoryError e) {
+                android.util.Log.w("SyncTablet", "importar hoja", e);
+            }
+            String made = id;
+            runOnUiThread(() -> {
+                if (made == null) Ui.toast(this, "No se pudo leer esa hoja de cálculo");
+                else openSheet(made);
+            });
+        }, "hoja").start();
+    }
+
+    private void openSheet(String id) {
+        flushSave();
+        startActivity(new Intent(this, GridActivity.class).putExtra("id", id));
+    }
+
+    private void createMenu() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Cuaderno", false, this::askNewNotebook).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.DOC), "Documento (Word)", false, this::newDocMenu).stays());
+        if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHEET), "Hoja de cálculo", false, this::newSheetMenu).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDES), "Presentación", false, () -> DeckActivity.chooseTemplate(this, dock, folderView)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Nota", false, this::newNote));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Carpeta", false, () -> askNewFolder(null)).stays());
+        dock.tiles("Crear", tiles);
+    }
+
+    private void newDocMenu() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < Templates.DOCS.length; i++) {
+            String key = Templates.DOCS[i];
+            tiles.add(new OptionDock.Tile(dock.letter(Templates.DOC_ICONS[i]), Templates.DOC_NAMES[i], false, () -> {
+                flushSave();
+                try {
+                    JSONObject n = notes.createFrom(Templates.docJson(key), "Documento");
+                    n.put("icon", Templates.doc(key)[1]);
+                    notes.edited(n);
+                    if (folderView != null) {
+                        HashMap<String, String> map = noteFolders();
+                        map.put(n.optString("id"), folderView);
+                        keepNoteFolders(map);
+                    }
+                    openNote(n.optString("id"));
+                    Tutorial.offerOnce(this, dock, "doc");
+                } catch (JSONException e) {
+                    Ui.toast(this, "No se pudo crear");
+                }
+            }));
+        }
+        dock.tiles("Documento nuevo", tiles);
+    }
+
+    private void newSheetMenu() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < Templates.SHEETS.length; i++) {
+            String key = Templates.SHEETS[i], name = Templates.SHEET_NAMES[i];
+            tiles.add(new OptionDock.Tile(dock.letter(Templates.SHEET_ICONS[i]), name, false, () -> {
+                flushSave();
+                Intent in = new Intent(this, GridActivity.class).putExtra("title", "blank".equals(key) ? "Hoja de cálculo" : name).putExtra("template", key);
+                if (folderView != null) in.putExtra("folder", folderView);
+                startActivity(in);
+            }));
+        }
+        dock.tiles("Hoja de cálculo nueva", tiles);
+    }
+
+    /** Hojas de cálculo y presentaciones de esta carpeta ("" = sueltas). */
+    private void documentsSection(String folder) {
+        ArrayList<View> views = new ArrayList<>();
+        for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(folder)) views.add(fileCard("sheet:" + d.id, IconView.SHEET, 0xFF16A34A, d.title, "Hoja de cálculo", d.updated,
+                () -> openSheet(d.id), () -> sheetMenu(d)));
+        for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(folder)) views.add(fileCard("deck:" + d.id, IconView.SLIDES, d.accent, d.title,
+                d.slides == 1 ? "1 diapositiva" : d.slides + " diapositivas", d.updated,
+                () -> startActivity(new Intent(this, DeckActivity.class).putExtra("id", d.id)), () -> deckMenu(d)));
+        if (views.isEmpty()) return;
+        sectionTitle("Hojas de cálculo y presentaciones");
+        grid(views);
+    }
+
+    private View fileCard(String key, int glyph, int color, String title, String kind, long updated, Runnable open, Runnable menu) {
+        LinearLayout c = cardBox();
+        FrameLayout art = new FrameLayout(this);
+        art.setBackgroundColor(color & 0xFFFFFF | 0x22000000);
+        IconView ic = icon(glyph, color, "");
+        ic.setScaleX(2.2f);
+        ic.setScaleY(2.2f);
+        ic.setClickable(false);
+        art.addView(ic, new FrameLayout.LayoutParams(t.dp(60), t.dp(60), Gravity.CENTER));
+        View band = new View(this);
+        band.setBackgroundColor(color);
+        art.addView(band, new FrameLayout.LayoutParams(-1, t.dp(4), Gravity.TOP));
+        c.addView(art, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setPadding(t.dp(12), t.dp(10), t.dp(12), t.dp(12));
+        TextView name = text(title, 15, t.text, t.medium);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        info.addView(name);
+        String sub = kind + (updated > 0 ? " · " + DateUtils.getRelativeTimeSpanString(updated, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS) : "");
+        TextView s = text(sub, 12, t.faint, t.regular);
+        s.setSingleLine(true);
+        s.setEllipsize(TextUtils.TruncateAt.END);
+        s.setPadding(0, t.dp(4), 0, 0);
+        info.addView(s);
+        c.addView(info);
+        if (selecting) {
+            boolean on = picked.contains(key);
+            FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(t.dp(30), t.dp(30), Gravity.TOP | Gravity.END);
+            mlp.setMargins(0, t.dp(8), t.dp(8), 0);
+            art.addView(checkMark(on), mlp);
+            c.setOnClickListener(v -> togglePick(key));
+        } else {
+            c.setOnClickListener(v -> open.run());
+            c.setOnLongClickListener(v -> { menu.run(); return true; });
+        }
+        c.setContentDescription(kind + " " + title);
+        return c;
+    }
+
+    private void sheetMenu(SheetFiles.Doc d) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHEET), "Abrir", false, () -> openSheet(d.id)));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Mover a carpeta", false, () -> {
+            picked.clear();
+            selecting = true;
+            picked.add("sheet:" + d.id);
+            movePicked();
+        }).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Borrar «" + d.title + "»?", "No se puede deshacer.", "Borrar", () -> {
+            SheetFiles.delete(this, d.id);
+            showHome();
+        })).stays());
+        dock.tiles(d.title, tiles);
+    }
+
+    private void deckMenu(DeckActivity.Info d) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDES), "Abrir", false, () -> startActivity(new Intent(this, DeckActivity.class).putExtra("id", d.id))));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PLAY), "Presentar", false, () -> startActivity(new Intent(this, DeckActivity.class).putExtra("id", d.id).putExtra("present", true))));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Mover a carpeta", false, () -> {
+            picked.clear();
+            selecting = true;
+            picked.add("deck:" + d.id);
+            movePicked();
+        }).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Borrar «" + d.title + "»?", "No se puede deshacer.", "Borrar", () -> {
+            DeckActivity.delete(this, d.id);
+            showHome();
+        })).stays());
+        dock.tiles(d.title, tiles);
+    }
+
+    // ---- Seleccionar varios ----
+
+    /** Botones bajo el título de Inicio: importar archivos y seleccionar varios. */
+    private View homeActions() {
+        LinearLayout actions = row();
+        actions.setPadding(0, t.dp(14), 0, 0);
+        actions.addView(actionPill(IconView.IMPORT, "Importar PDF, Word o Excel", v -> importMenu()));
+        actions.addView(actionPill(IconView.PLUS, "Crear", v -> createMenu()));
+        actions.addView(actionPill(IconView.SELECT, selecting ? "Terminar selección" : "Seleccionar", v -> setSelecting(!selecting)));
+        actions.addView(actionPill(IconView.HELP, "Tutorial", v -> Tutorial.menu(this, dock)));
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.setClipToPadding(false);
+        hs.addView(actions);
+        return hs;
+    }
+
+    private View actionPill(int glyph, String label, View.OnClickListener click) {
+        LinearLayout p = row();
+        p.setPadding(t.dp(10), 0, t.dp(16), 0);
+        GradientDrawable bg = rounded(t.card, 22);
+        bg.setStroke(Math.max(1, t.dp(1)), t.line);
+        p.setBackground(new RippleDrawable(ColorStateList.valueOf(t.hover | 0x22000000), bg, null));
+        p.addView(icon(glyph, t.icon, ""), new LinearLayout.LayoutParams(t.dp(30), t.dp(30)));
+        TextView tv = text(label, 14, t.muted, t.medium);
+        tv.setPadding(t.dp(6), 0, 0, 0);
+        p.addView(tv);
+        p.setOnClickListener(click);
+        p.setContentDescription(label);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, t.dp(44));
+        lp.rightMargin = t.dp(10);
+        p.setLayoutParams(lp);
+        return p;
+    }
+
+    private View checkMark(boolean on) {
+        View v = new View(this) {
+            final android.graphics.Paint pt = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(Canvas c) {
+                float w = getWidth(), r = w / 2 - t.dp(2);
+                pt.setStyle(android.graphics.Paint.Style.FILL);
+                pt.setColor(on ? t.accent : (t.dark ? 0xCC191919 : 0xCCFFFFFF));
+                c.drawCircle(w / 2, w / 2, r, pt);
+                pt.setStyle(android.graphics.Paint.Style.STROKE);
+                pt.setStrokeWidth(t.px(2));
+                pt.setColor(on ? t.accent : t.faint);
+                c.drawCircle(w / 2, w / 2, r, pt);
+                if (on) {
+                    pt.setColor(0xFFFFFFFF);
+                    pt.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                    c.drawLine(w * 0.3f, w * 0.52f, w * 0.44f, w * 0.66f, pt);
+                    c.drawLine(w * 0.44f, w * 0.66f, w * 0.71f, w * 0.36f, pt);
+                }
+            }
+        };
+        v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        return v;
+    }
+
+    private LinearLayout buildPickBar() {
+        LinearLayout b = row();
+        b.setPadding(t.dp(18), 0, t.dp(8), 0);
+        b.setBackground(rounded(t.dark ? 0xF2262626 : 0xF7FFFFFF, 30));
+        b.setElevation(t.px(12));
+        b.setClickable(true);
+        pickCount = text("", 15, t.text, t.medium);
+        b.addView(pickCount, new LinearLayout.LayoutParams(-2, -2));
+        View gap = new View(this);
+        b.addView(gap, new LinearLayout.LayoutParams(t.dp(16), 1));
+        b.addView(pill("Todo", v -> pickAll()));
+        b.addView(pill("Mover", v -> movePicked()));
+        TextView del = pill("Borrar", v -> deletePicked());
+        del.setTextColor(t.error);
+        b.addView(del);
+        b.addView(pill("Listo", v -> setSelecting(false)));
+        b.setVisibility(View.GONE);
+        return b;
+    }
+
+    private void setSelecting(boolean on) {
+        if (selecting == on) return;
+        selecting = on;
+        picked.clear();
+        if (on) {
+            pickBar.setVisibility(View.VISIBLE);
+            pickBar.setAlpha(0);
+            pickBar.setTranslationY(t.dp(40));
+            pickBar.animate().alpha(1).translationY(0).setDuration(260).setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0.9f, 0.2f, 1f)).start();
+        } else {
+            pickBar.animate().alpha(0).translationY(t.dp(40)).setDuration(200).withEndAction(() -> pickBar.setVisibility(View.GONE)).start();
+        }
+        paintPickBar();
+        if (noteId == null) showHome();
+    }
+
+    private void togglePick(String key) {
+        if (!picked.remove(key)) picked.add(key);
+        paintPickBar();
+        int y = scroller.getScrollY();
+        showHome();
+        scroller.post(() -> scroller.scrollTo(0, y));
+    }
+
+    private void pickAll() {
+        String here = folderView == null ? "" : folderView;
+        for (Ink.Notebook n : notebooksIn(here)) picked.add("nb:" + n.id);
+        for (JSONObject n : folderView == null ? sortedNotes() : notesIn(here)) picked.add("note:" + n.optString("id"));
+        for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(here)) picked.add("sheet:" + d.id);
+        for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(here)) picked.add("deck:" + d.id);
+        paintPickBar();
+        int y = scroller.getScrollY();
+        showHome();
+        scroller.post(() -> scroller.scrollTo(0, y));
+    }
+
+    private void paintPickBar() {
+        int n = picked.size();
+        pickCount.setText(n == 0 ? "Toca para elegir" : n == 1 ? "1 elegido" : n + " elegidos");
+    }
+
+    private void movePicked() {
+        if (picked.isEmpty()) {
+            Ui.toast(this, "Elige primero cuadernos o notas");
+            return;
+        }
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (String folder : folders()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), folder, false, () -> movePickedTo(folder)));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PLUS), "Nueva carpeta", false, () -> {
+            EditText e = field("");
+            e.setHint("Universidad, Proyectos…");
+            ask("Carpeta nueva", e, "Crear y mover", () -> {
+                String name = e.getText().toString().trim();
+                if (name.isEmpty()) return;
+                java.util.TreeSet<String> all = folders();
+                all.add(name);
+                keepFolders(all);
+                movePickedTo(name);
+            });
+        }).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.HOME), "Sin carpeta", false, () -> movePickedTo("")));
+        dock.tiles(picked.size() == 1 ? "Mover 1 elemento a" : "Mover " + picked.size() + " elementos a", tiles);
+    }
+
+    private void movePickedTo(String folder) {
+        HashMap<String, String> map = noteFolders();
+        for (String key : picked) {
+            if (key.startsWith("nb:")) {
+                Ink.Notebook n = store.notebook(key.substring(3));
+                if (n == null) continue;
+                n.folder = folder;
+                sync.sendNotebook(n);
+            } else if (key.startsWith("note:")) {
+                if (folder.isEmpty()) map.remove(key.substring(5));
+                else map.put(key.substring(5), folder);
+            } else if (key.startsWith("sheet:")) {
+                SheetFiles.Doc d = SheetFiles.get(this, key.substring(6));
+                if (d != null) {
+                    d.folder = folder;
+                    SheetFiles.update(this, d);
+                }
+            } else if (key.startsWith("deck:")) {
+                DeckActivity.setFolder(this, key.substring(5), folder);
+            }
+        }
+        store.saveNotebooks();
+        keepNoteFolders(map);
+        int n = picked.size();
+        Ui.toast(this, (n == 1 ? "1 elemento movido" : n + " elementos movidos") + (folder.isEmpty() ? " a Inicio" : " a " + folder));
+        setSelecting(false);
+        renderSidebar();
+        showHome();
+    }
+
+    private void deletePicked() {
+        if (picked.isEmpty()) {
+            Ui.toast(this, "Elige primero cuadernos o notas");
+            return;
+        }
+        int n = picked.size();
+        dock.confirm(n == 1 ? "¿Borrar 1 elemento?" : "¿Borrar " + n + " elementos?", "Se borran de la tablet y del PC. No se puede deshacer.", "Borrar", () -> {
+            for (String key : new ArrayList<>(picked)) {
+                if (key.startsWith("nb:")) {
+                    Ink.Notebook nb = store.notebook(key.substring(3));
+                    if (nb == null) continue;
+                    store.deleteNotebook(nb);
+                    Looks.remove(this, "nb:" + nb.id);
+                    sync.send("{\"t\":\"delete_notebook\",\"notebook\":\"" + nb.id + "\"}");
+                } else if (key.startsWith("note:")) {
+                    notes.delete(key.substring(5));
+                } else if (key.startsWith("sheet:")) {
+                    SheetFiles.delete(this, key.substring(6));
+                } else if (key.startsWith("deck:")) {
+                    DeckActivity.delete(this, key.substring(5));
+                }
+            }
+            setSelecting(false);
+            renderSidebar();
+            showHome();
+        });
+    }
+
     private void confirmDelete(Ink.Notebook n) {
         dock.confirm("¿Borrar «" + n.title + "»?", "Se borra de la tablet y del PC. No se puede deshacer.", "Borrar", () -> {
             store.deleteNotebook(n);
@@ -1970,5 +2469,11 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             }, "pair").start();
         }));
         dock.focus(e);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus) Ui.applyFullscreen(this);
     }
 }

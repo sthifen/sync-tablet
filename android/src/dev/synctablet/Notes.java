@@ -158,6 +158,19 @@ final class Notes {
         changed(n.optString("id"));
     }
 
+    /** Recuperar de una copia: la nota si aquí no existe. */
+    boolean adopt(JSONObject n) {
+        if (note(n.optString("id")) != null) return false;
+        try {
+            n.put("dirty", true);
+            n.remove("synced");
+        } catch (JSONException ignored) {
+        }
+        notes.add(n);
+        changed(n.optString("id"));
+        return true;
+    }
+
     void delete(String id) {
         JSONObject n = note(id);
         if (n == null) return;

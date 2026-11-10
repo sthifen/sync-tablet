@@ -152,6 +152,31 @@ final class Store {
         return b.toString();
     }
 
+    /** Recuperar de una copia: un cuaderno que aquí no existe, con sus páginas (JSON). */
+    synchronized boolean adopt(JSONObject nb, Map<String, String> pageJson) {
+        try {
+            Ink.Notebook n = Ink.Notebook.fromJson(nb);
+            if (notebook(n.id) != null) return false;
+            for (String id : n.pages) {
+                String json = pageJson.get(id);
+                if (json == null) continue;
+                Ink.Page p = Ink.Page.fromJson(json);
+                pages.put(p.id, p);
+                savePage(p);
+            }
+            notebooks.add(n);
+            saveNotebooks();
+            return true;
+        } catch (JSONException e) {
+            android.util.Log.w("SyncTablet", "cuaderno de la copia", e);
+            return false;
+        }
+    }
+
+    File assetsDir() {
+        return assetsDir;
+    }
+
     synchronized Map<String, Long> versions() {
         return new HashMap<>(versions);
     }

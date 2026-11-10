@@ -49,6 +49,20 @@ pub enum Background {
     Music,
     /// Lista de tareas con casillas.
     Todo,
+    /// Partida a la mitad: dos columnas de rayas.
+    Half,
+    HalfGrid,
+    /// Partida en dos, arriba y abajo.
+    HalfH,
+    /// Milimetrada.
+    Mm,
+    Iso,
+    Engineering,
+    Hex,
+    Wide,
+    Week,
+    Story,
+    Handwriting,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -63,6 +77,10 @@ pub enum Tool {
     Highlighter,
     /// Cinta para tapar (respuestas, apuntes): en la tablet se destapa con un toque.
     Tape,
+    /// Grosor parejo, sin presión.
+    Marker,
+    /// Estilográfica: engorda al apretar.
+    Fountain,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

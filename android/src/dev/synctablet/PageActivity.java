@@ -74,10 +74,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private static final int[] HL_COLORS = {0xFFFFD60A, 0xFF4ADE80, 0xFFF472B6, 0xFF60A5FA};
     private static final float[] PEN_WIDTHS = {2f, 3.5f, 6f};
     private static final float[] HL_WIDTHS = {16f, 24f, 36f};
-    private static final String[] PEN_KINDS = {Ink.PEN, Ink.PENCIL, Ink.BRUSH, Ink.CALLIGRAPHY};
-    private static final String[] PEN_NAMES = {"Pluma", "Lápiz", "Pincel", "Caligrafía"};
-    private static final String[] BACKGROUNDS = {Ink.LINES, Ink.GRID, Ink.DOTS, Ink.CORNELL, Ink.TODO, Ink.MUSIC, Ink.PLAIN};
-    private static final String[] BACKGROUND_NAMES = {"Rayas", "Cuadros", "Puntos", "Cornell (apuntes)", "Lista de tareas", "Pentagrama", "Lisa"};
+    private static final String[] PEN_KINDS = {Ink.PEN, Ink.PENCIL, Ink.BRUSH, Ink.CALLIGRAPHY, Ink.MARKER, Ink.FOUNTAIN};
+    private static final String[] PEN_NAMES = {"Pluma", "Lápiz", "Pincel", "Caligrafía", "Marcador", "Estilográfica"};
+    private static final String[] BACKGROUNDS = {Ink.LINES, Ink.GRID, Ink.DOTS, Ink.HALF, Ink.HALF_GRID, Ink.HALF_H, Ink.CORNELL, Ink.WIDE, Ink.MM,
+            Ink.ENGINEERING, Ink.ISO, Ink.HEX, Ink.HANDWRITING, Ink.WEEK, Ink.STORY, Ink.TODO, Ink.MUSIC, Ink.PLAIN};
+    private static final String[] BACKGROUND_NAMES = {"Rayas", "Cuadros", "Puntos", "Partida a la mitad", "Cuadros partida", "Mitad arriba y abajo",
+            "Cornell (apuntes)", "Rayas anchas", "Milimetrada", "Ingeniería", "Isométrica", "Hexagonal", "Caligrafía", "Semana",
+            "Storyboard", "Lista de tareas", "Pentagrama", "Lisa"};
     private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4, PICK_PPTX = 5, EDIT_IMAGE = 6;
     private static final String PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     /** Acciones para el botón del S Pen (clic y doble clic con el lápiz en el aire). */
@@ -225,6 +228,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         Object history = getLastNonConfigurationInstance();
         if (history != null) ink.restoreHistory(history);
         refreshTools();
+        // Abierto desde Inicio con un archivo para convertir en cuaderno.
+        Uri imported = getIntent().getData();
+        if (saved == null && imported != null) {
+            if ("pptx".equals(getIntent().getStringExtra("importKind"))) importDeck(imported);
+            else importPdf(imported);
+        }
+        Tutorial.offerOnce(this, dock, "pen");
     }
 
     private void loadPages(int show) {
@@ -715,7 +725,154 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 prefs.edit().putString("penKind", kind).apply();
             }));
         }
+        // Los lápices del usuario: trazo, color y grosor guardados con un nombre.
+        org.json.JSONArray mine = myPens();
+        for (int i = 0; i < mine.length(); i++) {
+            org.json.JSONObject o = mine.optJSONObject(i);
+            if (o == null) continue;
+            int at = i;
+            String kind = o.optString("kind", Ink.PEN);
+            int color = o.optInt("color", ink.penColor);
+            float width = (float) o.optDouble("width", ink.penWidth);
+            boolean on = kind.equals(ink.penKind) && color == ink.penColor && width == ink.penWidth;
+            tiles.add(new OptionDock.Tile(new PenSample(this, kind, color, width), "★ " + o.optString("name", "Mi lápiz"), on, () -> {
+                ink.penKind = kind;
+                ink.penColor = color;
+                ink.penWidth = width;
+                if (ink.tool != InkView.PEN) setTool(InkView.PEN);
+                prefs.edit().putString("penKind", kind).putInt("penColor", color).putFloat("penWidth", width).apply();
+                refreshTools();
+            }));
+        }
+        tiles.add(new OptionDock.Tile(glyph(IconView.PLUS), "Crear lápiz", false, () -> penEditor(-1)).stays());
+        if (mine.length() > 0) tiles.add(new OptionDock.Tile(glyph(IconView.SLIDERS), "Editar mis lápices", false, this::editPens).stays());
         dock.tiles("Tipo de lápiz", tiles);
+    }
+
+    private org.json.JSONArray myPens() {
+        try {
+            return new org.json.JSONArray(prefs.getString("myPens", "[]"));
+        } catch (org.json.JSONException e) {
+            return new org.json.JSONArray();
+        }
+    }
+
+    private void editPens() {
+        org.json.JSONArray mine = myPens();
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < mine.length(); i++) {
+            org.json.JSONObject o = mine.optJSONObject(i);
+            int at = i;
+            tiles.add(new OptionDock.Tile(new PenSample(this, o.optString("kind"), o.optInt("color"), (float) o.optDouble("width", 3.5)), o.optString("name"), false, () -> penEditor(at)).stays());
+        }
+        dock.tiles("Toca uno para cambiarlo", tiles);
+    }
+
+    /** Crear (at = -1) o cambiar un lápiz propio: base, grosor, color, opacidad y nombre, con muestra en vivo. */
+    private void penEditor(int at) {
+        org.json.JSONArray mine = myPens();
+        org.json.JSONObject start = at >= 0 ? mine.optJSONObject(at) : null;
+        String[] kind = {start != null ? start.optString("kind", Ink.PEN) : ink.penKind};
+        int[] color = {start != null ? start.optInt("color") : ink.penColor};
+        float[] width = {start != null ? (float) start.optDouble("width", 3.5) : ink.penWidth};
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(Ui.dp(this, 20), 0, Ui.dp(this, 20), Ui.dp(this, 8));
+        android.widget.EditText name = dock.field(start != null ? start.optString("name") : "", "Nombre: Repaso azul, Firma, Títulos…");
+        box.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        FrameLayout sampleBox = new FrameLayout(this);
+        box.addView(sampleBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 110)));
+        Runnable[] redraw = new Runnable[1];
+        redraw[0] = () -> {
+            sampleBox.removeAllViews();
+            PenSample sample = new PenSample(this, kind[0], color[0], width[0]);
+            sampleBox.addView(sample, new FrameLayout.LayoutParams(Ui.dp(this, 110), Ui.dp(this, 110), Gravity.CENTER));
+        };
+        redraw[0].run();
+        LinearLayout kinds = new LinearLayout(this);
+        android.widget.HorizontalScrollView ks = new android.widget.HorizontalScrollView(this);
+        ks.setHorizontalScrollBarEnabled(false);
+        ks.addView(kinds);
+        ArrayList<TextView> chips = new ArrayList<>();
+        for (int i = 0; i < PEN_KINDS.length; i++) {
+            String k = PEN_KINDS[i];
+            TextView c = dock.chip(PEN_NAMES[i], false);
+            dock.setChip(c, k.equals(kind[0]));
+            c.setOnClickListener(v -> {
+                kind[0] = k;
+                for (int j = 0; j < chips.size(); j++) dock.setChip(chips.get(j), PEN_KINDS[j].equals(k));
+                redraw[0].run();
+            });
+            chips.add(c);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 42));
+            lp.rightMargin = Ui.dp(this, 6);
+            kinds.addView(c, lp);
+        }
+        box.addView(ks);
+        TextView wl = dock.message("Grosor");
+        box.addView(wl);
+        SeekBar wb = new SeekBar(this);
+        wb.setMax(200);
+        wb.setProgress(Math.round((width[0] - 0.5f) * 10));
+        box.addView(wb);
+        TextView ol = dock.message("Opacidad");
+        box.addView(ol);
+        SeekBar ob = new SeekBar(this);
+        ob.setMax(100);
+        ob.setProgress(Math.round((color[0] >>> 24) * 100 / 255f));
+        box.addView(ob);
+        LinearLayout swatches = new LinearLayout(this);
+        int[] palette = {0xFF111827, 0xFF2563EB, 0xFFDC2626, 0xFF16A34A, 0xFF7C3AED, 0xFFEA580C, 0xFF0EA5E9, 0xFFDB2777, 0xFFCA8A04, 0xFF6B7280, customColor};
+        for (int c : palette) {
+            View sw = new View(this);
+            sw.setBackground(Ui.round(c, Ui.dp(this, 15)));
+            sw.setOnClickListener(v -> {
+                color[0] = (color[0] & 0xFF000000) | (c & 0xFFFFFF);
+                redraw[0].run();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(this, 30), Ui.dp(this, 30));
+            lp.setMargins(Ui.dp(this, 4), Ui.dp(this, 8), Ui.dp(this, 4), Ui.dp(this, 4));
+            swatches.addView(sw, lp);
+        }
+        android.widget.HorizontalScrollView ss = new android.widget.HorizontalScrollView(this);
+        ss.setHorizontalScrollBarEnabled(false);
+        ss.addView(swatches);
+        box.addView(ss);
+        SeekBar.OnSeekBarChangeListener live = new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int v, boolean user) {
+                if (s == wb) width[0] = 0.5f + v / 10f;
+                else color[0] = (Math.max(25, Math.round(v * 2.55f)) << 24) | (color[0] & 0xFFFFFF);
+                redraw[0].run();
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        };
+        wb.setOnSeekBarChangeListener(live);
+        ob.setOnSeekBarChangeListener(live);
+        ArrayList<OptionDock.Action> actions = new ArrayList<>();
+        if (at >= 0) actions.add(new OptionDock.Action("Borrar", false, () -> {
+            mine.remove(at);
+            prefs.edit().putString("myPens", mine.toString()).apply();
+        }));
+        else actions.add(new OptionDock.Action("Cancelar", false, null));
+        actions.add(new OptionDock.Action("Guardar y usar", true, () -> {
+            try {
+                String n = name.getText().toString().trim();
+                org.json.JSONObject o = new org.json.JSONObject().put("name", n.isEmpty() ? "Mi lápiz " + (mine.length() + 1) : n)
+                        .put("kind", kind[0]).put("color", color[0]).put("width", width[0]);
+                if (at >= 0) mine.put(at, o);
+                else mine.put(o);
+                prefs.edit().putString("myPens", mine.toString()).putString("penKind", kind[0]).putInt("penColor", color[0]).putFloat("penWidth", width[0]).apply();
+                ink.penKind = kind[0];
+                ink.penColor = color[0];
+                ink.penWidth = width[0];
+                if (ink.tool != InkView.PEN) setTool(InkView.PEN);
+                refreshTools();
+                Ui.toast(this, "Lápiz guardado: lo tienes en «Tipo de lápiz»");
+            } catch (org.json.JSONException ignored) {
+            }
+        }));
+        dock.show(at >= 0 ? "Cambiar mi lápiz" : "Crear mi lápiz", box, actions.toArray(new OptionDock.Action[0]));
     }
 
     private View glyph(int icon) {
@@ -728,10 +885,14 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         private final PageRenderer renderer;
 
         PenSample(android.content.Context c, String kind, int color) {
+            this(c, kind, color, 5);
+        }
+
+        PenSample(android.content.Context c, String kind, int color, float width) {
             super(c);
             renderer = new PageRenderer(c);
             renderer.setDark(paperDark);
-            stroke = new Ink.Stroke("muestra", kind, color, 5);
+            stroke = new Ink.Stroke("muestra", kind, color, width * 1.4f);
             for (int i = 0; i <= 40; i++) {
                 float t = i / 40f;
                 stroke.add(8 + 84 * t, 50 - 30 * (float) Math.sin(t * Math.PI * 2), 0.25f + 0.75f * (float) Math.sin(t * Math.PI));
@@ -1284,6 +1445,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         tiles.add(new OptionDock.Tile(glyph(IconView.PAGE), "Plantilla", false, this::chooseTemplate).stays());
         tiles.add(new OptionDock.Tile(glyph(IconView.MOON), paperDark ? "Hoja clara" : "Hoja oscura", paperDark, this::togglePaper));
         tiles.add(new OptionDock.Tile(glyph(IconView.PEN), "Botones del lápiz", false, this::penButtons).stays());
+        boolean full = Ui.fullscreen(this);
+        tiles.add(new OptionDock.Tile(glyph(IconView.EXPAND), full ? "Salir de pantalla completa" : "Pantalla completa", full, () -> Ui.setFullscreen(this, !full)));
         if (text != null) tiles.add(new OptionDock.Tile(glyph(IconView.COPY), "Copiar el texto", false, () -> copyText(text)));
         tiles.add(new OptionDock.Tile(glyph(IconView.TRASH), "Borrar esta página", false, () -> confirmDeletePage(index, null)).stays());
         dock.tiles("Página " + (index + 1) + " de " + notebook.pages.size(), tiles);
@@ -1418,8 +1581,30 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         if (Native.available()) tiles.add(new OptionDock.Tile(glyph(IconView.SLIDES), "PowerPoint", false, () -> pick(PPTX, PICK_PPTX)));
         tiles.add(new OptionDock.Tile(glyph(IconView.TABLE), "Hoja de cálculo", false, this::askTableSize).stays());
         tiles.add(new OptionDock.Tile(glyph(IconView.GRID_DOC), "Texto o Markdown", false, () -> pick("text/*", PICK_TEXT)));
+        tiles.add(new OptionDock.Tile(glyph(IconView.STICKER), "Stickers", false, () -> Stickers.choose(this, dock, 0, this::insertSticker)).stays());
         tiles.add(new OptionDock.Tile(glyph(IconView.PASTE), "Pegar", false, this::paste));
         dock.tiles("Insertar", tiles);
+    }
+
+    /** El sticker como imagen PNG (con transparencia) en la página visible. */
+    private void insertSticker(String s) {
+        new Thread(() -> {
+            try {
+                Bitmap b = Stickers.render(s, 360);
+                ByteArrayOutputStream png = new ByteArrayOutputStream();
+                b.compress(Bitmap.CompressFormat.PNG, 100, png);
+                String id = store.putAssetBytes(png.toByteArray());
+                int w = b.getWidth(), h = b.getHeight();
+                float width = s.startsWith("badge:") ? 90f * w / h : 150;
+                main.post(() -> {
+                    ink.insertImage(id, w, h, width);
+                    sync.sendAsset(id);
+                    Tutorial.offerOnce(this, dock, "stickers");
+                });
+            } catch (IOException | RuntimeException e) {
+                main.post(() -> Ui.toast(this, "No se pudo poner el sticker"));
+            }
+        }).start();
     }
 
     private void pick(String type, int request) {
@@ -1664,7 +1849,13 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     /** Cada imagen, como página nueva al final y con su texto. */
     private void addImportedPages(ArrayList<String> assets, ArrayList<String> texts, String one, String many) {
-        int first = notebook.pages.size();
+        // Un cuaderno recién creado para el archivo: su hoja en blanco sobra.
+        String blank = null;
+        if (notebook.pages.size() == 1 && !assets.isEmpty()) {
+            Ink.Page only = store.page(notebook.pages.get(0));
+            if (only != null && only.strokes.isEmpty() && only.items.isEmpty() && only.bgAsset == null) blank = only.id;
+        }
+        int first = blank != null ? 0 : notebook.pages.size();
         for (int i = 0; i < assets.size(); i++) {
             String a = assets.get(i);
             Ink.Page p = store.addPage(notebook);
@@ -1674,6 +1865,11 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             store.savePage(p);
             sync.sendAsset(a);
             sync.sendPage(p);
+        }
+        String gone = blank;
+        if (gone != null && store.deletePage(notebook, gone)) {
+            dirty.removeIf(p -> p.id.equals(gone));
+            sync.send("{\"t\":\"delete_page\",\"page\":\"" + blank + "\"}");
         }
         sync.sendNotebook(notebook);
         loadPages(first);
@@ -2034,5 +2230,11 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     public void onStatus(boolean connected, String where) {
         dot.setBackground(Ui.round(connected ? 0xFF10B981 : fg & 0xFFFFFF | 0x55000000, Ui.dp(this, 5)));
         dot.setContentDescription(connected ? "Conectado al PC (" + where + ")" : "Sin conexión al PC");
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus) Ui.applyFullscreen(this);
     }
 }

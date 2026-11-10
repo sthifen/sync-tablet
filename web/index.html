@@ -1288,6 +1288,8 @@ a { color: inherit; }
     switch (tool) {
       case "pencil": return w * 0.7 * (0.5 + 0.5 * p);
       case "brush": return w * (0.1 + 1.7 * p);
+      case "marker": return w;
+      case "fountain": return w * (0.55 + 0.75 * p * p);
       case "calligraphy": return w * (0.25 + 0.95 * Math.abs(Math.sin(Math.atan2(dy, dx) - Math.PI / 4))) * (0.6 + 0.4 * p);
       case "highlighter": case "tape": return w;
       default: return w * (0.35 + 0.65 * p);
@@ -1304,7 +1306,17 @@ a { color: inherit; }
     if (bg === "grid") for (x = 40; x < W; x += 40) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
     if (bg === "music") for (top = 120; top + 48 < H - 40; top += 110) for (k = 0; k < 5; k++) hline(top + 12 * k, 60, W - 60);
     if (bg === "todo") for (y = 100; y < H - 40; y += 64) { hline(y, 90, W - 40); ctx.roundRect(40, y - 32, 26, 26, 5); }
+    if (bg === "half") for (y = 80; y < H; y += 40) { hline(y, 30, W / 2 - 20); hline(y, W / 2 + 20, W - 30); }
+    if (bg === "halfh" || bg === "week" || bg === "story" || bg === "handwriting") for (y = 80; y < H; y += 40) if (bg !== "halfh" || Math.abs(y - H / 2) > 30) hline(y);
+    if (bg === "wide") for (y = 100; y < H; y += 56) hline(y);
+    var gstep = { halfgrid: 40, mm: 10, engineering: 25, iso: 40, hex: 40 }[bg];
+    if (gstep) { for (y = gstep; y < H; y += gstep) hline(y); for (x = gstep; x < W; x += gstep) { ctx.moveTo(x, 0); ctx.lineTo(x, H); } }
     ctx.stroke();
+    if (bg === "half" || bg === "halfgrid" || bg === "halfh") {
+      ctx.strokeStyle = "#E28B8B"; ctx.lineWidth = 2.5; ctx.beginPath();
+      if (bg === "halfh") hline(H / 2, 30, W - 30); else { ctx.moveTo(W / 2, 40); ctx.lineTo(W / 2, H - 40); }
+      ctx.stroke();
+    }
     if (bg === "dots") {
       ctx.fillStyle = "#B8C4D6";
       for (y = 40; y < H; y += 40) for (x = 40; x < W; x += 40) { ctx.beginPath(); ctx.arc(x, y, 2, 0, 2 * Math.PI); ctx.fill(); }

@@ -9,7 +9,9 @@
 # La librería nativa (native/) necesita rustup, cargo-ndk y el NDK; con
 # --no-native, o si faltan, la app sale sin ella y usa lo que trae Android.
 #
-# Uso:  android/build-apk.sh [--install] [--no-native]
+# Uso:  android/build-apk.sh [--install] [--no-native] [--prueba]
+#   --prueba: otra app (dev.synctablet.prueba) firmada con la clave de depuración,
+#   para probar al lado de la de verdad sin tocar sus apuntes.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
@@ -27,6 +29,11 @@ BT="$SDK/build-tools/$BT_VER"
 ANDROID_JAR="$SDK/platforms/$PLATFORM/android.jar"
 OUT="$HERE/build"
 APK="$HERE/synctablet.apk"
+PRUEBA=()
+if [[ " $* " == *" --prueba "* ]]; then
+  APK="$HERE/synctablet-prueba.apk"
+  PRUEBA=(--rename-manifest-package dev.synctablet.prueba)
+fi
 
 fetch() { # fetch <zip> <destino>
   local tmp; tmp="$(mktemp -d)"
@@ -49,7 +56,7 @@ echo "→ recursos"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$ANDROID_JAR" \
   --manifest "$HERE/AndroidManifest.xml" \
   --java "$OUT/gen" --min-sdk-version $MIN_SDK --target-sdk-version 36 \
-  --version-code "$VERSION_CODE" --version-name "$VERSION" "$OUT/res.zip"
+  --version-code "$VERSION_CODE" --version-name "$VERSION" "${PRUEBA[@]}" "$OUT/res.zip"
 
 echo "→ java"
 "${JAVAC[@]}" -source 17 -target 17 -nowarn -Xlint:-options -encoding UTF-8 \
@@ -87,7 +94,7 @@ fi
 # con la de depuración, pero ese APK no actualiza una instalación ya rotada.
 RELEASE_KS="${SYNCTABLET_KEYSTORE:-$HOME/.synctablet/release.jks}"
 LINEAGE="${SYNCTABLET_LINEAGE:-$HOME/.synctablet/lineage}"
-if [[ -f "$RELEASE_KS" && -f "$LINEAGE" ]]; then
+if [[ -f "$RELEASE_KS" && -f "$LINEAGE" && ${#PRUEBA[@]} -eq 0 ]]; then
   echo "  clave propia: $RELEASE_KS"
   PASS=()
   [[ -n "${SYNCTABLET_KS_PASS:-}" ]] && PASS=(--ks-pass env:SYNCTABLET_KS_PASS)
@@ -104,5 +111,6 @@ echo "✓ $APK ($(du -h "$APK" | cut -f1))"
 
 if [[ " $* " == *" --install "* ]]; then
   adb install -r "$APK"
-  adb shell am start -n dev.synctablet/.MainActivity
+  if [[ ${#PRUEBA[@]} -gt 0 ]]; then adb shell am start -n dev.synctablet.prueba/dev.synctablet.MainActivity
+  else adb shell am start -n dev.synctablet/.MainActivity; fi
 fi

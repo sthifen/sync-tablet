@@ -22,6 +22,10 @@ photocraft-compose = { git = "https://github.com/storytold/photocraft", rev = "7
 photocraft-doc = { git = "https://github.com/storytold/photocraft", rev = "7c12f647150f8e7b2e07718f7993b1fcaa57fefe" }
 photocraft-geom = { git = "https://github.com/storytold/photocraft", rev = "7c12f647150f8e7b2e07718f7993b1fcaa57fefe" }
 serde_json = "1"
+gridcraft-engine = { git = "https://github.com/storytold/gridcraft", rev = "e9addf52fe68847e6c1310fcfa5d42b7aa8b9650" }
+gridcraft-chart = { git = "https://github.com/storytold/gridcraft", rev = "e9addf52fe68847e6c1310fcfa5d42b7aa8b9650" }
+gridcraft-model = { git = "https://github.com/storytold/gridcraft", rev = "e9addf52fe68847e6c1310fcfa5d42b7aa8b9650" }
+gridcraft-functions = { git = "https://github.com/storytold/gridcraft", rev = "e9addf52fe68847e6c1310fcfa5d42b7aa8b9650" }
 wordcraft-docx = { git = "https://github.com/storytold/wordcraft", rev = "edfea68101220c9bdc4b2b0ccf4acd9612bedb6e" }
 wordcraft-formats = { git = "https://github.com/storytold/wordcraft", rev = "edfea68101220c9bdc4b2b0ccf4acd9612bedb6e" }
 pdfcraft-render = { git = "https://github.com/storytold/pdfcraft", rev = "7faa4f35cefb0dea04137ec475bdc770945c22cd" }

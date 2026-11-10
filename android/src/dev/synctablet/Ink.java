@@ -18,7 +18,9 @@ final class Ink {
     static final String PEN = "pen", PENCIL = "pencil", BRUSH = "brush", CALLIGRAPHY = "calligraphy",
             HIGHLIGHTER = "highlighter", TAPE = "tape";
     static final String PLAIN = "plain", LINES = "lines", GRID = "grid", DOTS = "dots", CORNELL = "cornell",
-            MUSIC = "music", TODO = "todo";
+            MUSIC = "music", TODO = "todo", HALF = "half", HALF_GRID = "halfgrid", HALF_H = "halfh", MM = "mm", ISO = "iso",
+            ENGINEERING = "engineering", HEX = "hex", WIDE = "wide", WEEK = "week", STORY = "story", HANDWRITING = "handwriting";
+    static final String MARKER = "marker", FOUNTAIN = "fountain";
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final char[] ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789".toCharArray();
@@ -58,7 +60,8 @@ final class Ink {
             case CALLIGRAPHY:
                 double a = Math.atan2(dy, dx) - Math.PI / 4;
                 return w * (0.25f + 0.95f * (float) Math.abs(Math.sin(a))) * (0.6f + 0.4f * p);
-            case HIGHLIGHTER: case TAPE: return w;
+            case HIGHLIGHTER: case TAPE: case MARKER: return w;
+            case FOUNTAIN: return w * (0.55f + 0.75f * p * p);
             default: return pressureWidth(w, p);
         }
     }

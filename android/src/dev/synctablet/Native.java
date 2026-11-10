@@ -12,6 +12,7 @@ final class Native {
             try {
                 System.loadLibrary("synctablet");
                 loaded = true;
+                Sheet.engine = Native::gridEvalTable;
             } catch (UnsatisfiedLinkError e) {
                 android.util.Log.w("SyncTablet", "sin librería nativa", e);
                 loaded = false;
@@ -46,6 +47,25 @@ final class Native {
     static native String docxToNote(byte[] data);
     /** Una nota como .docx; null si no se pudo. */
     static native byte[] noteToDocx(String note);
+
+    /** Hojas de cálculo con GridCraft. Asa del libro, o 0 si no se pudo. */
+    static native long gridNew();
+    /** `name` dice el formato: .xlsx, .xls, .ods o .csv. */
+    static native long gridOpen(String name, byte[] data);
+    /** Cualquier comando del motor: {"ok":…} o {"error":"…"}. */
+    static native String gridExec(long handle, String id, String params);
+    /** JSON con lo que se ve: hojas, celdas (t, a, b, i, fc, bg), anchos y altos. */
+    static native String gridView(long handle, int row, int col, int rows, int cols);
+    static native String gridEdit(long handle, int row, int col);
+    /** Las gráficas de la hoja activa con sus trazos. */
+    static native String gridCharts(long handle);
+    /** xlsx, csv u ods; null si falló. */
+    static native byte[] gridSave(long handle, String kind);
+    static native void gridClose(long handle);
+    /** Las funciones del motor, separadas por comas. */
+    static native String gridFunctions();
+    /** Tabla de una página: lo escrito por filas → lo que se ve. Null si falló. */
+    static native String[] gridEvalTable(String[] cells, int rows, int cols);
 
     private Native() {}
 }

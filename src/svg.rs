@@ -24,7 +24,8 @@ pub fn segment_width(tool: Tool, width: f32, p: f32, dx: f32, dy: f32) -> f32 {
             let a = dy.atan2(dx) - std::f32::consts::FRAC_PI_4;
             width * (0.25 + 0.95 * a.sin().abs()) * (0.6 + 0.4 * p)
         }
-        Tool::Highlighter | Tool::Tape => width,
+        Tool::Highlighter | Tool::Tape | Tool::Marker => width,
+        Tool::Fountain => width * (0.55 + 0.75 * p * p),
     }
 }
 
@@ -98,6 +99,36 @@ fn background(s: &mut String, bg: Background) {
             }
         }
         Background::Dots => {}
+        Background::Half | Background::HalfH | Background::Wide | Background::Week | Background::Story | Background::Handwriting => {
+            let step = if bg == Background::Wide { 56.0 } else { 40.0 };
+            let mut y = if bg == Background::Wide { 100.0 } else { 80.0 };
+            while y < PAGE_H {
+                if bg == Background::Half {
+                    line(s, 30.0, y, PAGE_W / 2.0 - 20.0, y);
+                    line(s, PAGE_W / 2.0 + 20.0, y, PAGE_W - 30.0, y);
+                } else if bg != Background::HalfH || (y - PAGE_H / 2.0).abs() > 30.0 {
+                    line(s, 0.0, y, PAGE_W, y);
+                }
+                y += step;
+            }
+        }
+        Background::HalfGrid | Background::Mm | Background::Engineering | Background::Iso | Background::Hex => {
+            let step = match bg {
+                Background::Mm => 10.0,
+                Background::Engineering => 25.0,
+                _ => 40.0,
+            };
+            let mut y = step;
+            while y < PAGE_H {
+                line(s, 0.0, y, PAGE_W, y);
+                y += step;
+            }
+            let mut x = step;
+            while x < PAGE_W {
+                line(s, x, 0.0, x, PAGE_H);
+                x += step;
+            }
+        }
         Background::Music => {
             let mut top = 120.0;
             while top + 48.0 < PAGE_H - 40.0 {
@@ -129,6 +160,16 @@ fn background(s: &mut String, bg: Background) {
             }
             y += 40.0;
         }
+        s.push_str("</g>");
+    }
+    if matches!(bg, Background::Half | Background::HalfGrid) {
+        s.push_str(r##"<g stroke="#E28B8B" stroke-width="2.5">"##);
+        line(s, PAGE_W / 2.0, 40.0, PAGE_W / 2.0, PAGE_H - 40.0);
+        s.push_str("</g>");
+    }
+    if bg == Background::HalfH {
+        s.push_str(r##"<g stroke="#E28B8B" stroke-width="2.5">"##);
+        line(s, 30.0, PAGE_H / 2.0, PAGE_W - 30.0, PAGE_H / 2.0);
         s.push_str("</g>");
     }
     if bg == Background::Cornell {

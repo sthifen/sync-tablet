@@ -322,4 +322,10 @@ public final class ImageEditActivity extends Activity {
             return true;
         }
     }
+
+    @Override
+    public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus) Ui.applyFullscreen(this);
+    }
 }

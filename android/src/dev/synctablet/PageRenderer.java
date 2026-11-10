@@ -168,6 +168,104 @@ final class PageRenderer {
                     c.drawRoundRect(new RectF(40, y - 32, 66, y - 6), 5, 5, lines);
                 }
                 break;
+            case Ink.HALF:
+                // Partida a la mitad: dos columnas con rayas y una línea al centro.
+                for (float y = 80; y < Ink.H; y += 40) {
+                    c.drawLine(30, y, Ink.W / 2 - 20, y, lines);
+                    c.drawLine(Ink.W / 2 + 20, y, Ink.W - 30, y, lines);
+                }
+                c.drawLine(Ink.W / 2, 40, Ink.W / 2, Ink.H - 40, margin);
+                break;
+            case Ink.HALF_GRID:
+                for (float y = 40; y < Ink.H; y += 40) c.drawLine(0, y, Ink.W, y, lines);
+                for (float x = 40; x < Ink.W; x += 40) c.drawLine(x, 0, x, Ink.H, lines);
+                c.drawLine(Ink.W / 2, 0, Ink.W / 2, Ink.H, margin);
+                break;
+            case Ink.HALF_H:
+                for (float y = 80; y < Ink.H; y += 40) if (Math.abs(y - Ink.H / 2) > 30) c.drawLine(0, y, Ink.W, y, lines);
+                c.drawLine(30, Ink.H / 2, Ink.W - 30, Ink.H / 2, margin);
+                break;
+            case Ink.MM: {
+                float base = lines.getStrokeWidth();
+                for (int i = 0; i * 10 < Ink.W; i++) {
+                    lines.setStrokeWidth(base * (i % 10 == 0 ? 2.2f : i % 5 == 0 ? 1.4f : 0.6f));
+                    c.drawLine(i * 10, 0, i * 10, Ink.H, lines);
+                }
+                for (int i = 0; i * 10 < Ink.H; i++) {
+                    lines.setStrokeWidth(base * (i % 10 == 0 ? 2.2f : i % 5 == 0 ? 1.4f : 0.6f));
+                    c.drawLine(0, i * 10, Ink.W, i * 10, lines);
+                }
+                lines.setStrokeWidth(base);
+                break;
+            }
+            case Ink.ISO: {
+                float step = 40, dx = (float) (Ink.H / Math.tan(Math.toRadians(30)));
+                for (float x = -dx; x < Ink.W + dx; x += step / (float) Math.sin(Math.toRadians(60))) {
+                    c.drawLine(x, 0, x + dx, Ink.H, lines);
+                    c.drawLine(x, Ink.H, x + dx, 0, lines);
+                }
+                for (float x = 0; x < Ink.W; x += step / (float) Math.sin(Math.toRadians(60)) / 2) c.drawLine(x, 0, x, Ink.H, dots);
+                break;
+            }
+            case Ink.ENGINEERING: {
+                int old = lines.getColor();
+                lines.setColor(0x5522A06B);
+                for (float y = 140; y < Ink.H - 40; y += 25) c.drawLine(40, y, Ink.W - 40, y, lines);
+                for (float x = 40; x <= Ink.W - 40; x += 25) c.drawLine(x, 140, x, Ink.H - 50, lines);
+                lines.setColor(old);
+                c.drawRect(40, 40, Ink.W - 40, 120, lines);
+                c.drawLine(Ink.W * 0.55f, 40, Ink.W * 0.55f, 120, lines);
+                c.drawLine(Ink.W * 0.8f, 40, Ink.W * 0.8f, 120, lines);
+                break;
+            }
+            case Ink.HEX: {
+                float r = 30, h = r * (float) Math.sqrt(3);
+                android.graphics.Path hex = new android.graphics.Path();
+                int row = 0;
+                for (float y = 0; y < Ink.H + h; y += h / 2, row++) {
+                    for (float x = (row % 2) * r * 1.5f; x < Ink.W + 2 * r; x += r * 3) {
+                        hex.reset();
+                        for (int k = 0; k < 6; k++) {
+                            double a = Math.PI / 3 * k;
+                            float px = x + r * (float) Math.cos(a), py = y + r * (float) Math.sin(a);
+                            if (k == 0) hex.moveTo(px, py);
+                            else hex.lineTo(px, py);
+                        }
+                        hex.close();
+                        c.drawPath(hex, lines);
+                    }
+                }
+                break;
+            }
+            case Ink.WIDE:
+                for (float y = 100; y < Ink.H; y += 56) c.drawLine(0, y, Ink.W, y, lines);
+                c.drawLine(110, 0, 110, Ink.H, margin);
+                break;
+            case Ink.WEEK: {
+                String[] days = {"Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"};
+                float top = 60, rowH = (Ink.H - top - 40) / 7;
+                android.graphics.Paint label = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                label.setColor(lines.getColor() | 0xFF000000);
+                label.setAlpha(150);
+                label.setTextSize(22);
+                for (int i = 0; i <= 7; i++) c.drawLine(40, top + i * rowH, Ink.W - 40, top + i * rowH, i == 0 || i == 7 ? margin : lines);
+                for (int i = 0; i < 7; i++) c.drawText(days[i], 50, top + i * rowH + 30, label);
+                break;
+            }
+            case Ink.STORY:
+                for (int r = 0; r < 3; r++) for (int k = 0; k < 2; k++) {
+                    float x = 60 + k * 460, y = 70 + r * 440;
+                    c.drawRoundRect(new RectF(x, y, x + 420, y + 250), 10, 10, margin);
+                    for (int l = 0; l < 3; l++) c.drawLine(x, y + 300 + l * 40, x + 420, y + 300 + l * 40, lines);
+                }
+                break;
+            case Ink.HANDWRITING:
+                for (float y = 110; y + 60 < Ink.H; y += 100) {
+                    c.drawLine(40, y, Ink.W - 40, y, lines);
+                    c.drawLine(40, y + 60, Ink.W - 40, y + 60, margin);
+                    for (float x = 40; x < Ink.W - 40; x += 24) c.drawLine(x, y + 30, x + 10, y + 30, lines);
+                }
+                break;
         }
     }
 

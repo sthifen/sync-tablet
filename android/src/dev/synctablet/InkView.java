@@ -394,13 +394,18 @@ final class InkView extends View {
 
     /** Inserta una imagen en la página que se ve y la deja seleccionada. */
     void insertImage(String asset, int bw, int bh) {
+        insertImage(asset, bw, bh, 560);
+    }
+
+    /** `width`: ancho en la hoja (unidades de página). */
+    void insertImage(String asset, int bw, int bh, float width) {
         Ink.Page page = visiblePage();
         if (page == null) return;
         int index = visible;
         String old = page.toJson();
         Ink.Item it = new Ink.Item(Ink.newId(), "image");
         it.asset = asset;
-        it.w = Math.min(560, Ink.W - 80);
+        it.w = Math.min(width, Ink.W - 80);
         it.h = it.w * bh / Math.max(1, bw);
         if (it.h > Ink.H - 160) {
             it.h = Ink.H - 160;
