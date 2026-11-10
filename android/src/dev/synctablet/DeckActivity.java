@@ -128,7 +128,24 @@ public final class DeckActivity extends Activity {
     static final class Info {
         String id, title, folder = "";
         long updated;
-        int slides, accent;
+        int slides, accent, theme;
+        Slide first;
+
+        /** La portada en pequeño, para Inicio. */
+        View cover(Context c) {
+            return new View(c) {
+                @Override
+                protected void onDraw(Canvas cv) {
+                    if (first == null) return;
+                    float k = Math.max(getWidth() / SW, getHeight() / SH);
+                    cv.save();
+                    cv.translate((getWidth() - SW * k) / 2, (getHeight() - SH * k) / 2);
+                    cv.scale(k, k);
+                    drawSlide(cv, first, THEMES[theme], getContext(), null);
+                    cv.restore();
+                }
+            };
+        }
     }
 
     /** Un estilo de plantilla. deco: 0 nada, 1 círculos, 2 franja, 3 cuadrícula, 4 ondas, 5 marco. */
@@ -183,7 +200,14 @@ public final class DeckActivity extends Activity {
                 i.folder = o.optString("folder");
                 i.updated = o.optLong("updated");
                 i.slides = o.optJSONArray("slides") == null ? 0 : o.optJSONArray("slides").length();
-                i.accent = THEMES[Math.max(0, Math.min(THEMES.length - 1, o.optInt("theme")))].bg1;
+                i.theme = Math.max(0, Math.min(THEMES.length - 1, o.optInt("theme")));
+                i.accent = THEMES[i.theme].bg1;
+                JSONArray sl = o.optJSONArray("slides");
+                if (sl != null && sl.length() > 0) {
+                    i.first = new Slide();
+                    JSONArray els = sl.getJSONObject(0).optJSONArray("els");
+                    if (els != null) for (int k = 0; k < els.length(); k++) i.first.els.add(El.from(els.getJSONObject(k)));
+                }
                 if ((i.accent & 0xFFFFFF) == 0xFFFFFF) i.accent = THEMES[o.optInt("theme")].accent;
                 out.add(i);
             } catch (IOException | JSONException e) {

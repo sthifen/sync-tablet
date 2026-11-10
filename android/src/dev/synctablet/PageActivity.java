@@ -342,7 +342,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         laser = icon(IconView.LASER, "Puntero láser (también en el PC)", v -> setTool(InkView.LASER));
         note = icon(IconView.NOTE, "Notas: no salen al exportar; pueden ir fuera de la hoja", v -> setTool(InkView.NOTE));
         neuron = icon(IconView.NEURON, "Lápiz neurona: rodea lo que se relaciona", v -> setTool(InkView.LINK));
-        for (View t : new View[] {pen, highlighter, eraser, lasso, shapes, text, note, neuron, tape, laser}) row.addView(t);
+        ruler = icon(IconView.RULER, "Regla, escuadra, transportador y compás", v -> guideMenu());
+        for (View t : new View[] {pen, highlighter, eraser, lasso, shapes, ruler, text, note, neuron, tape, laser}) row.addView(t);
         row.addView(sep(false));
 
         undo = icon(IconView.UNDO, "Deshacer", v -> ink.undo());
@@ -957,6 +958,33 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             for (int r = 0; r <= rows; r++) c.drawLine(pad, pad + h * r / rows, pad + w, pad + h * r / rows, line);
             for (int k = 0; k <= cols; k++) c.drawLine(pad + w * k / cols, pad, pad + w * k / cols, pad + h, line);
         }
+    }
+
+    private IconView ruler;
+
+    private void guideMenu() {
+        String[] names = {"Regla", "Escuadra 45°", "Escuadra 30° y 60°", "Transportador", "Compás"};
+        int[] kinds = {Guides.RULER, Guides.SQUARE45, Guides.SQUARE60, Guides.PROTRACTOR, Guides.COMPASS};
+        int[] icons = {IconView.RULER, IconView.S_TRIANGLE, IconView.S_TRIANGLE, IconView.S_ELLIPSE, IconView.S_CROSS};
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (int i = 0; i < names.length; i++) {
+            int k = kinds[i];
+            tiles.add(new OptionDock.Tile(glyph(icons[i]), names[i], ink.guides.kind == k, () -> {
+                ink.guides.set(k, ink.getWidth(), ink.getHeight());
+                ruler.setActive(true);
+                if (ink.tool != InkView.PEN && ink.tool != InkView.HIGHLIGHTER) setTool(InkView.PEN);
+                ink.invalidate();
+                hintOnce("guideHint", k == Guides.COMPASS
+                        ? "Arrastra la aguja con el dedo. Con el lápiz, la distancia a la aguja es el radio: el trazo sigue el círculo"
+                        : "Un dedo la mueve, dos la giran. Empieza a escribir cerca de un borde y la línea sale recta");
+            }));
+        }
+        if (ink.guides.active()) tiles.add(new OptionDock.Tile(glyph(IconView.TRASH), "Quitar", false, () -> {
+            ink.guides.set(Guides.NONE, 0, 0);
+            ruler.setActive(false);
+            ink.invalidate();
+        }));
+        dock.tiles("Guías para dibujar", tiles);
     }
 
     private void chooseEraser() {

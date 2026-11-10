@@ -413,7 +413,15 @@ final class PageRenderer {
             ink.setAlpha(255);
             return;
         }
-        for (int i = 1; i < s.n; i++) drawSegment(c, s, i);
+        int alpha = s.color >>> 24;
+        if (alpha > 0 && alpha < 255) {
+            // Lápiz propio con opacidad: el trazo entero en una capa, así las uniones no se oscurecen.
+            int keep = c.saveLayerAlpha(null, alpha);
+            for (int i = 1; i < s.n; i++) drawSegment(c, s, i);
+            c.restoreToCount(keep);
+        } else {
+            for (int i = 1; i < s.n; i++) drawSegment(c, s, i);
+        }
         ink.setAlpha(255);
     }
 

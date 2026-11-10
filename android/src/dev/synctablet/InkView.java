@@ -193,6 +193,8 @@ final class InkView extends View {
     private int currentPage;
     private Ink.Stroke current;
     private boolean snapped;
+    /** Regla, escuadras, transportador y compás. */
+    final Guides guides;
     /** Se está arrastrando una figura con la herramienta: de (shapeX, shapeY) al lápiz. */
     private boolean shaping;
     /** Dibujo a mano alzada que se convierte en componente de circuito. */
@@ -262,6 +264,7 @@ final class InkView extends View {
         super(c);
         renderer = new PageRenderer(c);
         density = c.getResources().getDisplayMetrics().density;
+        guides = new Guides(density);
         shade.setColor(0x26000000);
         dashed.setStyle(Paint.Style.STROKE);
         dashed.setStrokeWidth(2 * density);
@@ -766,6 +769,7 @@ final class InkView extends View {
         drawSelection(c);
         drawLasers(c);
         drawPull(c);
+        guides.draw(c, desk != DESK);
         // Escribiendo, lo que hay tras el cristal no cambia: no hace falta repintarlo.
         if (onFrame != null && c.isHardwareAccelerated() && (mode == NONE || mode == DRAG)) onFrame.run();
     }
@@ -1637,6 +1641,11 @@ final class InkView extends View {
     @Override
     public boolean onTouchEvent(MotionEvent e) {
         if (pages.isEmpty()) return false;
+        // Los dedos sobre la regla la mueven y la giran; el lápiz sigue escribiendo.
+        if (pointerId == -1 && guides.active() && (guides.dragging() || e.getActionMasked() == MotionEvent.ACTION_DOWN) && guides.touch(e)) {
+            invalidate();
+            return true;
+        }
         int action = e.getActionMasked();
         int idx = e.getActionIndex();
         watchFingerTap(e, action);
@@ -2011,6 +2020,18 @@ final class InkView extends View {
     private void addPoint(float docX, float y, float pressure) {
         Ink.Stroke s = current;
         if (s == null) return;
+        if (guides.active() && !shaping && !snapped) {
+            // A pantalla, se pega al borde de la guía, y de vuelta a la hoja.
+            float top = pageTop(currentPage);
+            float[] sp = {docX * scale + ox, (y + top) * scale + oy};
+            if (s.n == 0) guides.begin(sp[0], sp[1]);
+            if (guides.snapping()) {
+                guides.snap(sp);
+                docX = (sp[0] - ox) / scale;
+                y = (sp[1] - oy) / scale - top;
+                removeCallbacks(holdCheck);
+            }
+        }
         float x = Math.max(0, Math.min(Ink.W, docX));
         y = Math.max(0, Math.min(Ink.H, y));
         if (snapped) {
@@ -2037,7 +2058,9 @@ final class InkView extends View {
             invalidate();
             return;
         }
-        if (Float.isNaN(holdX) || Math.hypot(x - holdX, y - holdY) > 4) {
+        if (guides.snapping()) {
+            // Pegado a una guía: ni figuras ni esperas.
+        } else if (Float.isNaN(holdX) || Math.hypot(x - holdX, y - holdY) > 4) {
             holdX = x;
             holdY = y;
             removeCallbacks(holdCheck);
@@ -2216,6 +2239,7 @@ final class InkView extends View {
     private void finishStroke() {
         Ink.Stroke s = current;
         current = null;
+        guides.end();
         boolean dragged = shaping;
         boolean free = circuitFree;
         shaping = false;

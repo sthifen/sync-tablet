@@ -700,8 +700,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         if (here == null) {
             for (String f : folders()) views.add(folderCard(f));
             for (Ink.Notebook n : list) views.add(card(n));
-            views.add(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()));
-            views.add(actionCard(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null)));
+            if (!selecting) {
+                views.add(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()));
+                views.add(actionCard(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null)));
+            }
             grid(views);
             return;
         }
@@ -2150,9 +2152,16 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         ArrayList<View> views = new ArrayList<>();
         for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(folder)) views.add(fileCard("sheet:" + d.id, IconView.SHEET, 0xFF16A34A, d.title, "Hoja de cálculo", d.updated,
                 () -> openSheet(d.id), () -> sheetMenu(d)));
-        for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(folder)) views.add(fileCard("deck:" + d.id, IconView.SLIDES, d.accent, d.title,
-                d.slides == 1 ? "1 diapositiva" : d.slides + " diapositivas", d.updated,
-                () -> startActivity(new Intent(this, DeckActivity.class).putExtra("id", d.id)), () -> deckMenu(d)));
+        for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(folder)) {
+            View card = fileCard("deck:" + d.id, IconView.SLIDES, d.accent, d.title,
+                    d.slides == 1 ? "1 diapositiva" : d.slides + " diapositivas", d.updated,
+                    () -> startActivity(new Intent(this, DeckActivity.class).putExtra("id", d.id)), () -> deckMenu(d));
+            // La portada de verdad en vez del icono.
+            FrameLayout art = (FrameLayout) ((LinearLayout) card).getChildAt(0);
+            art.addView(d.cover(this), 0, new FrameLayout.LayoutParams(-1, -1));
+            art.getChildAt(1).setVisibility(View.GONE);
+            views.add(card);
+        }
         if (views.isEmpty()) return;
         sectionTitle("Hojas de cálculo y presentaciones");
         grid(views);

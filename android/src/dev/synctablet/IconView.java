@@ -16,7 +16,7 @@ final class IconView extends View {
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
             LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29,
             S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44, CAMERA = 45, FILE = 46, TABLE = 47, PASTE = 48, SLIDES = 49, GRID_DOC = 50, FOLDER = 51, NEURON = 52,
-            EXPAND = 53, SELECT = 54, CUBE = 55, STICKER = 56, HELP = 57, CLOUD = 58, CHART = 59, IMPORT = 60, SHEET = 61, DOC = 62;
+            EXPAND = 53, SELECT = 54, CUBE = 55, STICKER = 56, HELP = 57, CLOUD = 58, CHART = 59, IMPORT = 60, SHEET = 61, DOC = 62, RULER = 63;
 
     private final int icon;
     private final Path path;
@@ -320,6 +320,11 @@ final class IconView extends View {
                     else p.lineTo(x, y);
                 }
                 p.close();
+                break;
+            case RULER:
+                p.moveTo(3, 15); p.lineTo(15, 3); p.lineTo(21, 9); p.lineTo(9, 21); p.close();
+                p.moveTo(6.5f, 11.5f); p.lineTo(8.5f, 13.5f); p.moveTo(9.5f, 8.5f); p.lineTo(12.5f, 11.5f);
+                p.moveTo(12.5f, 5.5f); p.lineTo(14.5f, 7.5f);
                 break;
             case EXPAND:
                 p.moveTo(4, 9); p.lineTo(4, 4); p.lineTo(9, 4); p.moveTo(15, 4); p.lineTo(20, 4); p.lineTo(20, 9);

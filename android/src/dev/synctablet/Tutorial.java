@@ -52,12 +52,12 @@ final class Tutorial {
             "Formato|La cinta tiene negrita, colores, alinear, formato de número, ordenar, filtros, insertar filas y más. Desliza la cinta para verla entera.",
             "Excel|Se guarda sola. ⋯ › Guardar como Excel exporta un .xlsx que abre Excel, LibreOffice o Google Sheets."}},
         {"doc", IconView.DOC, "Documentos Word", new String[] {
-            "Nuevo documento|En Inicio, «Nuevo documento» crea una nota con plantilla (informe, carta, laboratorio…).",
+            "Nuevo documento|En Inicio, Crear › Documento (Word) y eliges plantilla: informe, carta, laboratorio, ensayo…",
             "Escribir|Escribe por bloques: «/» abre los tipos (títulos, listas, tablas, citas, código).",
             "Exportar|Menú ⋯ › Exportar a Word guarda un .docx."}},
         {"slides", IconView.SLIDES, "Presentaciones", new String[] {
-            "Crear|En Inicio, «Nueva presentación» y elige una plantilla con estilo. Cada diapositiva es una hoja donde escribes y pegas imágenes.",
-            "Presentar|El botón ▶ de la hoja presenta a pantalla completa. Con el botón del S Pen pasas de diapositiva.",
+            "Crear|En Inicio, Crear › Presentación y elige un estilo. Ya trae portada, agenda, secciones y cierre: toca un texto para cambiarlo.",
+            "Editar|Arriba: texto, imagen, figuras, stickers y lápiz para dibujar. Toca algo para moverlo; la bolita de la esquina lo agranda. Doble toque edita un texto. «+ Diapositiva» trae diseños listos.",
             "Exportar|Exportar › PowerPoint guarda un .pptx con tus diapositivas."}},
         {"model", IconView.CUBE, "Modelos 3D", new String[] {
             "Abrir|En Inicio, Importar › Modelo 3D abre archivos STL u OBJ.",

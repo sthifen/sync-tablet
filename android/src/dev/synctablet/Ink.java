@@ -31,12 +31,19 @@ final class Ink {
         return new String(c);
     }
 
+    /** #RRGGBB, o #RRGGBBAA si no es opaco (lápices propios con opacidad; CSS y SVG lo entienden). */
     static String hex(int color) {
-        return String.format(Locale.ROOT, "#%06X", color & 0xFFFFFF);
+        int a = color >>> 24;
+        if (a == 0xFF || a == 0) return String.format(Locale.ROOT, "#%06X", color & 0xFFFFFF);
+        return String.format(Locale.ROOT, "#%06X%02X", color & 0xFFFFFF, a);
     }
 
     static int parseColor(String s, int fallback) {
         try {
+            if (s.length() == 9) {
+                long v = Long.parseLong(s.substring(1), 16);
+                return (int) ((v & 0xFF) << 24 | (v >>> 8));
+            }
             return 0xFF000000 | Integer.parseInt(s.substring(1), 16);
         } catch (RuntimeException e) {
             return fallback;
