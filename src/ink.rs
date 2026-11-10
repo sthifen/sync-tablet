@@ -210,6 +210,8 @@ pub enum Msg {
     /// Puntero láser (no se guarda): sólo para el visor en vivo.
     Laser { page: String, points: Vec<f32> },
     DeleteNotebook { notebook: String },
+    /// Un documento de la tablet (hoja de cálculo, Word…) para tenerlo también en el PC.
+    File { kind: String, title: String, ext: String, data: String },
 }
 
 /// Qué pasó al aplicar una operación a una página.

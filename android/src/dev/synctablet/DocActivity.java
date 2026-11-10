@@ -469,7 +469,14 @@ public final class DocActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (body != null) save();
+        if (body == null) return;
+        save();
+        // Una copia en Word para el PC.
+        if (Native.available() && SyncClient.get(this).isConnected()) {
+            String html = html(), name = title;
+            Context app = getApplicationContext();
+            new Thread(() -> SyncClient.get(app).sendFile("doc", name, "docx", Native.htmlToDocx(html)), "doc-pc").start();
+        }
     }
 
     @Override

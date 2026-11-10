@@ -103,6 +103,26 @@ impl Store {
         Ok(())
     }
 
+    /// Guarda un documento de la tablet en su carpeta (Hojas de cálculo, Documentos…).
+    pub fn put_file(&self, kind: &str, title: &str, ext: &str, data: &str) -> Result<PathBuf> {
+        use base64::Engine;
+        let folder = match kind {
+            "sheet" => "Hojas de cálculo",
+            "doc" => "Documentos",
+            "deck" => "Presentaciones",
+            _ => bail!("tipo de documento desconocido"),
+        };
+        if !matches!(ext, "xlsx" | "docx" | "pptx" | "pdf") {
+            bail!("formato no permitido");
+        }
+        let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).context("documento mal codificado")?;
+        let dir = self.root.join(folder);
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{}.{ext}", folder_name(title)));
+        write_atomic(&path, &bytes)?;
+        Ok(path)
+    }
+
     /// Imágenes que usan las páginas y aún no están en el PC.
     pub fn missing_assets(&self, page: &Page) -> Vec<String> {
         page.assets().filter(|a| !self.has_asset(a)).map(str::to_owned).collect()
@@ -247,6 +267,19 @@ mod tests {
 
     fn rand_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    }
+
+    #[test]
+    fn documentos_en_su_carpeta() {
+        use base64::Engine;
+        let dir = std::env::temp_dir().join(format!("st-files-{}", std::process::id()));
+        let store = Store::open(&dir).unwrap();
+        let data = base64::engine::general_purpose::STANDARD.encode(b"PK");
+        let p = store.put_file("sheet", "Notas/../del curso", "xlsx", &data).unwrap();
+        assert!(p.starts_with(dir.join("Hojas de cálculo")));
+        assert!(store.put_file("sheet", "x", "exe", &data).is_err());
+        assert!(store.put_file("raro", "x", "xlsx", &data).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn nb(title: &str, pages: &[&str]) -> Notebook {

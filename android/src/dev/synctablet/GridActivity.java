@@ -137,11 +137,19 @@ public final class GridActivity extends Activity {
         return book;
     }
 
+    private boolean everDirty;
+
     @Override
     protected void onPause() {
         super.onPause();
         main.removeCallbacks(autosave);
+        everDirty |= dirty;
         saveNow();
+        // Si cambió, también en el PC como .xlsx.
+        if (everDirty && book != 0) {
+            SyncClient.get(this).sendFile("sheet", title, "xlsx", Native.gridSave(book, "xlsx"));
+            everDirty = false;
+        }
     }
 
     @Override
@@ -356,6 +364,7 @@ public final class GridActivity extends Activity {
 
     private void changed() {
         dirty = true;
+        everDirty = true;
         state.setText("Sin guardar");
         main.removeCallbacks(autosave);
         main.postDelayed(autosave, 1500);

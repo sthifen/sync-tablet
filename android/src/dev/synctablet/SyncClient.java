@@ -174,6 +174,19 @@ final class SyncClient {
         }, "sync-asset").start();
     }
 
+    /** Una copia del documento para el PC (~/SyncTablet/Hojas de cálculo, Documentos…). */
+    void sendFile(String kind, String title, String ext, byte[] bytes) {
+        if (!connected || bytes == null) return;
+        new Thread(() -> {
+            try {
+                JSONObject m = new JSONObject().put("t", "file").put("kind", kind).put("title", title).put("ext", ext)
+                        .put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP));
+                send(m.toString());
+            } catch (JSONException ignored) {
+            }
+        }, "sync-file").start();
+    }
+
     private void start() {
         Thread t = new Thread(this::loop, "sync");
         t.setDaemon(true);

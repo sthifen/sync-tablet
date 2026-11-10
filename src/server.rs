@@ -416,6 +416,11 @@ fn handle(s: &AppState, msg: &Msg, raw: &str) -> anyhow::Result<Option<String>> 
             store.delete_notebook(notebook)?;
             Applied::Ok
         }
+        Msg::File { kind, title, ext, data } => {
+            let path = store.put_file(kind, title, ext, data)?;
+            tracing::info!("documento de la tablet: {}", path.display());
+            return Ok(None);
+        }
     };
     match applied {
         Applied::Ok => {
