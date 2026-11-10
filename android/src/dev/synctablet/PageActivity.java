@@ -1738,12 +1738,14 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 for (int c = 0; c < size[1]; c++) {
                     EditText e = dock.field("", "");
                     e.setSingleLine(true);
-                    e.setMinWidth(Ui.dp(this, 110));
                     e.setTextSize(14);
+                    e.setHorizontallyScrolling(true);
                     int i = r * size[1] + c;
                     e.setText(i < cells[0].length && cells[0][i] != null ? cells[0][i] : "");
                     fields.add(e);
                     GridLayout.LayoutParams cell = new GridLayout.LayoutParams();
+                    // Ancho fijo: una fórmula larga se desliza dentro sin mover las columnas.
+                    cell.width = Ui.dp(this, 120);
                     cell.setMargins(Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3));
                     grid.addView(e, cell);
                 }
@@ -1774,7 +1776,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             actions.addView(b);
         }
         box.addView(actions);
-        box.addView(Ui.text(this, "Fórmulas: =A1+B2, =SUMA(A1:A5), =PROMEDIO(…), =MIN, =MAX, =CONTAR", 12, fgMuted, false));
+        box.addView(Ui.text(this, "Fórmulas de Excel en español o inglés: =SUMA(A1:A5), =SI(A1>5;\"sí\";\"no\"), =BUSCARV(…), =RAIZ(…)…", 12, fgMuted, false));
         hs.addView(grid);
         box.addView(hs);
         dock.show("Hoja de cálculo", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Guardar", true, () -> {

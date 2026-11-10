@@ -768,6 +768,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         name.setEllipsize(TextUtils.TruncateAt.END);
         info.addView(name);
         int docs = inside.size() + notesIn(folder).size();
+        for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(folder)) docs++;
+        for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(folder)) docs++;
         TextView s = text(docs == 0 ? "Vacía" : docs == 1 ? "1 documento" : docs + " documentos", 12, t.faint, t.regular);
         s.setPadding(0, t.dp(4), 0, 0);
         info.addView(s);

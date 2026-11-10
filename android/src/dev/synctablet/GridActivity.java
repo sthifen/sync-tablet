@@ -607,7 +607,7 @@ public final class GridActivity extends Activity {
             String type = CHART_TYPES[i];
             tiles.add(new OptionDock.Tile(new ChartIcon(type), CHART_NAMES[i], false, () -> run("chart.changeType", "{\"chart\":" + chartId + ",\"type\":\"" + type + "\"}")));
         }
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Poner en un cuaderno", false, () -> sendToNotebook(chartImage(ch))).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Poner en un cuaderno o presentación", false, () -> sendToNotebook(chartImage(ch))).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar gráfica", false, () -> {
             run("chart.delete", "{\"chart\":" + chartId + "}");
             pickedChart = -1;
@@ -706,8 +706,15 @@ public final class GridActivity extends Activity {
                 putInNotebook(store, n, img);
             }));
         }
-        if (store.notebooks().isEmpty()) box.addView(dock.message("Aún no hay cuadernos: crea uno en Inicio"));
-        dock.show("¿En qué cuaderno?", box, new OptionDock.Action("Cancelar", false, null));
+        for (DeckActivity.Info d : DeckActivity.list(this)) {
+            box.addView(dock.row("🖥️  " + d.title + " (presentación)", v -> {
+                dock.close();
+                boolean ok = DeckActivity.addImageSlide(this, d.id, img, title);
+                Ui.toast(this, ok ? "Diapositiva nueva en «" + d.title + "»" : "No se pudo poner en la presentación");
+            }));
+        }
+        if (box.getChildCount() == 0) box.addView(dock.message("Aún no hay cuadernos ni presentaciones: crea uno en Inicio"));
+        dock.show("¿Dónde la pongo?", box, new OptionDock.Action("Cancelar", false, null));
     }
 
     private void putInNotebook(Store store, Ink.Notebook n, android.graphics.Bitmap img) {

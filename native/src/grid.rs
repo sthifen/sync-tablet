@@ -205,7 +205,11 @@ pub fn translate(formula: &str) -> String {
                     continue;
                 }
             }
-            out.push_str(&word);
+            match upper.as_str() {
+                "FALSO" => out.push_str("FALSE"),
+                "VERDADERO" => out.push_str("TRUE"),
+                _ => out.push_str(&word),
+            }
             continue;
         }
         if c == ';' {
@@ -265,6 +269,7 @@ mod tests {
     fn spanish_formulas() {
         assert_eq!(translate("=SUMA(A1;A2)*2,5"), "=SUM(A1,A2)*2.5");
         assert_eq!(translate("=BUSCARV(2,A1:B1,2,FALSE)"), "=VLOOKUP(2,A1:B1,2,FALSE)");
+        assert_eq!(translate("=BUSCARV(7;A1:B1;1;FALSO)"), "=VLOOKUP(7,A1:B1,1,FALSE)");
         assert_eq!(translate("=SI(A1>3;\"sí; claro\";\"no\")"), "=IF(A1>3,\"sí; claro\",\"no\")");
     }
 

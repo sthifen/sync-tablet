@@ -137,7 +137,9 @@ public final class DeckActivity extends Activity {
                 @Override
                 protected void onDraw(Canvas cv) {
                     if (first == null) return;
-                    float k = Math.max(getWidth() / SW, getHeight() / SH);
+                    // Entera, centrada sobre el color del estilo.
+                    cv.drawColor(THEMES[theme].bg2);
+                    float k = Math.min(getWidth() / SW, getHeight() / SH);
                     cv.save();
                     cv.translate((getWidth() - SW * k) / 2, (getHeight() - SH * k) / 2);
                     cv.scale(k, k);
@@ -232,6 +234,37 @@ public final class DeckActivity extends Activity {
             write(f, o.toString());
         } catch (IOException | JSONException e) {
             android.util.Log.w("SyncTablet", "mover presentación", e);
+        }
+    }
+
+    /** Una diapositiva nueva al final con la imagen (una gráfica de la hoja de cálculo, por ejemplo). */
+    static boolean addImageSlide(Context c, String id, Bitmap img, String heading) {
+        File f = new File(dir(c), id + ".json");
+        try {
+            JSONObject o = new JSONObject(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+            Theme th = THEMES[Math.max(0, Math.min(THEMES.length - 1, o.optInt("theme")))];
+            String asset = id + "-" + Ink.newId() + ".jpg";
+            try (FileOutputStream out = new FileOutputStream(new File(dir(c), asset))) {
+                img.compress(Bitmap.CompressFormat.JPEG, 92, out);
+            }
+            Slide s = new Slide();
+            s.els.add(text(th, heading, 110, 50, 1380, 110, 64, true, 0));
+            float w = 1300, h = w * img.getHeight() / img.getWidth();
+            if (h > 660) {
+                h = 660;
+                w = h * img.getWidth() / img.getHeight();
+            }
+            El e = new El("image", (SW - w) / 2, 190 + (680 - h) / 2, w, h);
+            e.asset = asset;
+            s.els.add(e);
+            JSONArray els = new JSONArray();
+            for (El x : s.els) els.put(x.json());
+            o.getJSONArray("slides").put(new JSONObject().put("els", els));
+            o.put("updated", System.currentTimeMillis());
+            write(f, o.toString());
+            return true;
+        } catch (IOException | JSONException e) {
+            return false;
         }
     }
 
