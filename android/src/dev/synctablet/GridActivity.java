@@ -1072,6 +1072,21 @@ public final class GridActivity extends Activity {
         }
     }
 
+    /** Un número que no cabe: menos decimales y, si aun así no cabe, ### (como Excel). */
+    static String fit(String s, float room, Paint p) {
+        if (s.matches("-?\\d+\\.\\d+")) {
+            java.math.BigDecimal v = new java.math.BigDecimal(s);
+            for (int d = s.length() - s.indexOf('.') - 2; d >= 0; d--) {
+                String r = v.setScale(d, java.math.RoundingMode.HALF_UP).toPlainString();
+                if (p.measureText(r) <= room) return r;
+            }
+        }
+        if (!s.matches(".*\\d.*") || s.matches(".*[A-Za-z]{2,}.*")) return s;
+        StringBuilder h = new StringBuilder("#");
+        while (p.measureText(h.toString() + "#") <= room) h.append('#');
+        return h.toString();
+    }
+
     // ---------------------------------------------------------------- la cuadrícula
 
     private final class GridCanvas extends View {
@@ -1242,8 +1257,44 @@ public final class GridActivity extends Activity {
             else select(rc[0], rc[1], rc[0], rc[1]);
         }
 
+        /** Columna cuyo borde derecho se está arrastrando (−1: ninguna). */
+        private int resizing = -1;
+        private float resizeFrom, resizeStartW;
+
+        /** ¿Toca el borde de una columna en la cabecera? */
+        private int borderAt(float x, float y) {
+            if (y > headH() || x < headW()) return -1;
+            float k = k();
+            int c = colAt((x - headW() + sx) / k);
+            for (int cc = Math.max(0, c - 1); cc <= c + 1; cc++) {
+                float right = headW() + colLeft(cc + 1) * k - sx;
+                if (Math.abs(x - right) < t.dp(14)) return cc;
+            }
+            return -1;
+        }
+
         @Override
         public boolean onTouchEvent(MotionEvent e) {
+            int act = e.getActionMasked();
+            if (act == MotionEvent.ACTION_DOWN) {
+                resizing = borderAt(e.getX(), e.getY());
+                if (resizing >= 0) {
+                    resizeFrom = e.getX();
+                    resizeStartW = colWidth(resizing);
+                    return true;
+                }
+            }
+            if (resizing >= 0) {
+                float w = Math.max(12, resizeStartW + (e.getX() - resizeFrom) / k());
+                colW.put(resizing, w);
+                invalidate();
+                if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) {
+                    String col = col(resizing);
+                    resizing = -1;
+                    run("home.columnWidth", "{\"cols\":\"" + col + ":" + col + "\",\"width\":" + Math.round(w) + "}");
+                }
+                return true;
+            }
             pinch.onTouchEvent(e);
             if (extending && e.getActionMasked() == MotionEvent.ACTION_MOVE) {
                 int[] rc = cellAt(e.getX(), e.getY());
@@ -1332,6 +1383,10 @@ public final class GridActivity extends Activity {
                         textP.setColor(fc != null ? Ink.parseColor(fc, t.text) : (t.dark ? 0xFFE5E5E5 : 0xFF111827));
                         String a = cell.optString("a", "l");
                         float tw = textP.measureText(s), pad = 3 * k;
+                        if ("r".equals(a) && tw > cw - 2 * pad) {
+                            s = fit(s, cw - 2 * pad, textP);
+                            tw = textP.measureText(s);
+                        }
                         float tx = "r".equals(a) ? x + cw - pad - tw : "c".equals(a) ? x + (cw - tw) / 2 : x + pad;
                         float right = x + cw;
                         if ("l".equals(a)) {
