@@ -74,12 +74,12 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private static final int[] HL_COLORS = {0xFFFFD60A, 0xFF4ADE80, 0xFFF472B6, 0xFF60A5FA};
     private static final float[] PEN_WIDTHS = {2f, 3.5f, 6f};
     private static final float[] HL_WIDTHS = {16f, 24f, 36f};
-    private static final String[] PEN_KINDS = {Ink.PEN, Ink.PENCIL, Ink.BRUSH, Ink.CALLIGRAPHY, Ink.MARKER, Ink.FOUNTAIN};
-    private static final String[] PEN_NAMES = {"Pluma", "Lápiz", "Pincel", "Caligrafía", "Marcador", "Estilográfica"};
+    private static final String[] PEN_KINDS = {Ink.PEN, Ink.PENCIL, Ink.BRUSH, Ink.CALLIGRAPHY, Ink.MARKER, Ink.FOUNTAIN, Ink.DOTTED, Ink.DASHED};
+    private static final String[] PEN_NAMES = {"Pluma", "Lápiz", "Pincel", "Caligrafía", "Marcador", "Estilográfica", "Punteado", "Rayado"};
     private static final String[] BACKGROUNDS = {Ink.LINES, Ink.GRID, Ink.DOTS, Ink.HALF, Ink.HALF_GRID, Ink.HALF_H, Ink.CORNELL, Ink.WIDE, Ink.MM,
-            Ink.ENGINEERING, Ink.ISO, Ink.HEX, Ink.HANDWRITING, Ink.WEEK, Ink.STORY, Ink.TODO, Ink.MUSIC, Ink.PLAIN};
+            Ink.ENGINEERING, Ink.SEMILOG, Ink.LOGLOG, Ink.SMITH, Ink.POLAR, Ink.ISO, Ink.HEX, Ink.HANDWRITING, Ink.WEEK, Ink.STORY, Ink.TODO, Ink.MUSIC, Ink.PLAIN};
     private static final String[] BACKGROUND_NAMES = {"Rayas", "Cuadros", "Puntos", "Partida a la mitad", "Cuadros partida", "Mitad arriba y abajo",
-            "Cornell (apuntes)", "Rayas anchas", "Milimetrada", "Ingeniería", "Isométrica", "Hexagonal", "Caligrafía", "Semana",
+            "Cornell (apuntes)", "Rayas anchas", "Milimetrada", "Ingeniería", "Semilogarítmica", "Logarítmica (log-log)", "Carta de Smith", "Polar", "Isométrica", "Hexagonal", "Caligrafía", "Semana",
             "Storyboard", "Lista de tareas", "Pentagrama", "Lisa"};
     private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4, PICK_PPTX = 5, EDIT_IMAGE = 6;
     private static final String PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -234,6 +234,10 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             if ("pptx".equals(getIntent().getStringExtra("importKind"))) importDeck(imported);
             else importPdf(imported);
         }
+        // Creado desde Inicio para poner una imagen o una foto.
+        String start = getIntent().getStringExtra("start");
+        if (saved == null && "image".equals(start)) pick("image/*", PICK_IMAGE);
+        else if (saved == null && "photo".equals(start)) takePhoto();
         Tutorial.offerOnce(this, dock, "pen");
     }
 
@@ -248,6 +252,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             list.add(p);
         }
         index = Math.max(0, Math.min(list.size() - 1, show));
+        ink.setRightPages(notebook.right);
         ink.setPages(list, index);
         showTitle();
     }
@@ -356,7 +361,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
         row.addView(icon(IconView.PREV, "Página anterior", v -> ink.scrollToPage(index - 1, true)));
         row.addView(icon(IconView.NEXT, "Página siguiente", v -> ink.scrollToPage(index + 1, true)));
-        row.addView(icon(IconView.PLUS, "Página nueva", v -> addPage()));
+        row.addView(icon(IconView.PLUS, "Página nueva", v -> addPageMenu()));
         row.addView(icon(IconView.PAGES, "Páginas: ordenar, duplicar, borrar", v -> pageManager()));
         row.addView(icon(IconView.PAGE, "Plantilla de la hoja", v -> chooseTemplate()));
         row.addView(icon(IconView.IMAGE, "Insertar foto o PDF", v -> insertMenu()));
@@ -1181,43 +1186,20 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         dock.tiles("Plantilla de la página " + (index + 1), tiles);
     }
 
-    /** Selector de color a medida: tono, saturación y brillo, con muestra. */
+    /** Selector de color a medida: anillo de tonos y triángulo, como en Krita. */
     private void customColorDialog(boolean hl) {
-        float[] hsv = new float[3];
-        Color.colorToHSV(customColor, hsv);
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        int pad = Ui.dp(this, 20);
-        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
-        View preview = new View(this);
-        box.addView(preview, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
-        String[] names = {"Tono", "Saturación", "Brillo"};
-        int[] max = {360, 100, 100};
-        SeekBar[] bars = new SeekBar[3];
-        Runnable update = () -> {
-            float[] v = {bars[0].getProgress(), bars[1].getProgress() / 100f, bars[2].getProgress() / 100f};
-            preview.setBackground(Ui.round(Color.HSVToColor(v), Ui.dp(this, 12)));
-        };
-        for (int i = 0; i < 3; i++) {
-            box.addView(Ui.text(this, names[i], 14, fgMuted, false));
-            bars[i] = new SeekBar(this);
-            bars[i].setMax(max[i]);
-            bars[i].setProgress(Math.round(i == 0 ? hsv[0] : hsv[i] * 100));
-            bars[i].setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override public void onProgressChanged(SeekBar s, int v, boolean user) { update.run(); }
-                @Override public void onStartTrackingTouch(SeekBar s) {}
-                @Override public void onStopTrackingTouch(SeekBar s) {}
-            });
-            box.addView(bars[i]);
-        }
-        update.run();
-        dock.show("Color a medida", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Usar", true, () -> {
-            float[] v = {bars[0].getProgress(), bars[1].getProgress() / 100f, bars[2].getProgress() / 100f};
-            customColor = Color.HSVToColor(v);
-            prefs.edit().putInt("customColor", customColor).apply();
-            pickColor(customColor, hl);
+        int start = hl ? ink.highlighterColor | 0xFF000000 : ink.penColor;
+        ColorWheel.show(this, dock, "Color a medida", start, fg, fgMuted, c -> {
+            if (hl) {
+                // El resaltador guarda su transparencia.
+                pickColor(c & 0xFFFFFF | (ink.highlighterColor & 0xFF000000), true);
+            } else {
+                customColor = c;
+                prefs.edit().putInt("customColor", customColor).apply();
+                pickColor(customColor, false);
+            }
             refreshTools();
-        }));
+        });
     }
 
     // ---- Texto ----
@@ -1466,11 +1448,69 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         showTitle();
     }
 
+    /** Página nueva a la derecha de la que se ve (o debajo de ella, en su sitio). */
+    private void insertPage(boolean right) {
+        save();
+        int at = index + 1;
+        if (!right) {
+            // Debajo: tras las que están a su lado en la misma fila.
+            while (at < notebook.pages.size() && notebook.right.contains(notebook.pages.get(at))) at++;
+        }
+        Ink.Page p = store.insertPage(notebook, at, right);
+        sync.sendNotebook(notebook);
+        sync.sendPage(p);
+        loadPages(at);
+        Ui.toast(this, right ? "Página a la derecha" : "Página debajo");
+    }
+
+    private void addPageMenu() {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(new PlaceIcon(this, false, fg), "Debajo", false, () -> insertPage(false)));
+        tiles.add(new OptionDock.Tile(new PlaceIcon(this, true, fg), "A la derecha", false, () -> insertPage(true)));
+        tiles.add(new OptionDock.Tile(glyph(IconView.PLUS), "Al final", false, this::addPage));
+        dock.tiles("Página nueva", tiles);
+    }
+
+    /** Dibujo de dónde cae la página nueva: debajo o a la derecha. */
+    private static final class PlaceIcon extends View {
+        private final boolean right;
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final int color;
+
+        PlaceIcon(android.content.Context c, boolean right, int color) {
+            super(c);
+            this.right = right;
+            this.color = color;
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float u = Math.min(getWidth(), getHeight()) / 10f, cx = getWidth() / 2f, cy = getHeight() / 2f;
+            float w = 2.6f * u, h = 3.6f * u;
+            float ax = right ? cx - w - 0.3f * u : cx - w / 2, ay = right ? cy - h / 2 : cy - h - 0.3f * u;
+            float bx = right ? cx + 0.3f * u : ax, by = right ? ay : cy + 0.3f * u;
+            paint.setStyle(android.graphics.Paint.Style.FILL);
+            paint.setColor(color & 0xFFFFFF | 0x33000000);
+            c.drawRoundRect(ax, ay, ax + w, ay + h, u / 3, u / 3, paint);
+            paint.setStyle(android.graphics.Paint.Style.STROKE);
+            paint.setStrokeWidth(u / 3);
+            paint.setColor(color);
+            paint.setPathEffect(new android.graphics.DashPathEffect(new float[] {u / 2, u / 3}, 0));
+            c.drawRoundRect(bx, by, bx + w, by + h, u / 3, u / 3, paint);
+            paint.setPathEffect(null);
+            float px = bx + w / 2, py = by + h / 2;
+            c.drawLine(px - u * 0.7f, py, px + u * 0.7f, py, paint);
+            c.drawLine(px, py - u * 0.7f, px, py + u * 0.7f, paint);
+        }
+    }
+
     private void pageMenu() {
         Ink.Page visible = ink.visiblePage();
         String text = visible == null ? null : visible.bgText;
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
-        tiles.add(new OptionDock.Tile(glyph(IconView.PLUS), "Página nueva", false, this::addPage));
+        tiles.add(new OptionDock.Tile(new PlaceIcon(this, false, fg), "Página debajo", false, () -> insertPage(false)));
+        tiles.add(new OptionDock.Tile(new PlaceIcon(this, true, fg), "Página a la derecha", false, () -> insertPage(true)));
+        tiles.add(new OptionDock.Tile(glyph(IconView.FILE), "Exportar PDF", false, this::exportPdfPicker));
         tiles.add(new OptionDock.Tile(glyph(IconView.PAGES), "Ordenar páginas", false, this::pageManager).stays());
         tiles.add(new OptionDock.Tile(glyph(IconView.PAGE), "Plantilla", false, this::chooseTemplate).stays());
         tiles.add(new OptionDock.Tile(glyph(IconView.MOON), paperDark ? "Hoja clara" : "Hoja oscura", paperDark, this::togglePaper));
@@ -1533,7 +1573,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 if (p != null) img.setImageBitmap(thumbnail(p, tw, th));
                 img.setElevation(Ui.dp(this, 2));
                 cell.addView(img, new LinearLayout.LayoutParams(tw, th));
-                cell.addView(Ui.text(this, String.valueOf(i + 1), 14, fgMuted, false));
+                cell.addView(Ui.text(this, (notebook.right.contains(notebook.pages.get(i)) ? "⇢ " : "") + (i + 1), 14, fgMuted, false));
                 final int at = i;
                 cell.setOnClickListener(v -> {
                     chosen[0] = at;
@@ -1549,7 +1589,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         fill[0].run();
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER);
-        String[] names = {"◀ Mover", "Mover ▶", "Duplicar", "Borrar"};
+        String[] names = {"◀ Mover", "Mover ▶", "Duplicar", "Borrar", "Al lado ⇄"};
         for (int k = 0; k < names.length; k++) {
             TextView b = dock.chip(names[k], false);
             LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1568,6 +1608,11 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                     Ink.Page copy = store.duplicatePage(notebook, store.page(notebook.pages.get(i)), i + 1);
                     sync.sendPage(copy);
                     chosen[0] = i + 1;
+                } else if (action == 4) {
+                    String id = notebook.pages.get(i);
+                    if (i == 0) return;
+                    if (!notebook.right.remove(id)) notebook.right.add(id);
+                    Ui.toast(this, notebook.right.contains(id) ? "Va a la derecha de la anterior" : "Va debajo");
                 } else if (action == 3) {
                     confirmDeletePage(i, () -> {
                         chosen[0] = Math.min(i, notebook.pages.size() - 1);
@@ -2007,7 +2052,8 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private void exportMenu() {
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
-        tiles.add(new OptionDock.Tile(glyph(IconView.FILE), "Cuaderno en PDF", false, this::exportPdf));
+        tiles.add(new OptionDock.Tile(glyph(IconView.PAGES), "PDF: elegir páginas", false, this::exportPdfPicker));
+        tiles.add(new OptionDock.Tile(glyph(IconView.FILE), "Cuaderno entero en PDF", false, this::exportPdf));
         tiles.add(new OptionDock.Tile(glyph(IconView.IMAGE), "Esta página como imagen", false, this::exportPng));
         tiles.add(new OptionDock.Tile(glyph(IconView.GRID_DOC), "Textos en Markdown", false, this::exportMarkdown));
         if (Native.available()) tiles.add(new OptionDock.Tile(glyph(IconView.SLIDES), "Cuaderno en PowerPoint", false, this::exportPptx));
@@ -2145,6 +2191,12 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         Intent share = new Intent(Intent.ACTION_SEND).setType(type)
                 .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivity(Intent.createChooser(share, "Compartir"));
+    }
+
+    /** Exportar eligiendo páginas (la que se ve, ya marcada como referencia). */
+    private void exportPdfPicker() {
+        save();
+        PdfActivity.open(this, java.util.Collections.singletonList(notebook.id), index);
     }
 
     /** El cuaderno entero a PDF en Descargas/SyncTablet, y compartirlo. */

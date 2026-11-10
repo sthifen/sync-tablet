@@ -29,6 +29,9 @@ pub struct Notebook {
     /// Última edición en la tablet (ms desde 1970).
     #[serde(default)]
     pub updated: u64,
+    /// Páginas que en la tablet van a la derecha de la anterior (no debajo).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub right: Vec<String>,
 }
 
 fn default_cover() -> String {
@@ -63,6 +66,14 @@ pub enum Background {
     Week,
     Story,
     Handwriting,
+    /// Semilogarítmica: y en 4 décadas, x lineal.
+    Semilog,
+    /// Logarítmica en los dos ejes.
+    Loglog,
+    /// Carta de Smith (impedancia normalizada).
+    Smith,
+    /// Polar: círculos y radios cada 15°.
+    Polar,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -81,6 +92,10 @@ pub enum Tool {
     Marker,
     /// Estilográfica: engorda al apretar.
     Fountain,
+    /// Punteado: puntos redondos, grosor parejo.
+    Dotted,
+    /// Rayado: rayas cortas, grosor parejo.
+    Dashed,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

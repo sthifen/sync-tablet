@@ -19,8 +19,14 @@ final class Ink {
             HIGHLIGHTER = "highlighter", TAPE = "tape";
     static final String PLAIN = "plain", LINES = "lines", GRID = "grid", DOTS = "dots", CORNELL = "cornell",
             MUSIC = "music", TODO = "todo", HALF = "half", HALF_GRID = "halfgrid", HALF_H = "halfh", MM = "mm", ISO = "iso",
-            ENGINEERING = "engineering", HEX = "hex", WIDE = "wide", WEEK = "week", STORY = "story", HANDWRITING = "handwriting";
-    static final String MARKER = "marker", FOUNTAIN = "fountain";
+            ENGINEERING = "engineering", HEX = "hex", WIDE = "wide", WEEK = "week", STORY = "story", HANDWRITING = "handwriting",
+            SEMILOG = "semilog", LOGLOG = "loglog", SMITH = "smith", POLAR = "polar";
+    static final String MARKER = "marker", FOUNTAIN = "fountain", DOTTED = "dotted", DASHED = "dashed";
+
+    /** Punteado o rayado: grosor parejo y el trazo entero con su patrón. */
+    static boolean patterned(String tool) {
+        return DOTTED.equals(tool) || DASHED.equals(tool);
+    }
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final char[] ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789".toCharArray();
@@ -67,7 +73,7 @@ final class Ink {
             case CALLIGRAPHY:
                 double a = Math.atan2(dy, dx) - Math.PI / 4;
                 return w * (0.25f + 0.95f * (float) Math.abs(Math.sin(a))) * (0.6f + 0.4f * p);
-            case HIGHLIGHTER: case TAPE: case MARKER: return w;
+            case HIGHLIGHTER: case TAPE: case MARKER: case DOTTED: case DASHED: return w;
             case FOUNTAIN: return w * (0.55f + 0.75f * p * p);
             default: return pressureWidth(w, p);
         }
@@ -495,6 +501,8 @@ final class Ink {
         /** Última vez que se escribió en él (ms), para «Recientes». */
         long updated;
         final ArrayList<String> pages = new ArrayList<>();
+        /** Páginas que van a la derecha de la anterior, no debajo. */
+        final java.util.HashSet<String> right = new java.util.HashSet<>();
 
         Notebook(String id, String title, int color) {
             this.id = id;
@@ -511,6 +519,7 @@ final class Ink {
             o.put("folder", folder);
             o.put("favorite", favorite);
             o.put("updated", updated);
+            if (!right.isEmpty()) o.put("right", new JSONArray(right));
             return o;
         }
 
@@ -522,6 +531,8 @@ final class Ink {
             n.folder = o.optString("folder", "");
             n.favorite = o.optBoolean("favorite");
             n.updated = o.optLong("updated");
+            JSONArray r = o.optJSONArray("right");
+            if (r != null) for (int i = 0; i < r.length(); i++) n.right.add(r.getString(i));
             return n;
         }
     }

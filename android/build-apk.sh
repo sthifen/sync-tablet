@@ -32,7 +32,7 @@ APK="$HERE/synctablet.apk"
 PRUEBA=()
 if [[ " $* " == *" --prueba "* ]]; then
   APK="$HERE/synctablet-prueba.apk"
-  PRUEBA=(--rename-manifest-package dev.synctablet.prueba)
+  PRUEBA=(--rename-manifest-package "${SYNCTABLET_PKG:-dev.synctablet.prueba}")
 fi
 
 fetch() { # fetch <zip> <destino>

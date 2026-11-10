@@ -171,6 +171,16 @@ final class Notes {
         return true;
     }
 
+    /** Vuelve de la papelera: con el mismo id, y se sube otra vez al PC. */
+    boolean restore(JSONObject n) {
+        deleted.remove(n.optString("id"));
+        try {
+            n.put("updated", System.currentTimeMillis());
+        } catch (JSONException ignored) {
+        }
+        return adopt(n);
+    }
+
     void delete(String id) {
         JSONObject n = note(id);
         if (n == null) return;

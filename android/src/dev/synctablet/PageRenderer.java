@@ -259,6 +259,18 @@ final class PageRenderer {
                     for (int l = 0; l < 3; l++) c.drawLine(x, y + 300 + l * 40, x + 420, y + 300 + l * 40, lines);
                 }
                 break;
+            case Ink.SEMILOG:
+                drawLogPaper(c, false);
+                break;
+            case Ink.LOGLOG:
+                drawLogPaper(c, true);
+                break;
+            case Ink.SMITH:
+                drawSmith(c);
+                break;
+            case Ink.POLAR:
+                drawPolar(c);
+                break;
             case Ink.HANDWRITING:
                 for (float y = 110; y + 60 < Ink.H; y += 100) {
                     c.drawLine(40, y, Ink.W - 40, y, lines);
@@ -267,6 +279,186 @@ final class PageRenderer {
                 }
                 break;
         }
+    }
+
+    private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    private Paint label(float size) {
+        // Más oscuras que las líneas: se tienen que poder leer.
+        label.setColor(dark ? 0xFF8B95A5 : 0xFF6B7A90);
+        label.setTextSize(size);
+        label.setTextAlign(Paint.Align.CENTER);
+        return label;
+    }
+
+    /** Papel logarítmico: el eje y en 4 décadas; con `both`, el x en 3 décadas. */
+    private void drawLogPaper(Canvas c, boolean both) {
+        float left = 70, right = Ink.W - 40, top = 60, bottom = Ink.H - 60;
+        float base = lines.getStrokeWidth();
+        int yDecades = 4, xDecades = 3;
+        float dh = (bottom - top) / yDecades;
+        Paint t = label(15);
+        for (int d = 0; d < yDecades; d++) {
+            float y0 = bottom - d * dh;
+            for (int k = 1; k < 10; k++) {
+                float y = y0 - dh * (float) Math.log10(k);
+                lines.setStrokeWidth(base * (k == 1 ? 2.2f : k == 5 ? 1.3f : 0.8f));
+                c.drawLine(left, y, right, y, k == 1 ? margin : lines);
+                if (k == 1 || k == 2 || k == 3 || k == 5) c.drawText(String.valueOf(k), left - 18, y + 5, t);
+                if (k < 5) {
+                    // Medios: 1,5; 2,5; 3,5; 4,5 (más finos).
+                    float yh = y0 - dh * (float) Math.log10(k + 0.5);
+                    lines.setStrokeWidth(base * 0.45f);
+                    c.drawLine(left, yh, right, yh, lines);
+                }
+            }
+        }
+        lines.setStrokeWidth(base * 2.2f);
+        c.drawLine(left, top, right, top, margin);
+        c.drawText("1", left - 18, top + 5, t);
+        if (both) {
+            float dw = (right - left) / xDecades;
+            for (int d = 0; d < xDecades; d++) {
+                float x0 = left + d * dw;
+                for (int k = 1; k < 10; k++) {
+                    float x = x0 + dw * (float) Math.log10(k);
+                    lines.setStrokeWidth(base * (k == 1 ? 2.2f : k == 5 ? 1.3f : 0.8f));
+                    c.drawLine(x, top, x, bottom, k == 1 ? margin : lines);
+                    if (k == 1 || k == 2 || k == 3 || k == 5) c.drawText(String.valueOf(k), x, bottom + 26, t);
+                    if (k < 5) {
+                        float xh = x0 + dw * (float) Math.log10(k + 0.5);
+                        lines.setStrokeWidth(base * 0.45f);
+                        c.drawLine(xh, top, xh, bottom, lines);
+                    }
+                }
+            }
+            c.drawLine(right, top, right, bottom, margin);
+            c.drawText("1", right, bottom + 26, t);
+        } else {
+            // x lineal: 10 divisiones grandes de 5 cada una.
+            int n = 50;
+            for (int i = 0; i <= n; i++) {
+                float x = left + (right - left) * i / n;
+                lines.setStrokeWidth(base * (i % 5 == 0 ? 1.6f : 0.6f));
+                c.drawLine(x, top, x, bottom, i % 10 == 0 ? margin : lines);
+                if (i % 5 == 0) c.drawText(String.valueOf(i / 5), x, bottom + 26, t);
+            }
+        }
+        lines.setStrokeWidth(base);
+        c.drawLine(left, top, left, bottom, margin);
+        if (!both) c.drawLine(right, top, right, bottom, margin);
+    }
+
+    private static final float[] SMITH_R = {0, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1, 1.2f, 1.4f, 1.6f, 1.8f, 2, 3, 4, 5, 10, 20};
+    private static final float[] SMITH_X = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1, 1.2f, 1.4f, 1.6f, 1.8f, 2, 3, 4, 5, 10, 20};
+
+    private static boolean smithMajor(float v) {
+        return v == 0.2f || v == 0.5f || v == 1 || v == 2 || v == 5;
+    }
+
+    private static String smithLabel(float v) {
+        return v == (int) v ? String.valueOf((int) v) : String.valueOf(v).replace('.', ',');
+    }
+
+    /**
+     * Carta de Smith de impedancia normalizada: círculos de resistencia,
+     * arcos de reactancia, escala de ángulos de Γ y de longitudes de onda
+     * hacia el generador. Debajo, rayas para los cálculos.
+     */
+    private void drawSmith(Canvas c) {
+        float cx = Ink.W / 2, cy = 500, R = 400;
+        float base = lines.getStrokeWidth();
+        android.graphics.Path clip = new android.graphics.Path();
+        clip.addCircle(cx, cy, R, android.graphics.Path.Direction.CW);
+        c.save();
+        c.clipPath(clip);
+        for (float r : SMITH_R) {
+            if (r == 0) continue;
+            lines.setStrokeWidth(base * (smithMajor(r) ? 1.5f : 0.7f));
+            float u = r / (1 + r), rad = 1 / (1 + r);
+            c.drawCircle(cx + R * u, cy, R * rad, smithMajor(r) && r == 1 ? margin : lines);
+        }
+        for (float x : SMITH_X) {
+            lines.setStrokeWidth(base * (smithMajor(x) ? 1.5f : 0.7f));
+            float rad = R / x;
+            c.drawCircle(cx + R, cy - rad, rad, x == 1 ? margin : lines);
+            c.drawCircle(cx + R, cy + rad, rad, x == 1 ? margin : lines);
+        }
+        c.restore();
+        lines.setStrokeWidth(base * 1.6f);
+        c.drawLine(cx - R, cy, cx + R, cy, margin);
+        c.drawCircle(cx, cy, R, margin);
+        // Escalas exteriores: ángulo de Γ (dentro) y λ hacia el generador (fuera).
+        float r1 = R + 8, r2 = R + 46;
+        lines.setStrokeWidth(base);
+        c.drawCircle(cx, cy, r1 + 22, lines);
+        c.drawCircle(cx, cy, r2, lines);
+        Paint t = label(13);
+        for (int deg = -180; deg < 180; deg += 2) {
+            double a = Math.toRadians(deg);
+            float co = (float) Math.cos(a), si = (float) -Math.sin(a);
+            boolean big = deg % 10 == 0;
+            c.drawLine(cx + co * R, cy + si * R, cx + co * (R + (big ? 10 : 5)), cy + si * (R + (big ? 10 : 5)), lines);
+            if (deg % 30 == 0) c.drawText(deg + "°", cx + co * (r1 + 12), cy + si * (r1 + 12) + 5, t);
+        }
+        for (int k = 0; k < 250; k++) {
+            float wl = k * 0.002f;
+            // λ = (180° − θ) / 720°: 0 en el corto (izquierda), creciendo en sentido horario.
+            double a = Math.toRadians(180 - wl * 720);
+            float co = (float) Math.cos(a), si = (float) -Math.sin(a);
+            boolean big = k % 5 == 0;
+            c.drawLine(cx + co * r2, cy + si * r2, cx + co * (r2 - (big ? 10 : 5)), cy + si * (r2 - (big ? 10 : 5)), lines);
+            if (k % 25 == 0) c.drawText(String.format(java.util.Locale.ROOT, "%.2f", wl).replace('.', ','), cx + co * (r2 + 16), cy + si * (r2 + 16) + 5, t);
+        }
+        // Valores de r sobre el eje real y de x en el borde.
+        Paint small = label(12);
+        for (float r : SMITH_R) {
+            if (!smithMajor(r) && r != 0.1f && r != 0.3f && r != 3 && r != 10) continue;
+            float u = (r - 1) / (r + 1);
+            c.save();
+            c.rotate(-90, cx + R * u, cy);
+            c.drawText(smithLabel(r), cx + R * u - 14, cy - 4, small);
+            c.restore();
+        }
+        for (float x : SMITH_X) {
+            if (!smithMajor(x) && x != 10) continue;
+            // Γ en z = j·x: (x² − 1 + 2jx) / (x² + 1).
+            float gu = (x * x - 1) / (x * x + 1), gv = 2 * x / (x * x + 1);
+            float px = cx + (R - 16) * gu, py = cy - (R - 16) * gv, qy = cy + (R - 16) * gv;
+            c.drawText("+j" + smithLabel(x), px, py + 4, small);
+            c.drawText("−j" + smithLabel(x), px, qy + 8, small);
+        }
+        c.drawCircle(cx, cy, 4, dots);
+        Paint title = label(20);
+        title.setTextAlign(Paint.Align.LEFT);
+        c.drawText("Carta de Smith · z = Z / Z₀", 40, 40, title);
+        title.setTextAlign(Paint.Align.RIGHT);
+        title.setTextSize(15);
+        c.drawText("λ hacia el generador →", Ink.W - 40, 40, title);
+        for (float y = 1010; y < Ink.H - 30; y += 40) c.drawLine(40, y, Ink.W - 40, y, lines);
+        lines.setStrokeWidth(base);
+    }
+
+    /** Polar: círculos cada décima y radios cada 15°, para diagramas de radiación y fasores. */
+    private void drawPolar(Canvas c) {
+        float cx = Ink.W / 2, cy = 520, R = 440;
+        float base = lines.getStrokeWidth();
+        for (int i = 1; i <= 10; i++) {
+            lines.setStrokeWidth(base * (i % 5 == 0 ? 1.5f : 0.8f));
+            c.drawCircle(cx, cy, R * i / 10f, i == 10 ? margin : lines);
+        }
+        Paint t = label(14);
+        for (int deg = 0; deg < 360; deg += 5) {
+            double a = Math.toRadians(deg);
+            float co = (float) Math.cos(a), si = (float) -Math.sin(a);
+            boolean big = deg % 15 == 0;
+            lines.setStrokeWidth(base * (deg % 90 == 0 ? 1.5f : 0.7f));
+            if (big) c.drawLine(cx + co * R * 0.1f, cy + si * R * 0.1f, cx + co * R, cy + si * R, deg % 90 == 0 ? margin : lines);
+            else c.drawLine(cx + co * (R - 10), cy + si * (R - 10), cx + co * R, cy + si * R, lines);
+            if (deg % 30 == 0) c.drawText(deg + "°", cx + co * (R + 24), cy + si * (R + 24) + 5, t);
+        }
+        lines.setStrokeWidth(base);
+        for (float y = 1040; y < Ink.H - 30; y += 40) c.drawLine(40, y, Ink.W - 40, y, lines);
     }
 
     private final Paint note = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -404,6 +596,24 @@ final class PageRenderer {
             c.drawPath(path, ink);
             ink.setAlpha(255);
             ink.setStrokeCap(Paint.Cap.ROUND);
+            return;
+        }
+        if (Ink.patterned(s.tool) && s.n > 1) {
+            // Punteado: puntos redondos separados; rayado: rayas cortas.
+            boolean dots = Ink.DOTTED.equals(s.tool);
+            float w = s.width;
+            ink.setStrokeWidth(dots ? w * 1.3f : w);
+            ink.setPathEffect(new android.graphics.DashPathEffect(dots ? new float[] {0.01f, w * 2.6f} : new float[] {w * 3.5f, w * 2.8f}, 0));
+            path.reset();
+            boolean up = true;
+            for (int i = 0; i < s.n; i++) {
+                if (s.p(i) < 0) up = true;
+                if (up) path.moveTo(s.x(i), s.y(i));
+                else path.lineTo(s.x(i), s.y(i));
+                up = false;
+            }
+            c.drawPath(path, ink);
+            ink.setPathEffect(null);
             return;
         }
         if (s.n == 1) {

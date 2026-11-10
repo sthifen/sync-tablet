@@ -203,9 +203,29 @@ final class Store {
         return p;
     }
 
+    /** Página nueva en la posición `at`; `right`: junto a la anterior, no debajo. */
+    synchronized Ink.Page insertPage(Ink.Notebook n, int at, boolean right) {
+        Ink.Page p = new Ink.Page(Ink.newId(), n.id);
+        at = Math.max(0, Math.min(n.pages.size(), at));
+        if (at > 0) {
+            Ink.Page before = page(n.pages.get(at - 1));
+            if (before != null) p.background = before.background;
+        }
+        n.pages.add(at, p.id);
+        if (right && at > 0) n.right.add(p.id);
+        pages.put(p.id, p);
+        savePage(p);
+        saveNotebooks();
+        return p;
+    }
+
     /** Borra una página del cuaderno (no la última que quede). */
     synchronized boolean deletePage(Ink.Notebook n, String id) {
+        int at = n.pages.indexOf(id);
+        // Si empezaba fila, la de su derecha pasa a empezarla.
+        if (at >= 0 && !n.right.contains(id) && at + 1 < n.pages.size()) n.right.remove(n.pages.get(at + 1));
         if (n.pages.size() <= 1 || !n.pages.remove(id)) return false;
+        n.right.remove(id);
         pages.remove(id);
         versions.remove(id);
         final File f = new File(pagesDir, id + ".json");
@@ -213,6 +233,44 @@ final class Store {
         saveNotebooks();
         saveVersions();
         return true;
+    }
+
+    /** A la papelera: las páginas se copian a `into` y salen del cuaderno y de la sincronización. */
+    synchronized void trashNotebook(Ink.Notebook n, File into) {
+        into.mkdirs();
+        for (String id : n.pages) {
+            Ink.Page p = page(id);
+            if (p != null) {
+                try {
+                    Trash.write(new File(into, id + ".json"), p.toJson());
+                } catch (java.io.IOException e) {
+                    android.util.Log.w("SyncTablet", "papelera", e);
+                }
+            }
+        }
+        deleteNotebook(n);
+    }
+
+    /** De la papelera al cuaderno otra vez (null si no se pudo). */
+    synchronized Ink.Notebook restoreNotebook(JSONObject json, File from) {
+        if (json == null) return null;
+        try {
+            Ink.Notebook n = Ink.Notebook.fromJson(json);
+            if (notebook(n.id) != null) return null;
+            for (String id : n.pages) {
+                File f = new File(from, id + ".json");
+                Ink.Page p = f.isFile() ? Ink.Page.fromJson(Trash.read(f, "{}")) : new Ink.Page(id, n.id);
+                pages.put(p.id, p);
+                savePage(p);
+            }
+            n.updated = System.currentTimeMillis();
+            notebooks.add(0, n);
+            saveNotebooks();
+            return n;
+        } catch (JSONException e) {
+            android.util.Log.w("SyncTablet", "restaurar cuaderno", e);
+            return null;
+        }
     }
 
     synchronized void deleteNotebook(Ink.Notebook n) {

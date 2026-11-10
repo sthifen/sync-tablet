@@ -283,7 +283,7 @@ mod tests {
     }
 
     fn nb(title: &str, pages: &[&str]) -> Notebook {
-        Notebook { id: "nb1".into(), title: title.into(), color: "#000000".into(), pages: pages.iter().map(|s| s.to_string()).collect(), folder: String::new(), favorite: false, updated: 0 }
+        Notebook { id: "nb1".into(), title: title.into(), color: "#000000".into(), pages: pages.iter().map(|s| s.to_string()).collect(), folder: String::new(), favorite: false, updated: 0, right: Vec::new() }
     }
 
     fn page(id: &str) -> Page {

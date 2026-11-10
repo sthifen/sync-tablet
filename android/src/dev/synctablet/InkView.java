@@ -307,6 +307,7 @@ final class InkView extends View {
     void setPages(List<Ink.Page> list, int show) {
         pages.clear();
         pages.addAll(list);
+        laidOut = -1;
         for (PageNode n : nodes.values()) n.discard();
         nodes.clear();
         current = null;
@@ -325,6 +326,7 @@ final class InkView extends View {
     /** Página nueva al final, y desplazarse hasta ella. */
     void appendPage(Ink.Page p) {
         pages.add(p);
+        laidOut = -1;
         scrollToPage(pages.size() - 1, true);
     }
 
@@ -332,6 +334,7 @@ final class InkView extends View {
     void removePage(int i) {
         if (i < 0 || i >= pages.size()) return;
         Ink.Page gone = pages.remove(i);
+        laidOut = -1;
         clearSelection();
         undo.removeIf(a -> ((Map<?, ?>) a[1]).containsKey(gone));
         redo.removeIf(a -> ((Map<?, ?>) a[1]).containsKey(gone));
@@ -559,18 +562,78 @@ final class InkView extends View {
 
     // ---- Vista: encajar, zoom y desplazamiento ----
 
-    private static float pageTop(int i) {
-        return i * (Ink.H + GAP);
+    // Las páginas van en filas: una página «a la derecha» se pone junto a la
+    // anterior; las demás empiezan fila. El orden del cuaderno no cambia.
+    private final HashSet<String> rightIds = new HashSet<>();
+    private int[] rowOf = new int[0], colOf = new int[0];
+    private int rows, cols = 1;
+    private int laidOut = -1;
+
+    /** Qué páginas van a la derecha de la anterior. */
+    void setRightPages(java.util.Collection<String> ids) {
+        rightIds.clear();
+        if (ids != null) rightIds.addAll(ids);
+        laidOut = -1;
+        clampView(false);
+        renderLayer();
+    }
+
+    private void grid() {
+        if (laidOut == pages.size() && rowOf.length == pages.size()) return;
+        int n = pages.size();
+        rowOf = new int[n];
+        colOf = new int[n];
+        int r = -1, col = 0;
+        cols = 1;
+        for (int i = 0; i < n; i++) {
+            if (i > 0 && rightIds.contains(pages.get(i).id)) col++;
+            else {
+                r++;
+                col = 0;
+            }
+            rowOf[i] = r;
+            colOf[i] = col;
+            cols = Math.max(cols, col + 1);
+        }
+        rows = r + 1;
+        laidOut = n;
+    }
+
+    private float pageTop(int i) {
+        grid();
+        if (i < 0) return 0;
+        if (i >= rowOf.length) return (rows + i - rowOf.length) * (Ink.H + GAP);
+        return rowOf[i] * (Ink.H + GAP);
+    }
+
+    private float pageLeft(int i) {
+        grid();
+        return i >= 0 && i < colOf.length ? colOf[i] * (Ink.W + GAP) : 0;
     }
 
     private float docHeight() {
-        return pages.isEmpty() ? Ink.H : pageTop(pages.size()) - GAP;
+        grid();
+        return pages.isEmpty() ? Ink.H : rows * (Ink.H + GAP) - GAP;
     }
 
-    /** La página en la altura y del documento (la más cercana). */
-    private int pageAt(float docY) {
-        int i = (int) Math.floor((docY + GAP / 2) / (Ink.H + GAP));
-        return Math.max(0, Math.min(pages.size() - 1, i));
+    private float docWidth() {
+        grid();
+        return cols * (Ink.W + GAP) - GAP;
+    }
+
+    /** La página en (x, y) del documento (la más cercana). */
+    private int pageAt(float docX, float docY) {
+        grid();
+        if (pages.isEmpty()) return 0;
+        int r = Math.max(0, Math.min(rows - 1, (int) Math.floor((docY + GAP / 2) / (Ink.H + GAP))));
+        int c = Math.max(0, (int) Math.floor((docX + GAP / 2) / (Ink.W + GAP)));
+        int best = 0;
+        for (int i = 0; i < rowOf.length; i++) {
+            if (rowOf[i] != r) continue;
+            best = i;
+            if (colOf[i] >= c) break;
+        }
+        return best;
     }
 
     private float margin() {
@@ -596,6 +659,7 @@ final class InkView extends View {
         }
         if (pendingScroll >= 0) {
             oy = topInset + margin() - pageTop(pendingScroll) * scale;
+            ox = (w - Ink.W * scale) / 2 - pageLeft(pendingScroll) * scale;
             pendingScroll = -1;
         }
         clampView(false);
@@ -630,7 +694,7 @@ final class InkView extends View {
     }
 
     private void clampView(boolean pulling) {
-        float w = getWidth(), pw = Ink.W * scale, m = margin();
+        float w = getWidth(), pw = docWidth() * scale, m = margin();
         if (pw <= w - 2 * m) ox = (w - pw) / 2;
         else ox = Math.max(w - m - pw, Math.min(m, ox));
         float pullMax = pulling ? PULL_MAX_DP * density : 0;
@@ -640,7 +704,7 @@ final class InkView extends View {
 
     private void notifyVisible() {
         if (pages.isEmpty() || getHeight() == 0) return;
-        int v = pageAt((getHeight() / 2f - oy) / scale);
+        int v = pageAt((getWidth() / 2f - ox) / scale, (getHeight() / 2f - oy) / scale);
         if (v != visible) {
             visible = v;
             if (listener != null) listener.onPageVisible(v);
@@ -651,6 +715,7 @@ final class InkView extends View {
         if (i < 0 || i >= pages.size()) return;
         float save = oy;
         oy = topInset + margin() - pageTop(i) * scale;
+        if (pageLeft(i) > 0 || ox < 0) ox = (getWidth() - Ink.W * scale) / 2 - pageLeft(i) * scale;
         clampView(false);
         float target = oy;
         oy = save;
@@ -694,7 +759,7 @@ final class InkView extends View {
         layerCanvas.save();
         layerCanvas.translate(layerOx, layerOy + pad);
         layerCanvas.scale(layerScale, layerScale);
-        layerCanvas.translate(0, pageTop(i));
+        layerCanvas.translate(pageLeft(i), pageTop(i));
     }
 
     /** Pantalla → página i en el canvas dado. */
@@ -702,7 +767,7 @@ final class InkView extends View {
         c.save();
         c.translate(ox, oy);
         c.scale(scale, scale);
-        c.translate(0, pageTop(i));
+        c.translate(pageLeft(i), pageTop(i));
     }
 
     /** Ids que no se pintan en el bitmap (la selección mientras se arrastra). */
@@ -758,7 +823,7 @@ final class InkView extends View {
             c.restore();
         }
         if (mode == STROKE && current != null && current.n > 0
-                && (GPU || Ink.HIGHLIGHTER.equals(current.tool) || Ink.TAPE.equals(current.tool) || shaping || snapped)) {
+                && (GPU || Ink.HIGHLIGHTER.equals(current.tool) || Ink.TAPE.equals(current.tool) || Ink.patterned(current.tool) || shaping || snapped)) {
             onScreenPage(c, currentPage);
             renderer.drawStroke(c, current, false);
             c.restore();
@@ -784,7 +849,7 @@ final class InkView extends View {
             if (y > bottom || y + Ink.H + 8 < top) continue;
             PageNode n = pageNode(i, zooming);
             c.save();
-            c.translate(ox, oy + y * scale);
+            c.translate(ox + pageLeft(i) * scale, oy + y * scale);
             if (n.scale != scale) c.scale(scale / n.scale, scale / n.scale);
             c.drawRenderNode(n.node);
             if (n.recent.hasDisplayList()) c.drawRenderNode(n.recent);
@@ -1195,8 +1260,8 @@ final class InkView extends View {
 
     private void startNote(MotionEvent e, int idx) {
         float docX = (e.getX(idx) - ox) / scale, docY = (e.getY(idx) - oy) / scale;
-        notePage = pageAt(docY);
-        float x = docX, y = docY - pageTop(notePage), reach = 26 * density / scale;
+        notePage = pageAt(docX, docY);
+        float x = docX - pageLeft(notePage), y = docY - pageTop(notePage), reach = 26 * density / scale;
         noteDownX = x;
         noteDownY = y;
         noteMoved = false;
@@ -1311,10 +1376,10 @@ final class InkView extends View {
             minY = Math.min(minY, linkPath[i + 1]);
             maxY = Math.max(maxY, linkPath[i + 1]);
         }
-        int first = pageAt(linkPath[1]), last = pageAt(linkPath[n - 1]);
+        int first = pageAt(linkPath[0], linkPath[1]), last = pageAt(linkPath[n - 2], linkPath[n - 1]);
         Ink.Page pa = pages.get(first), pb = pages.get(last);
-        Ink.Mark a = markAt(pa, linkPath[0], linkPath[1] - pageTop(first));
-        Ink.Mark b = markAt(pb, linkPath[n - 2], linkPath[n - 1] - pageTop(last));
+        Ink.Mark a = markAt(pa, linkPath[0] - pageLeft(first), linkPath[1] - pageTop(first));
+        Ink.Mark b = markAt(pb, linkPath[n - 2] - pageLeft(last), linkPath[n - 1] - pageTop(last));
         if (maxX - minX + maxY - minY < 16) {
             if (a != null) listener.onMarkRequest(first, a, a.x, a.y, a.w, a.h);
             return;
@@ -1331,6 +1396,8 @@ final class InkView extends View {
         }
         if (maxX - minX < 30 || maxY - minY < 16) return;
         float top = pageTop(first);
+        minX -= pageLeft(first);
+        maxX -= pageLeft(first);
         listener.onMarkRequest(first, null, minX, minY - top, maxX - minX, Math.min(maxY - top, Ink.H) - (minY - top));
     }
 
@@ -1391,7 +1458,7 @@ final class InkView extends View {
             if (p.marks.isEmpty()) continue;
             float y = pageTop(i);
             if (centers == null) centers = new HashMap<>();
-            for (Ink.Mark m : p.marks) centers.put(m.id, new float[] {m.x + m.w / 2, y + m.y + m.h / 2});
+            for (Ink.Mark m : p.marks) centers.put(m.id, new float[] {pageLeft(i) + m.x + m.w / 2, y + m.y + m.h / 2});
             if (y > bottom || y + Ink.H < top) continue;
             onScreenPage(c, i);
             for (Ink.Mark m : p.marks) {
@@ -1627,7 +1694,7 @@ final class InkView extends View {
     /** Qué parte de la selección hay en ese punto de la pantalla (SelectionMath). */
     private int selectionHit(float sx, float sy) {
         if (selPage < 0) return SelectionMath.NONE;
-        float x = (sx - ox) / scale, y = (sy - oy) / scale - pageTop(selPage), k = density / scale;
+        float x = (sx - ox) / scale - pageLeft(selPage), y = (sy - oy) / scale - pageTop(selPage), k = density / scale;
         Ink.Stroke line = selectedLine();
         if (line != null) {
             ShapeTools.Spec l = line.shape;
@@ -1743,9 +1810,9 @@ final class InkView extends View {
 
     /** Selecciona la imagen de más arriba bajo el dedo; fuera de una imagen, deselecciona. */
     private void tapImage(float sx, float sy) {
-        float x = (sx - ox) / scale, docY = (sy - oy) / scale;
-        int p = pageAt(docY);
-        float y = docY - pageTop(p);
+        float docX = (sx - ox) / scale, docY = (sy - oy) / scale;
+        int p = pageAt(docX, docY);
+        float x = docX - pageLeft(p), y = docY - pageTop(p);
         ArrayList<Ink.Item> items = pages.get(p).items;
         for (int i = items.size() - 1; i >= 0; i--) {
             Ink.Item it = items.get(i);
@@ -1764,7 +1831,7 @@ final class InkView extends View {
 
     private void start(MotionEvent e, int idx) {
         float docY = (e.getY(idx) - oy) / scale;
-        currentPage = pageAt(docY);
+        currentPage = pageAt((e.getX(idx) - ox) / scale, docY);
         if (erases(e, idx)) {
             mode = ERASE;
             erased.clear();
@@ -1812,21 +1879,21 @@ final class InkView extends View {
         float docX = (sx - ox) / scale, docY = (sy - oy) / scale;
         switch (mode) {
             case ERASE: {
-                int p = pageAt(docY);
-                eraseAt(pages.get(p), docX, docY - pageTop(p));
+                int p = pageAt(docX, docY);
+                eraseAt(pages.get(p), docX - pageLeft(p), docY - pageTop(p));
                 return;
             }
             case NOTE_MOVE:
             case NOTE_ARROW:
-                moveNote(docX, docY - pageTop(notePage));
+                moveNote(docX - pageLeft(notePage), docY - pageTop(notePage));
                 return;
             case LASSO_DRAW:
-                lasso.add(docX);
+                lasso.add(docX - pageLeft(currentPage));
                 lasso.add(docY - pageTop(currentPage));
                 invalidate();
                 return;
             case DRAG:
-                drag(docX, docY - pageTop(selPage));
+                drag(docX - pageLeft(selPage), docY - pageTop(selPage));
                 return;
             case LINK_DRAW:
                 addLinkPoint(docX, docY);
@@ -1840,7 +1907,7 @@ final class InkView extends View {
                 invalidate();
                 return;
             case STROKE:
-                addPoint(docX, docY - pageTop(currentPage), pressure(e, idx, h));
+                addPoint(docX - pageLeft(currentPage), docY - pageTop(currentPage), pressure(e, idx, h));
                 return;
             default:
         }
@@ -1876,7 +1943,7 @@ final class InkView extends View {
                 StringBuilder pts = new StringBuilder();
                 for (int i = 0; i < 2 * laserN; i++) {
                     if (i > 0) pts.append(',');
-                    pts.append(Math.round(i % 2 == 0 ? laser[i] : laser[i] - pageTop(p)));
+                    pts.append(Math.round(i % 2 == 0 ? laser[i] - pageLeft(p) : laser[i] - pageTop(p)));
                 }
                 listener.onOp("{\"t\":\"laser\",\"page\":\"" + pages.get(p).id + "\",\"points\":[" + pts + "]}");
                 invalidate();
@@ -1884,8 +1951,8 @@ final class InkView extends View {
             }
             case TEXT_TAP: {
                 float docX = (e.getX(idx) - ox) / scale, docY = (e.getY(idx) - oy) / scale;
-                int page = pageAt(docY);
-                float x = docX, y = docY - pageTop(page);
+                int page = pageAt(docX, docY);
+                float x = docX - pageLeft(page), y = docY - pageTop(page);
                 Ink.Item hit = null;
                 for (Ink.Item it : pages.get(page).items) {
                     if (!it.isImage() && x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + renderer.itemHeight(it) + 10) hit = it;
@@ -1975,8 +2042,8 @@ final class InkView extends View {
     /** Toque con el dedo: destapa o tapa una cinta; fuera de la selección, la quita. */
     private void tap(float sx, float sy) {
         float docX = (sx - ox) / scale, docY = (sy - oy) / scale;
-        int p = pageAt(docY);
-        float x = docX, y = docY - pageTop(p);
+        int p = pageAt(docX, docY);
+        float x = docX - pageLeft(p), y = docY - pageTop(p);
         List<Ink.Stroke> strokes = pages.get(p).strokes;
         for (int i = strokes.size() - 1; i >= 0; i--) {
             Ink.Stroke s = strokes.get(i);
@@ -2022,12 +2089,12 @@ final class InkView extends View {
         if (s == null) return;
         if (guides.active() && !shaping && !snapped) {
             // A pantalla, se pega al borde de la guía, y de vuelta a la hoja.
-            float top = pageTop(currentPage);
-            float[] sp = {docX * scale + ox, (y + top) * scale + oy};
+            float top = pageTop(currentPage), left = pageLeft(currentPage);
+            float[] sp = {(docX + left) * scale + ox, (y + top) * scale + oy};
             if (s.n == 0) guides.begin(sp[0], sp[1]);
             if (guides.snapping()) {
                 guides.snap(sp);
-                docX = (sp[0] - ox) / scale;
+                docX = (sp[0] - ox) / scale - left;
                 y = (sp[1] - oy) / scale - top;
                 removeCallbacks(holdCheck);
             }
@@ -2071,7 +2138,7 @@ final class InkView extends View {
             if (dx * dx + dy * dy < 0.25f) return;
         }
         s.add(x, y, pressure);
-        if (Ink.HIGHLIGHTER.equals(s.tool)) {
+        if (Ink.HIGHLIGHTER.equals(s.tool) || Ink.patterned(s.tool)) {
             invalidate();
         } else if (GPU) {
             invalidate();
@@ -2483,7 +2550,7 @@ final class InkView extends View {
         pointerId = e.getPointerId(idx);
         mode = DRAG;
         dragHandle = hit;
-        dragX = (e.getX(idx) - ox) / scale;
+        dragX = (e.getX(idx) - ox) / scale - pageLeft(selPage);
         dragY = (e.getY(idx) - oy) / scale - pageTop(selPage);
         dragBox = selArray();
         dragAngle = 0;

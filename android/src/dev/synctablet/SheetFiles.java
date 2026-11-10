@@ -106,6 +106,19 @@ final class SheetFiles {
         keep(c, docs);
     }
 
+    /** Vuelve de la papelera: el archivo ya está en su sitio, falta el índice. */
+    static synchronized void restore(Context c, String id, String title, String folder, long updated) {
+        ArrayList<Doc> docs = list(c);
+        docs.removeIf(d -> d.id.equals(id));
+        Doc d = new Doc();
+        d.id = id;
+        d.title = title;
+        d.folder = folder == null ? "" : folder;
+        d.updated = updated;
+        docs.add(d);
+        keep(c, docs);
+    }
+
     static synchronized void delete(Context c, String id) {
         ArrayList<Doc> docs = list(c);
         docs.removeIf(d -> d.id.equals(id));

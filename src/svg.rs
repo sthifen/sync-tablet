@@ -24,7 +24,7 @@ pub fn segment_width(tool: Tool, width: f32, p: f32, dx: f32, dy: f32) -> f32 {
             let a = dy.atan2(dx) - std::f32::consts::FRAC_PI_4;
             width * (0.25 + 0.95 * a.sin().abs()) * (0.6 + 0.4 * p)
         }
-        Tool::Highlighter | Tool::Tape | Tool::Marker => width,
+        Tool::Highlighter | Tool::Tape | Tool::Marker | Tool::Dotted | Tool::Dashed => width,
         Tool::Fountain => width * (0.55 + 0.75 * p * p),
     }
 }
@@ -139,6 +139,9 @@ fn background(s: &mut String, bg: Background) {
                 top += 110.0;
             }
         }
+        Background::Semilog | Background::Loglog => log_paper(s, bg == Background::Loglog),
+        Background::Smith => smith(s),
+        Background::Polar => polar(s),
         Background::Todo => {
             let mut y = 100.0;
             while y < PAGE_H - 40.0 {
@@ -178,6 +181,69 @@ fn background(s: &mut String, bg: Background) {
         line(s, 250.0, 40.0, 250.0, bottom);
         line(s, 0.0, bottom, PAGE_W, bottom);
         s.push_str("</g>");
+    }
+}
+
+fn log_paper(s: &mut String, both: bool) {
+    let (left, right, top, bottom) = (70.0, PAGE_W - 40.0, 60.0, PAGE_H - 60.0);
+    let dh = (bottom - top) / 4.0;
+    for d in 0..4 {
+        let y0 = bottom - d as f32 * dh;
+        for k in 1..10 {
+            let y = y0 - dh * (k as f32).log10();
+            line(s, left, y, right, y);
+        }
+    }
+    line(s, left, top, right, top);
+    if both {
+        let dw = (right - left) / 3.0;
+        for d in 0..3 {
+            let x0 = left + d as f32 * dw;
+            for k in 1..10 {
+                let x = x0 + dw * (k as f32).log10();
+                line(s, x, top, x, bottom);
+            }
+        }
+        line(s, right, top, right, bottom);
+    } else {
+        for i in 0..=50 {
+            let x = left + (right - left) * i as f32 / 50.0;
+            line(s, x, top, x, bottom);
+        }
+    }
+}
+
+fn smith(s: &mut String) {
+    let (cx, cy, r) = (PAGE_W / 2.0, 500.0, 400.0);
+    let _ = write!(s, r#"<clipPath id="smith"><circle cx="{cx}" cy="{cy}" r="{r}"/></clipPath><g clip-path="url(#smith)">"#);
+    for v in [0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0] {
+        let _ = write!(s, r#"<circle cx="{}" cy="{cy}" r="{}"/>"#, cx + r * v / (1.0 + v), r / (1.0 + v));
+        let _ = write!(s, r#"<circle cx="{}" cy="{}" r="{}"/>"#, cx + r, cy - r / v, r / v);
+        let _ = write!(s, r#"<circle cx="{}" cy="{}" r="{}"/>"#, cx + r, cy + r / v, r / v);
+    }
+    s.push_str("</g>");
+    let _ = write!(s, r#"<circle cx="{cx}" cy="{cy}" r="{r}"/><circle cx="{cx}" cy="{cy}" r="{}"/><circle cx="{cx}" cy="{cy}" r="{}"/>"#, r + 30.0, r + 46.0);
+    line(s, cx - r, cy, cx + r, cy);
+    let mut y = 1010.0;
+    while y < PAGE_H - 30.0 {
+        line(s, 40.0, y, PAGE_W - 40.0, y);
+        y += 40.0;
+    }
+}
+
+fn polar(s: &mut String) {
+    let (cx, cy, r) = (PAGE_W / 2.0, 520.0, 440.0);
+    for i in 1..=10 {
+        let _ = write!(s, r#"<circle cx="{cx}" cy="{cy}" r="{}"/>"#, r * i as f32 / 10.0);
+    }
+    for k in 0..24 {
+        let a = (k as f32 * 15.0).to_radians();
+        line(s, cx + a.cos() * r * 0.1, cy - a.sin() * r * 0.1, cx + a.cos() * r, cy - a.sin() * r);
+    }
+    let mut y = 1040.0;
+    while y < PAGE_H - 30.0 {
+        line(s, 40.0, y, PAGE_W - 40.0, y);
+        y += 40.0;
     }
 }
 
@@ -265,6 +331,22 @@ fn stroke_svg(s: &mut String, stroke: &Stroke) {
         return;
     }
     let col = color(&stroke.color);
+    if matches!(stroke.tool, Tool::Dotted | Tool::Dashed) {
+        let w = stroke.width;
+        let (sw, dash) = if stroke.tool == Tool::Dotted { (w * 1.3, format!("0.01 {:.1}", w * 2.6)) } else { (w, format!("{:.1} {:.1}", w * 3.5, w * 2.8)) };
+        let _ = write!(s, r#"<path fill="none" stroke="{col}" stroke-width="{sw:.1}" stroke-dasharray="{dash}" stroke-linecap="round" stroke-linejoin="round" d=""#);
+        let mut up = true;
+        for i in 0..n {
+            let (x, y, p) = stroke.point(i);
+            if p < 0.0 {
+                up = true;
+            }
+            let _ = write!(s, "{}{x:.1} {y:.1}", if up { "M" } else { "L" });
+            up = false;
+        }
+        s.push_str(r#""/>"#);
+        return;
+    }
     if matches!(stroke.tool, Tool::Highlighter | Tool::Tape) {
         let opacity = if stroke.tool == Tool::Tape { 0.85 } else { 0.35 };
         let _ = write!(

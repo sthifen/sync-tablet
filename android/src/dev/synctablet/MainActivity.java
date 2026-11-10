@@ -67,7 +67,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private final HashMap<String, Bitmap> thumbCache = new HashMap<>();
 
     // vistas
-    private LinearLayout sidebar, noteList, nbList, pageBox;
+    private LinearLayout sidebar, noteList, nbList, folderList, pageBox;
+    /** Se ve la papelera en vez de Inicio. */
+    private boolean trashView;
+    private Object trashBack;
     private View edge, connDot;
     private TextView connText, crumb, saveState;
     private ScrollView scroller;
@@ -101,6 +104,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         notes = Notes.get(this);
         sync = SyncClient.get(this);
         renderer = new PageRenderer(this);
+        Trash.purgeOld(this);
         build();
         String last = saved != null ? saved.getString("note") : prefs.getString("last", null);
         if (last != null && notes.note(last) != null) openNote(last); else showHome();
@@ -253,26 +257,30 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         sidebar.addView(brand, new LinearLayout.LayoutParams(-1, t.dp(50)));
 
         sidebar.addView(navItem(IconView.SEARCH, "Buscar", v -> openSearch()));
-        sidebar.addView(navItem(IconView.HOME, "Inicio", v -> { flushSave(); setFolderView(null); showHome(); }));
-        sidebar.addView(navItem(IconView.PLUS, "Nueva nota", v -> newNote()));
-        sidebar.addView(navItem(IconView.PEN, "Nuevo cuaderno", v -> askNewNotebook()));
-        sidebar.addView(navItem(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null)));
+        sidebar.addView(navItem(IconView.HOME, "Inicio", v -> goTo(null)));
+        sidebar.addView(navItem(IconView.PLUS, "Crear", v -> createMenu()));
         sidebar.addView(navItem(IconView.NEURON, "Mapa de ideas", v -> startActivityForResult(new Intent(this, GraphActivity.class), OPEN_GRAPH)));
         sidebar.addView(navItem(IconView.SLIDERS, "Organizar materias", v -> organize()));
         sidebar.addView(navItem(IconView.WAND, "Personalizar", v -> personalize()));
+        sidebar.addView(navItem(IconView.TRASH, "Papelera", v -> openTrash()));
 
         ScrollView sv = new ScrollView(this);
         LinearLayout lists = new LinearLayout(this);
         lists.setOrientation(LinearLayout.VERTICAL);
         sv.addView(lists);
-        lists.addView(label("Notas", v -> newNote(), "Nueva nota"));
-        noteList = new LinearLayout(this);
-        noteList.setOrientation(LinearLayout.VERTICAL);
-        lists.addView(noteList);
-        lists.addView(label("Cuadernos", v -> askNewNotebook(), "Nuevo cuaderno"));
+        // Carpetas primero (con sus cuadernos y notas dentro); después lo suelto.
+        lists.addView(label("Carpetas", v -> askNewFolder(null, ""), "Nueva carpeta"));
+        folderList = new LinearLayout(this);
+        folderList.setOrientation(LinearLayout.VERTICAL);
+        lists.addView(folderList);
+        lists.addView(label("Cuadernos", v -> { goTo(null); askNewNotebook(); }, "Nuevo cuaderno"));
         nbList = new LinearLayout(this);
         nbList.setOrientation(LinearLayout.VERTICAL);
         lists.addView(nbList);
+        lists.addView(label("Notas", v -> { goTo(null); newNote(); }, "Nueva nota"));
+        noteList = new LinearLayout(this);
+        noteList.setOrientation(LinearLayout.VERTICAL);
+        lists.addView(noteList);
         sidebar.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
 
         View line = new View(this);
@@ -410,33 +418,59 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     private void renderSidebar() {
         noteList.removeAllViews();
+        HashMap<String, String> placed = noteFolders();
+        int loose = 0;
         for (JSONObject n : sortedNotes()) {
-            String id = n.optString("id");
-            String ic = n.optString("icon");
-            LinearLayout r = sideRow(id.equals(noteId));
-            TextView em = text(ic.isEmpty() ? "📄" : ic, 17, t.text, t.regular);
-            em.setGravity(Gravity.CENTER);
-            r.addView(em, new LinearLayout.LayoutParams(t.dp(26), -2));
-            r.addView(sideTitle(n.optString("title"), id.equals(noteId)), new LinearLayout.LayoutParams(0, -2, 1));
-            r.setOnClickListener(v -> openNote(id));
-            r.setOnLongClickListener(v -> { confirmDeleteNote(id); return true; });
-            noteList.addView(r);
+            if (placed.containsKey(n.optString("id"))) continue;
+            noteList.addView(sideNoteRow(n, t.dp(6)));
+            loose++;
         }
-        if (notes.list().isEmpty()) noteList.addView(sideHint("Aún no hay notas"));
+        if (loose == 0) noteList.addView(sideHint(notes.list().isEmpty() ? "Aún no hay notas" : "Todas están en carpetas"));
 
+        folderList.removeAllViews();
         nbList.removeAllViews();
         // Primero las carpetas, cada una con sus cuadernos; después los sueltos.
         java.util.Set<String> closed = prefs.getStringSet("foldersClosed", java.util.Collections.emptySet());
-        for (String folder : folders()) {
-            ArrayList<Ink.Notebook> inside = notebooksIn(folder);
-            boolean open = !closed.contains(folder);
-            nbList.addView(folderRow(folder, inside.size(), open));
-            if (open) for (Ink.Notebook n : inside) nbList.addView(notebookRow(n, t.dp(24)));
-        }
+        for (String folder : childFolders("")) sideFolder(folder, 0, closed);
+        if (childFolders("").isEmpty()) folderList.addView(sideHint("Toca + para crear una carpeta"));
         for (Ink.Notebook n : notebooksIn("")) nbList.addView(notebookRow(n, t.dp(6)));
-        if (store.notebooks().isEmpty()) nbList.addView(sideHint("Aún no hay cuadernos"));
+        if (notebooksIn("").isEmpty()) nbList.addView(sideHint(store.notebooks().isEmpty() ? "Aún no hay cuadernos" : "Todos están en carpetas"));
         View spacer = new View(this);
         nbList.addView(spacer, new LinearLayout.LayoutParams(-1, t.dp(12)));
+    }
+
+    /** Una carpeta en la barra lateral y, si está abierta, sus subcarpetas y cuadernos. */
+    private void sideFolder(String folder, int depth, java.util.Set<String> closed) {
+        ArrayList<Ink.Notebook> inside = notebooksIn(folder);
+        ArrayList<String> subs = childFolders(folder);
+        boolean open = !closed.contains(folder);
+        ArrayList<JSONObject> ns = notesIn(folder);
+        folderList.addView(folderRow(folder, inside.size() + subs.size() + ns.size(), open, depth));
+        if (!open) return;
+        for (String sub : subs) sideFolder(sub, depth + 1, closed);
+        for (Ink.Notebook n : inside) folderList.addView(notebookRow(n, t.dp(24 + 16 * depth)));
+        for (JSONObject n : ns) folderList.addView(sideNoteRow(n, t.dp(30 + 16 * depth)));
+    }
+
+    private View sideNoteRow(JSONObject n, int indent) {
+        String id = n.optString("id");
+        String ic = n.optString("icon");
+        LinearLayout r = sideRow(id.equals(noteId));
+        r.setPadding(indent, 0, t.dp(10), 0);
+        TextView em = text(ic.isEmpty() ? "📄" : ic, 15, t.text, t.regular);
+        em.setGravity(Gravity.CENTER);
+        r.addView(em, new LinearLayout.LayoutParams(t.dp(26), -2));
+        r.addView(sideTitle(n.optString("title"), id.equals(noteId)), new LinearLayout.LayoutParams(0, -2, 1));
+        r.setOnClickListener(v -> openNote(id));
+        r.setOnLongClickListener(v -> { confirmDeleteNote(id); return true; });
+        return r;
+    }
+
+    /** Ir a una carpeta (o a Inicio con null), saliendo de la papelera. */
+    private void goTo(String folder) {
+        flushSave();
+        setFolderView(folder);
+        showHome();
     }
 
     private View notebookRow(Ink.Notebook n, int indent) {
@@ -456,8 +490,9 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     }
 
     /** Tocar el nombre abre la carpeta; la flecha solo pliega su lista. */
-    private View folderRow(String folder, int count, boolean open) {
+    private View folderRow(String folder, int count, boolean open, int depth) {
         LinearLayout r = sideRow(folder.equals(folderView) && noteId == null);
+        r.setPadding(t.dp(6 + 16 * depth), 0, t.dp(10), 0);
         TextView arrow = text(open ? "▾" : "▸", 15, t.faint, t.regular);
         arrow.setGravity(Gravity.CENTER);
         arrow.setContentDescription((open ? "Plegar " : "Desplegar ") + folder);
@@ -468,9 +503,12 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             renderSidebar();
         });
         r.addView(arrow, new LinearLayout.LayoutParams(t.dp(30), -1));
-        r.addView(icon(IconView.FOLDER, t.muted, ""), new LinearLayout.LayoutParams(t.dp(22), t.dp(22)));
-        r.addView(sideTitle(folder, folder.equals(folderView) && noteId == null), new LinearLayout.LayoutParams(0, -2, 1));
+        r.addView(icon(IconView.FOLDER, hasFolderColor(folder) ? folderColor(folder) : t.muted, ""), new LinearLayout.LayoutParams(t.dp(22), t.dp(22)));
+        r.addView(sideTitle(leaf(folder), folder.equals(folderView) && noteId == null), new LinearLayout.LayoutParams(0, -2, 1));
         r.addView(text(String.valueOf(count), 12, t.faint, t.regular));
+        IconView add = icon(IconView.PLUS, t.faint, "Crear en " + leaf(folder));
+        add.setOnClickListener(v -> { goTo(folder); createMenu(); });
+        r.addView(add, new LinearLayout.LayoutParams(t.dp(30), t.dp(30)));
         r.setContentDescription("Carpeta " + folder);
         r.setOnClickListener(v -> { flushSave(); setFolderView(folder); showHome(); });
         r.setOnLongClickListener(v -> { folderMenu(folder); return true; });
@@ -554,6 +592,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     }
 
     private void showHome() {
+        if (trashView) {
+            showTrash();
+            return;
+        }
         if (folderView != null && !folders().contains(folderView)) setFolderView(null);
         if (folderView != null) {
             showFolder();
@@ -591,7 +633,6 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
         sectionTitle("Cuadernos");
         gallery();
-        documentsSection("");
         View end = new View(this);
         pageBox.addView(end, new LinearLayout.LayoutParams(-1, t.dp(120)));
         renderSidebar();
@@ -607,22 +648,24 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         prefs.edit().remove("last").apply();
         pageBox.removeAllViews();
         pageBox.setTag(folderView);
-        crumb.setText("🏠  Inicio  ›  " + folderView);
+        crumb.setText("🏠  Inicio  ›  " + folderView.replace("/", "  ›  "));
         saveState.setText("");
 
-        TextView ic = text("📁", 58, t.text, t.regular);
-        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(-2, -2);
+        View ic = new FolderArt(this, folderColor(folderView));
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(t.dp(84), t.dp(72));
         ilp.topMargin = -t.dp(40);
         pageBox.addView(ic, ilp);
-        TextView title = text(folderView, 36, t.text, t.bold);
+        TextView title = text(leaf(folderView), 36, t.text, t.bold);
         title.setPadding(0, t.dp(14), 0, t.dp(6));
         pageBox.addView(title);
-        int nb = notebooksIn(folderView).size(), nn = notesIn(folderView).size();
-        String what = nb + nn == 0 ? "Carpeta vacía" : (nb == 1 ? "1 cuaderno" : nb + " cuadernos") + (nn == 0 ? "" : nn == 1 ? " · 1 nota" : " · " + nn + " notas");
+        int nb = notebooksIn(folderView).size(), nn = notesIn(folderView).size(), nf = childFolders(folderView).size(), nd = documentCards(folderView).size();
+        String what = nb + nn + nf + nd == 0 ? "Carpeta vacía" : (nf == 0 ? "" : (nf == 1 ? "1 carpeta · " : nf + " carpetas · ")) + (nb == 1 ? "1 cuaderno" : nb + " cuadernos")
+                + (nn == 0 ? "" : nn == 1 ? " · 1 nota" : " · " + nn + " notas") + (nd == 0 ? "" : nd == 1 ? " · 1 documento" : " · " + nd + " documentos");
         pageBox.addView(text(what, 15, t.faint, t.regular));
         LinearLayout actions = row();
         actions.setPadding(0, t.dp(14), 0, 0);
-        actions.addView(pill("‹  Inicio", v -> { setFolderView(null); showHome(); }));
+        String up = parentOf(folderView);
+        actions.addView(pill(up.isEmpty() ? "‹  Inicio" : "‹  " + leaf(up), v -> { setFolderView(up.isEmpty() ? null : up); showHome(); }));
         String here = folderView;
         actions.addView(pill("Opciones de la carpeta", v -> folderMenu(here)));
         actions.addView(pill(selecting ? "Terminar selección" : "Seleccionar", v -> setSelecting(!selecting)));
@@ -698,39 +741,65 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         ArrayList<View> views = new ArrayList<>();
         String here = folderView;
         if (here == null) {
-            for (String f : folders()) views.add(folderCard(f));
+            for (String f : childFolders("")) views.add(folderCard(f));
             for (Ink.Notebook n : list) views.add(card(n));
-            if (!selecting) {
-                views.add(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()));
-                views.add(actionCard(IconView.FOLDER, "Nueva carpeta", v -> askNewFolder(null)));
-            }
+            views.addAll(documentCards(""));
+            if (!selecting) views.add(actionCard(IconView.PLUS, "Crear", v -> createMenu()));
             grid(views);
             return;
         }
-        // Dentro de una materia, por meses.
-        String month = null;
-        for (Ink.Notebook n : list) {
-            String m = Topics.month(null, n.updated > 0 ? n.updated : System.currentTimeMillis());
-            if (!m.equals(month)) {
-                if (!views.isEmpty()) grid(views);
-                views = new ArrayList<>();
-                sectionTitle(m);
-                month = m;
-            }
-            views.add(card(n));
-        }
-        if (!views.isEmpty()) grid(views);
-        ArrayList<JSONObject> inside = notesIn(here);
-        if (!inside.isEmpty()) {
-            sectionTitle("Notas");
-            for (JSONObject n : inside) pageBox.addView(noteRow(n));
-        }
-        documentsSection(here);
-        sectionTitle("Agregar");
-        views = new ArrayList<>();
-        views.add(actionCard(IconView.PLUS, "Nuevo cuaderno", v -> askNewNotebook()));
-        views.add(actionCard(IconView.PAGES, "Agregar cuadernos", v -> addNotebooks(here)));
+        // Todo junto: subcarpetas, cuadernos y notas, y un solo «Crear».
+        for (String f : childFolders(here)) views.add(folderCard(f));
+        for (Ink.Notebook n : list) views.add(card(n));
+        for (JSONObject n : notesIn(here)) views.add(noteCard(n));
+        views.addAll(documentCards(here));
+        if (!selecting) views.add(actionCard(IconView.PLUS, "Crear", v -> createMenu()));
         grid(views);
+    }
+
+    /** Una nota como tarjeta, junto a los cuadernos. */
+    private View noteCard(JSONObject n) {
+        String id = n.optString("id");
+        LinearLayout c = cardBox();
+        FrameLayout art = new FrameLayout(this);
+        art.setBackgroundColor(t.callout);
+        String ic = n.optString("icon");
+        TextView em = text(ic.isEmpty() ? "📄" : ic, 34, t.text, t.regular);
+        em.setGravity(Gravity.CENTER);
+        art.addView(em, new FrameLayout.LayoutParams(-1, t.dp(64), Gravity.TOP));
+        String body = Notes.text(n);
+        TextView snip = text(body, 12, t.muted, t.regular);
+        snip.setMaxLines(4);
+        snip.setEllipsize(TextUtils.TruncateAt.END);
+        snip.setPadding(t.dp(14), 0, t.dp(14), t.dp(8));
+        FrameLayout.LayoutParams slp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        art.addView(snip, slp);
+        c.addView(art, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setPadding(t.dp(12), t.dp(10), t.dp(12), t.dp(12));
+        String title = n.optString("title");
+        TextView name = text(title.isEmpty() ? "Sin título" : title, 15, t.text, t.medium);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        info.addView(name);
+        String when = n.optLong("updated") > 0 ? " · " + DateUtils.getRelativeTimeSpanString(n.optLong("updated"), System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS) : "";
+        TextView sub = text("Nota" + when, 12, t.faint, t.regular);
+        sub.setPadding(0, t.dp(4), 0, 0);
+        info.addView(sub);
+        c.addView(info);
+        if (selecting) {
+            boolean on = picked.contains("note:" + id);
+            FrameLayout wrap = new FrameLayout(this);
+            wrap.addView(c, new FrameLayout.LayoutParams(-1, -1));
+            wrap.addView(checkMark(on), new FrameLayout.LayoutParams(t.dp(30), t.dp(30), Gravity.TOP | Gravity.END));
+            wrap.setOnClickListener(v -> togglePick("note:" + id));
+            c.setClickable(false);
+            return wrap;
+        }
+        c.setOnClickListener(v -> openNote(id));
+        c.setOnLongClickListener(v -> { setSelecting(true); togglePick("note:" + id); return true; });
+        return c;
     }
 
     private void grid(ArrayList<View> views) {
@@ -758,19 +827,20 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             showLook(photo, "folder:" + folder);
             c.addView(photo, new LinearLayout.LayoutParams(-1, 0, 1));
         } else {
-            c.addView(new FolderArt(this, inside.isEmpty() ? t.faint : inside.get(0).color), new LinearLayout.LayoutParams(-1, 0, 1));
+            c.addView(new FolderArt(this, folderColor(folder)), new LinearLayout.LayoutParams(-1, 0, 1));
         }
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
         info.setPadding(t.dp(12), t.dp(10), t.dp(12), t.dp(12));
-        TextView name = text(folder, 15, t.text, t.medium);
+        TextView name = text(leaf(folder), 15, t.text, t.medium);
         name.setSingleLine(true);
         name.setEllipsize(TextUtils.TruncateAt.END);
         info.addView(name);
-        int docs = inside.size() + notesIn(folder).size();
+        int docs = inside.size() + notesIn(folder).size() + childFolders(folder).size();
         for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(folder)) docs++;
         for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(folder)) docs++;
         for (DocActivity.Info d : DocActivity.list(this)) if (d.folder.equals(folder)) docs++;
+        for (FlowActivity.Info d : FlowActivity.list(this)) if (d.folder.equals(folder)) docs++;
         TextView s = text(docs == 0 ? "Vacía" : docs == 1 ? "1 documento" : docs + " documentos", 12, t.faint, t.regular);
         s.setPadding(0, t.dp(4), 0, 0);
         info.addView(s);
@@ -874,7 +944,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private View actionCard(int glyph, String label, View.OnClickListener click) {
         LinearLayout c = cardBox();
         c.setGravity(Gravity.CENTER);
-        c.addView(icon(glyph, t.faint, ""), new LinearLayout.LayoutParams(t.dp(40), t.dp(40)));
+        IconView ic = icon(glyph, t.faint, "");
+        // El icono no se queda con el toque: toda la tarjeta responde.
+        ic.setClickable(false);
+        c.addView(ic, new LinearLayout.LayoutParams(t.dp(40), t.dp(40)));
         TextView tv = text(label, 15, t.faint, t.medium);
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(0, t.dp(6), 0, 0);
@@ -921,6 +994,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     // ---------------------------------------------------------------- una nota
 
     private void openNote(String id) {
+        setTrashView(false);
         flushSave();
         JSONObject n = notes.note(id);
         if (n == null) { showHome(); return; }
@@ -1058,6 +1132,11 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private void newNote() {
         flushSave();
         JSONObject n = notes.create();
+        if (folderView != null && !trashView) {
+            HashMap<String, String> map = noteFolders();
+            map.put(n.optString("id"), folderView);
+            keepNoteFolders(map);
+        }
         openNote(n.optString("id"));
     }
 
@@ -1088,13 +1167,14 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         JSONObject n = notes.note(id);
         if (n == null) return;
         String name = n.optString("title");
-        dock.confirm("¿Eliminar «" + (name.isEmpty() ? "Sin título" : name) + "»?", "Se borra de la tablet y del PC.", "Eliminar", () -> {
+        dock.confirm("¿Mover «" + (name.isEmpty() ? "Sin título" : name) + "» a la papelera?", "Puedes restaurarla durante 30 días.", "A la papelera", () -> {
             if (id.equals(noteId)) {
                 main.removeCallbacks(save);
                 note = null;
                 noteId = null;
             }
-            notes.delete(id);
+            Trash.note(this, notes, n, noteFolders().get(id));
+            renderSidebar();
             showHome();
         });
     }
@@ -1374,6 +1454,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             changed(n);
         }));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Mover a carpeta", false, () -> moveToFolder(n)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Exportar PDF", false, () -> PdfActivity.open(this, java.util.Collections.singletonList(n.id), -1)));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> confirmDelete(n)).stays());
         dock.tiles(n.title, tiles);
     }
@@ -1386,6 +1467,11 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 changed(n);
             }));
         }
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDERS), "Más colores", false,
+                () -> ColorWheel.show(this, dock, "Color de «" + n.title + "»", n.color, t.text, t.muted, c -> {
+                    n.color = c;
+                    changed(n);
+                })).stays());
         dock.tiles("Color de «" + n.title + "»", tiles);
     }
 
@@ -1403,7 +1489,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     private void moveToFolder(Ink.Notebook n) {
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         for (String folder : folders()) {
-            tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), folder, folder.equals(n.folder), () -> {
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), pretty(folder), folder.equals(n.folder), () -> {
                 n.folder = folder;
                 changed(n);
             }));
@@ -1807,7 +1893,78 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         java.util.TreeSet<String> all = new java.util.TreeSet<>(prefs.getStringSet("folders", java.util.Collections.emptySet()));
         for (Ink.Notebook n : store.notebooks()) if (!n.folder.isEmpty()) all.add(n.folder);
         all.addAll(noteFolders().values());
+        // Una subcarpeta («Universidad/Cálculo») hace existir a sus padres.
+        for (String f : new ArrayList<>(all)) for (String p = parentOf(f); !p.isEmpty(); p = parentOf(p)) all.add(p);
         return all;
+    }
+
+    static String parentOf(String folder) {
+        int i = folder.lastIndexOf('/');
+        return i < 0 ? "" : folder.substring(0, i);
+    }
+
+    static String leaf(String folder) {
+        return folder.substring(folder.lastIndexOf('/') + 1);
+    }
+
+    /** «Universidad/Cálculo» → «Universidad › Cálculo», para elegir dónde mover. */
+    static String pretty(String folder) {
+        return folder.replace("/", " › ");
+    }
+
+    private static boolean inside(String path, String folder) {
+        return path.equals(folder) || path.startsWith(folder + "/");
+    }
+
+    /** Las carpetas que cuelgan directamente de `parent` ("" = Inicio). */
+    private ArrayList<String> childFolders(String parent) {
+        ArrayList<String> list = new ArrayList<>();
+        for (String f : folders()) if (parentOf(f).equals(parent)) list.add(f);
+        return list;
+    }
+
+    private JSONObject folderColors() {
+        try {
+            return new JSONObject(prefs.getString("folderColors", "{}"));
+        } catch (JSONException e) {
+            return new JSONObject();
+        }
+    }
+
+    private boolean hasFolderColor(String folder) {
+        return folderColors().has(folder);
+    }
+
+    /** El color elegido; si no, el de su primer cuaderno. */
+    private int folderColor(String folder) {
+        JSONObject o = folderColors();
+        if (o.has(folder)) return o.optInt(folder);
+        ArrayList<Ink.Notebook> in = notebooksIn(folder);
+        return in.isEmpty() ? t.faint : in.get(0).color;
+    }
+
+    private void setFolderColor(String folder, Integer color) {
+        JSONObject o = folderColors();
+        try {
+            if (color == null) o.remove(folder);
+            else o.put(folder, (int) color);
+        } catch (JSONException ignored) {
+        }
+        prefs.edit().putString("folderColors", o.toString()).apply();
+        renderSidebar();
+        if (noteId == null) showHome();
+    }
+
+    private void chooseFolderColor(String folder) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        boolean custom = hasFolderColor(folder);
+        int now = folderColor(folder);
+        int[] palette = {0xFF0F766E, 0xFF2563EB, 0xFF7C3AED, 0xFFDB2777, 0xFFDC2626, 0xFFEA580C, 0xFFCA8A04, 0xFF16A34A, 0xFF0EA5E9, 0xFF475569};
+        for (int c : palette) tiles.add(new OptionDock.Tile(dock.swatch(c), "", custom && c == now, () -> setFolderColor(folder, c)));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDERS), "Más colores", false,
+                () -> ColorWheel.show(this, dock, "Color de «" + leaf(folder) + "»", now, t.text, t.muted, c -> setFolderColor(folder, c))).stays());
+        if (custom) tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Como su cuaderno", false, () -> setFolderColor(folder, null)));
+        dock.tiles("Color de «" + leaf(folder) + "»", tiles);
     }
 
     /** Nota → carpeta. Las notas no viajan con carpeta al PC: esto es de la tablet. */
@@ -1840,7 +1997,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         HashMap<String, String> map = noteFolders();
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         for (String folder : folders()) {
-            tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), folder, folder.equals(map.get(id)), () -> {
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), pretty(folder), folder.equals(map.get(id)), () -> {
                 map.put(id, folder);
                 keepNoteFolders(map);
                 renderSidebar();
@@ -1867,6 +2024,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     /** Dentro de una carpeta, Atrás vuelve a Inicio en vez de cerrar la app. */
     private void setFolderView(String folder) {
         folderView = folder;
+        setTrashView(false);
         if (android.os.Build.VERSION.SDK_INT < 33) return;
         if (folder != null && folderBack == null) {
             android.window.OnBackInvokedCallback back = this::backFromFolder;
@@ -1880,7 +2038,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     private void backFromFolder() {
         flushSave();
-        if (noteId == null) setFolderView(null);
+        if (noteId == null) {
+            String up = folderView == null ? "" : parentOf(folderView);
+            setFolderView(up.isEmpty() ? null : up);
+        }
         showHome();
     }
 
@@ -1888,17 +2049,26 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         if (dock.isOpen()) dock.close();
-        else if (folderView != null) backFromFolder();
+        else if (trashView) {
+            setTrashView(false);
+            showHome();
+        } else if (folderView != null) backFromFolder();
         else super.onBackPressed();
     }
 
     /** Pide el nombre; si viene un cuaderno, lo mete en ella. */
     private void askNewFolder(Ink.Notebook n) {
+        askNewFolder(n, "");
+    }
+
+    /** Carpeta nueva dentro de `parent` ("" = en Inicio). */
+    private void askNewFolder(Ink.Notebook n, String parent) {
         EditText e = field("");
         e.setHint("Universidad, Proyectos…");
-        ask("Carpeta nueva", e, "Crear", () -> {
-            String name = e.getText().toString().trim();
+        ask(parent.isEmpty() ? "Carpeta nueva" : "Carpeta nueva en «" + leaf(parent) + "»", e, "Crear", () -> {
+            String name = e.getText().toString().trim().replace('/', '-');
             if (name.isEmpty()) return;
+            if (!parent.isEmpty()) name = parent + "/" + name;
             java.util.TreeSet<String> all = folders();
             all.add(name);
             keepFolders(all);
@@ -1917,10 +2087,13 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Abrir", false, () -> { flushSave(); setFolderView(folder); showHome(); }));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Agregar cuadernos", false, () -> addNotebooks(folder)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Nueva subcarpeta", false, () -> askNewFolder(null, folder)).stays());
+        tiles.add(new OptionDock.Tile(dock.swatch(folderColor(folder)), "Color", false, () -> chooseFolderColor(folder)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Renombrar", false, () -> renameFolder(folder)).stays());
-        tiles.add(new OptionDock.Tile(lookTile("folder:" + folder), "Portada", false, () -> editLook("folder:" + folder, "Portada de «" + folder + "»", false)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SELECT), "Mover dentro de…", false, () -> moveFolder(folder)).stays());
+        tiles.add(new OptionDock.Tile(lookTile("folder:" + folder), "Portada", false, () -> editLook("folder:" + folder, "Portada de «" + leaf(folder) + "»", false)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar carpeta", false, () -> confirmDeleteFolder(folder)).stays());
-        dock.tiles(folder, tiles);
+        dock.tiles(pretty(folder), tiles);
     }
 
     /** Tocar un cuaderno lo mete o lo saca; el dock sigue abierto para elegir varios. */
@@ -1942,50 +2115,108 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             dock.confirm("Aún no hay cuadernos", "Crea uno y podrás guardarlo aquí.", "Listo", () -> { });
             return;
         }
-        dock.tiles("Cuadernos en «" + folder + "»", tiles);
+        dock.tiles("Cuadernos en «" + leaf(folder) + "»", tiles);
     }
 
     private void renameFolder(String folder) {
-        EditText e = field(folder);
+        EditText e = field(leaf(folder));
         ask("Renombrar carpeta", e, "Guardar", () -> {
-            String name = e.getText().toString().trim();
-            if (name.isEmpty() || name.equals(folder)) return;
-            java.util.TreeSet<String> all = folders();
-            all.remove(folder);
-            all.add(name);
-            keepFolders(all);
-            Looks.rename(this, "folder:" + folder, "folder:" + name);
-            for (Ink.Notebook n : notebooksIn(folder)) {
-                n.folder = name;
-                sync.sendNotebook(n);
-            }
-            store.saveNotebooks();
-            HashMap<String, String> map = noteFolders();
-            map.replaceAll((id, f) -> f.equals(folder) ? name : f);
-            keepNoteFolders(map);
-            if (folder.equals(folderView)) setFolderView(name);
-            renderSidebar();
-            if (noteId == null) showHome();
+            String name = e.getText().toString().trim().replace('/', '-');
+            String parent = parentOf(folder);
+            if (!parent.isEmpty()) name = parent + "/" + name;
+            if (leaf(name).isEmpty() || name.equals(folder)) return;
+            repath(folder, name);
         });
     }
 
+    /** Mover una carpeta (con todo lo suyo) dentro de otra, o a Inicio. */
+    private void moveFolder(String folder) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        String parent = parentOf(folder);
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.HOME), "Inicio", parent.isEmpty(), () -> repath(folder, leaf(folder))));
+        for (String f : folders()) {
+            if (inside(f, folder)) continue;
+            tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), pretty(f), f.equals(parent), () -> repath(folder, f + "/" + leaf(folder))));
+        }
+        dock.tiles("Mover «" + leaf(folder) + "» a", tiles);
+    }
+
+    /** Cambia la ruta de una carpeta y de todo lo que cuelga de ella. */
+    private void repath(String from, String to) {
+        if (from.equals(to)) return;
+        if (folders().contains(to)) {
+            Ui.toast(this, "Ya hay una carpeta «" + leaf(to) + "» ahí");
+            return;
+        }
+        java.util.TreeSet<String> all = folders();
+        java.util.TreeSet<String> moved = new java.util.TreeSet<>();
+        for (String f : all) if (inside(f, from)) moved.add(f);
+        JSONObject colors = folderColors();
+        JSONObject newColors = new JSONObject();
+        java.util.HashSet<String> closed = new java.util.HashSet<>(prefs.getStringSet("foldersClosed", java.util.Collections.emptySet()));
+        for (String f : moved) {
+            String g = to + f.substring(from.length());
+            all.remove(f);
+            all.add(g);
+            Looks.rename(this, "folder:" + f, "folder:" + g);
+            if (closed.remove(f)) closed.add(g);
+        }
+        for (java.util.Iterator<String> k = colors.keys(); k.hasNext(); ) {
+            String f = k.next();
+            try {
+                newColors.put(inside(f, from) ? to + f.substring(from.length()) : f, colors.get(f));
+            } catch (JSONException ignored) {
+            }
+        }
+        prefs.edit().putString("folderColors", newColors.toString()).putStringSet("foldersClosed", closed).apply();
+        keepFolders(all);
+        for (Ink.Notebook n : store.notebooks()) {
+            if (!inside(n.folder, from)) continue;
+            n.folder = to + n.folder.substring(from.length());
+            sync.sendNotebook(n);
+        }
+        store.saveNotebooks();
+        HashMap<String, String> map = noteFolders();
+        map.replaceAll((id, f) -> inside(f, from) ? to + f.substring(from.length()) : f);
+        keepNoteFolders(map);
+        for (SheetFiles.Doc d : SheetFiles.list(this)) if (inside(d.folder, from)) {
+            d.folder = to + d.folder.substring(from.length());
+            SheetFiles.update(this, d);
+        }
+        for (DeckActivity.Info d : DeckActivity.list(this)) if (inside(d.folder, from)) DeckActivity.setFolder(this, d.id, to + d.folder.substring(from.length()));
+        for (DocActivity.Info d : DocActivity.list(this)) if (inside(d.folder, from)) DocActivity.setFolder(this, d.id, to + d.folder.substring(from.length()));
+        for (FlowActivity.Info d : FlowActivity.list(this)) if (inside(d.folder, from)) FlowActivity.setFolder(this, d.id, to + d.folder.substring(from.length()));
+        if (folderView != null && inside(folderView, from)) setFolderView(to + folderView.substring(from.length()));
+        renderSidebar();
+        if (noteId == null) showHome();
+    }
+
+    /** Lo de dentro (también lo de sus subcarpetas) sube a la carpeta de arriba. */
     private void confirmDeleteFolder(String folder) {
-        int count = notebooksIn(folder).size();
-        String what = count == 0 ? "Está vacía." : count == 1 ? "Su cuaderno no se borra: vuelve a Inicio." : "Sus " + count + " cuadernos no se borran: vuelven a Inicio.";
-        dock.confirm("¿Borrar la carpeta «" + folder + "»?", what, "Borrar carpeta", () -> {
-            for (Ink.Notebook n : notebooksIn(folder)) {
-                n.folder = "";
+        String up = parentOf(folder);
+        int count = 0;
+        for (Ink.Notebook n : store.notebooks()) if (inside(n.folder, folder)) count++;
+        String where = up.isEmpty() ? "Inicio" : "«" + leaf(up) + "»";
+        String what = count == 0 ? "Está vacía." : count == 1 ? "Su cuaderno no se borra: pasa a " + where + "." : "Sus " + count + " cuadernos no se borran: pasan a " + where + ".";
+        dock.confirm("¿Borrar la carpeta «" + leaf(folder) + "»?", what, "Borrar carpeta", () -> {
+            for (Ink.Notebook n : store.notebooks()) {
+                if (!inside(n.folder, folder)) continue;
+                n.folder = up;
                 sync.sendNotebook(n);
             }
             store.saveNotebooks();
             HashMap<String, String> map = noteFolders();
-            map.values().removeIf(folder::equals);
+            map.replaceAll((id, f) -> inside(f, folder) ? up : f);
+            map.values().removeIf(String::isEmpty);
             keepNoteFolders(map);
             java.util.TreeSet<String> all = folders();
-            all.remove(folder);
+            for (String f : all) if (inside(f, folder)) Looks.remove(this, "folder:" + f);
+            all.removeIf(f -> inside(f, folder));
             keepFolders(all);
-            Looks.remove(this, "folder:" + folder);
-            if (folder.equals(folderView)) setFolderView(null);
+            JSONObject colors = folderColors();
+            for (java.util.Iterator<String> k = colors.keys(); k.hasNext(); ) if (inside(k.next(), folder)) k.remove();
+            prefs.edit().putString("folderColors", colors.toString()).apply();
+            if (folderView != null && inside(folderView, folder)) setFolderView(up.isEmpty() ? null : up);
             renderSidebar();
             if (noteId == null) showHome();
         });
@@ -2168,15 +2399,67 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         startActivity(new Intent(this, GridActivity.class).putExtra("id", id));
     }
 
+    /** Un solo «Crear» con todo; lo nuevo va a la carpeta que se ve. */
     private void createMenu() {
+        String here = folderView == null ? "" : folderView;
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Cuaderno", false, this::askNewNotebook).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Nota", false, this::newNote));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), here.isEmpty() ? "Carpeta" : "Subcarpeta", false, () -> askNewFolder(null, here)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.IMPORT), "Importar archivo", false, this::importMenu).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.IMAGE), "Importar imagen", false, () -> notebookWith("image")));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.CAMERA), "Tomar foto", false, () -> notebookWith("photo")));
+        tiles.add(new OptionDock.Tile(new FlowActivity.ShapeIcon(this, FlowActivity.DECISION, t.text), "Diagrama de flujo", false, this::newFlow));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PEN), "Hoja infinita", false, this::newBoard));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.DOC), "Documento (Word)", false, this::newDocMenu).stays());
         if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHEET), "Hoja de cálculo", false, this::newSheetMenu).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDES), "Presentación", false, () -> DeckActivity.chooseTemplate(this, dock, folderView)).stays());
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Nota", false, this::newNote));
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Carpeta", false, () -> askNewFolder(null)).stays());
-        dock.tiles("Crear", tiles);
+        if (!here.isEmpty()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.SELECT), "Traer cuadernos aquí", false, () -> addNotebooks(here)).stays());
+        dock.tiles(here.isEmpty() ? "Crear" : "Crear en «" + leaf(here) + "»", tiles);
+    }
+
+    /** Cuaderno nuevo que se abre pidiendo una imagen de la galería o una foto. */
+    private void notebookWith(String start) {
+        flushSave();
+        String title = "image".equals(start) ? "Imagen" : "Foto";
+        Ink.Notebook n = store.createNotebook(title, Ui.COVERS[store.notebooks().size() % Ui.COVERS.length]);
+        if (folderView != null) {
+            n.folder = folderView;
+            store.saveNotebooks();
+        }
+        sync.sendNotebook(n);
+        sync.sendPage(store.page(n.pages.get(0)));
+        startActivity(new Intent(this, PageActivity.class).putExtra("notebook", n.id).putExtra("start", start));
+    }
+
+    private void newBoard() {
+        flushSave();
+        String id = FlowActivity.create(this, "Hoja infinita", folderView, true);
+        if (id == null) Ui.toast(this, "No se pudo crear");
+        else startActivity(new Intent(this, FlowActivity.class).putExtra("id", id));
+    }
+
+    private void newFlow() {
+        flushSave();
+        String id = FlowActivity.create(this, "Diagrama", folderView);
+        if (id == null) Ui.toast(this, "No se pudo crear");
+        else startActivity(new Intent(this, FlowActivity.class).putExtra("id", id));
+    }
+
+    private void flowMenu(FlowActivity.Info d) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHAPES), "Abrir", false, () -> startActivity(new Intent(this, FlowActivity.class).putExtra("id", d.id))));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Mover a carpeta", false, () -> {
+            picked.clear();
+            selecting = true;
+            picked.add("flow:" + d.id);
+            movePicked();
+        }).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Mover «" + d.title + "» a la papelera?", "Puedes restaurarlo durante 30 días.", "A la papelera", () -> {
+            Trash.file(this, Trash.FLOW, d.id, d.title, d.folder, d.updated);
+            showHome();
+        })).stays());
+        dock.tiles(d.title, tiles);
     }
 
     private void newDocMenu() {
@@ -2235,7 +2518,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     }
 
     /** Hojas de cálculo y presentaciones de esta carpeta ("" = sueltas). */
-    private void documentsSection(String folder) {
+    /** Documentos, hojas, presentaciones, diagramas y hojas infinitas de una carpeta, como tarjetas. */
+    private ArrayList<View> documentCards(String folder) {
         ArrayList<View> views = new ArrayList<>();
         for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(folder)) views.add(fileCard("sheet:" + d.id, IconView.SHEET, 0xFF16A34A, d.title, "Hoja de cálculo", d.updated,
                 () -> openSheet(d.id), () -> sheetMenu(d)));
@@ -2251,9 +2535,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         }
         for (DocActivity.Info d : DocActivity.list(this)) if (d.folder.equals(folder)) views.add(fileCard("doc:" + d.id, IconView.DOC, 0xFF2563EB, d.title,
                 "Documento", d.updated, () -> openDoc(d.id), () -> docMenu(d)));
-        if (views.isEmpty()) return;
-        sectionTitle("Documentos, hojas de cálculo y presentaciones");
-        grid(views);
+        for (FlowActivity.Info d : FlowActivity.list(this)) if (d.folder.equals(folder)) views.add(fileCard("flow:" + d.id, d.board ? IconView.PEN : IconView.SHAPES, d.board ? 0xFF0EA5E9 : 0xFF7C3AED, d.title,
+                d.board ? "Hoja infinita" : "Diagrama · " + d.nodes + (d.nodes == 1 ? " figura" : " figuras"), d.updated,
+                () -> startActivity(new Intent(this, FlowActivity.class).putExtra("id", d.id)), () -> flowMenu(d)));
+        return views;
     }
 
     private View fileCard(String key, int glyph, int color, String title, String kind, long updated, Runnable open, Runnable menu) {
@@ -2306,8 +2591,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             picked.add("sheet:" + d.id);
             movePicked();
         }).stays());
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Borrar «" + d.title + "»?", "No se puede deshacer.", "Borrar", () -> {
-            SheetFiles.delete(this, d.id);
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Mover «" + d.title + "» a la papelera?", "Puedes restaurarlo durante 30 días.", "A la papelera", () -> {
+            Trash.file(this, Trash.SHEET, d.id, d.title, d.folder, d.updated);
             showHome();
         })).stays());
         dock.tiles(d.title, tiles);
@@ -2322,8 +2607,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             picked.add("doc:" + d.id);
             movePicked();
         }).stays());
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Borrar «" + d.title + "»?", "No se puede deshacer.", "Borrar", () -> {
-            DocActivity.delete(this, d.id);
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Mover «" + d.title + "» a la papelera?", "Puedes restaurarlo durante 30 días.", "A la papelera", () -> {
+            Trash.file(this, Trash.DOC, d.id, d.title, d.folder, d.updated);
             showHome();
         })).stays());
         dock.tiles(d.title, tiles);
@@ -2339,8 +2624,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             picked.add("deck:" + d.id);
             movePicked();
         }).stays());
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Borrar «" + d.title + "»?", "No se puede deshacer.", "Borrar", () -> {
-            DeckActivity.delete(this, d.id);
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> dock.confirm("¿Mover «" + d.title + "» a la papelera?", "Puedes restaurarlo durante 30 días.", "A la papelera", () -> {
+            Trash.file(this, Trash.DECK, d.id, d.title, d.folder, d.updated);
             showHome();
         })).stays());
         dock.tiles(d.title, tiles);
@@ -2354,6 +2639,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         actions.setPadding(0, t.dp(14), 0, 0);
         actions.addView(actionPill(IconView.IMPORT, "Importar PDF, Word o Excel", v -> importMenu()));
         actions.addView(actionPill(IconView.PLUS, "Crear", v -> createMenu()));
+        actions.addView(actionPill(IconView.FILE, "Exportar PDF", v -> exportPdfMenu(new java.util.LinkedHashSet<>())));
         actions.addView(actionPill(IconView.SELECT, selecting ? "Terminar selección" : "Seleccionar", v -> setSelecting(!selecting)));
         actions.addView(actionPill(IconView.HELP, "Tutorial", v -> Tutorial.menu(this, dock)));
         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
@@ -2417,12 +2703,45 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         b.addView(gap, new LinearLayout.LayoutParams(t.dp(16), 1));
         b.addView(pill("Todo", v -> pickAll()));
         b.addView(pill("Mover", v -> movePicked()));
+        b.addView(pill("PDF", v -> exportPicked()));
         TextView del = pill("Borrar", v -> deletePicked());
         del.setTextColor(t.error);
         b.addView(del);
         b.addView(pill("Listo", v -> setSelecting(false)));
         b.setVisibility(View.GONE);
         return b;
+    }
+
+    /** Elegir uno o varios cuadernos (se juntan en un PDF) y pasar a sus páginas. */
+    private void exportPdfMenu(java.util.LinkedHashSet<String> chosen) {
+        ArrayList<Ink.Notebook> list = new ArrayList<>(store.notebooks());
+        if (list.isEmpty()) {
+            Ui.toast(this, "Aún no hay cuadernos");
+            return;
+        }
+        list.sort((a, b) -> Long.compare(b.updated, a.updated));
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (Ink.Notebook n : list) {
+            tiles.add(new OptionDock.Tile(dock.swatch(n.color), n.title + " · " + n.pages.size(), chosen.contains(n.id), () -> {
+                if (!chosen.remove(n.id)) chosen.add(n.id);
+                exportPdfMenu(chosen);
+            }).stays());
+        }
+        String head = chosen.isEmpty() ? "¿Qué cuadernos exportar?" : chosen.size() == 1 ? "1 cuaderno" : chosen.size() + " cuadernos en un PDF";
+        dock.tiles(head, tiles, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Elegir páginas", true, () -> {
+            if (chosen.isEmpty()) Ui.toast(this, "Toca uno o varios cuadernos");
+            else PdfActivity.open(this, new ArrayList<>(chosen), -1);
+        }));
+    }
+
+    private void exportPicked() {
+        ArrayList<String> ids = new ArrayList<>();
+        for (String key : picked) if (key.startsWith("nb:")) ids.add(key.substring(3));
+        if (ids.isEmpty()) {
+            Ui.toast(this, "Elige uno o varios cuadernos");
+            return;
+        }
+        PdfActivity.open(this, ids, -1);
     }
 
     private void setSelecting(boolean on) {
@@ -2456,6 +2775,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         for (SheetFiles.Doc d : SheetFiles.list(this)) if (d.folder.equals(here)) picked.add("sheet:" + d.id);
         for (DeckActivity.Info d : DeckActivity.list(this)) if (d.folder.equals(here)) picked.add("deck:" + d.id);
         for (DocActivity.Info d : DocActivity.list(this)) if (d.folder.equals(here)) picked.add("doc:" + d.id);
+        for (FlowActivity.Info d : FlowActivity.list(this)) if (d.folder.equals(here)) picked.add("flow:" + d.id);
         paintPickBar();
         int y = scroller.getScrollY();
         showHome();
@@ -2473,7 +2793,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             return;
         }
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
-        for (String folder : folders()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), folder, false, () -> movePickedTo(folder)));
+        for (String folder : folders()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), pretty(folder), false, () -> movePickedTo(folder)));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.PLUS), "Nueva carpeta", false, () -> {
             EditText e = field("");
             e.setHint("Universidad, Proyectos…");
@@ -2511,6 +2831,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
                 DeckActivity.setFolder(this, key.substring(5), folder);
             } else if (key.startsWith("doc:")) {
                 DocActivity.setFolder(this, key.substring(4), folder);
+            } else if (key.startsWith("flow:")) {
+                FlowActivity.setFolder(this, key.substring(5), folder);
             }
         }
         store.saveNotebooks();
@@ -2528,22 +2850,25 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             return;
         }
         int n = picked.size();
-        dock.confirm(n == 1 ? "¿Borrar 1 elemento?" : "¿Borrar " + n + " elementos?", "Se borran de la tablet y del PC. No se puede deshacer.", "Borrar", () -> {
+        dock.confirm(n == 1 ? "¿Mover 1 elemento a la papelera?" : "¿Mover " + n + " elementos a la papelera?", "Puedes restaurarlos durante 30 días.", "A la papelera", () -> {
+            HashMap<String, String> map = noteFolders();
             for (String key : new ArrayList<>(picked)) {
+                String id = key.substring(key.indexOf(':') + 1);
                 if (key.startsWith("nb:")) {
-                    Ink.Notebook nb = store.notebook(key.substring(3));
-                    if (nb == null) continue;
-                    store.deleteNotebook(nb);
-                    Looks.remove(this, "nb:" + nb.id);
-                    sync.send("{\"t\":\"delete_notebook\",\"notebook\":\"" + nb.id + "\"}");
+                    Ink.Notebook nb = store.notebook(id);
+                    if (nb != null) Trash.notebook(this, nb);
                 } else if (key.startsWith("note:")) {
-                    notes.delete(key.substring(5));
+                    JSONObject note = notes.note(id);
+                    if (note != null) Trash.note(this, notes, note, map.get(id));
                 } else if (key.startsWith("sheet:")) {
-                    SheetFiles.delete(this, key.substring(6));
+                    SheetFiles.Doc d = SheetFiles.get(this, id);
+                    if (d != null) Trash.file(this, Trash.SHEET, id, d.title, d.folder, d.updated);
                 } else if (key.startsWith("deck:")) {
-                    DeckActivity.delete(this, key.substring(5));
+                    for (DeckActivity.Info d : DeckActivity.list(this)) if (d.id.equals(id)) Trash.file(this, Trash.DECK, id, d.title, d.folder, d.updated);
                 } else if (key.startsWith("doc:")) {
-                    DocActivity.delete(this, key.substring(4));
+                    for (DocActivity.Info d : DocActivity.list(this)) if (d.id.equals(id)) Trash.file(this, Trash.DOC, id, d.title, d.folder, d.updated);
+                } else if (key.startsWith("flow:")) {
+                    for (FlowActivity.Info d : FlowActivity.list(this)) if (d.id.equals(id)) Trash.file(this, Trash.FLOW, id, d.title, d.folder, d.updated);
                 }
             }
             setSelecting(false);
@@ -2552,11 +2877,113 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         });
     }
 
+    // ---- Papelera ----
+
+    private void openTrash() {
+        flushSave();
+        if (noteId != null) {
+            main.removeCallbacks(save);
+            note = null;
+            noteId = null;
+        }
+        setTrashView(true);
+        showHome();
+    }
+
+    private void setTrashView(boolean on) {
+        trashView = on;
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        if (on && trashBack == null) {
+            android.window.OnBackInvokedCallback back = () -> { setTrashView(false); showHome(); };
+            trashBack = back;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT + 1, back);
+        } else if (!on && trashBack != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback((android.window.OnBackInvokedCallback) trashBack);
+            trashBack = null;
+        }
+    }
+
+    private void showTrash() {
+        noteId = null;
+        note = null;
+        editor = null;
+        pageBox.removeAllViews();
+        crumb.setText("🗑  Papelera");
+        saveState.setText("");
+        TextView ic = text("🗑", 58, t.text, t.regular);
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(-2, -2);
+        ilp.topMargin = -t.dp(40);
+        pageBox.addView(ic, ilp);
+        TextView title = text("Papelera", 36, t.text, t.bold);
+        title.setPadding(0, t.dp(14), 0, t.dp(6));
+        pageBox.addView(title);
+        ArrayList<Trash.Entry> list = Trash.list(this);
+        pageBox.addView(text(list.isEmpty() ? "Vacía" : (list.size() == 1 ? "1 elemento" : list.size() + " elementos")
+                + " · lo borrado se guarda 30 días", 15, t.faint, t.regular));
+        LinearLayout actions = row();
+        actions.setPadding(0, t.dp(14), 0, 0);
+        actions.addView(pill("‹  Inicio", v -> goTo(null)));
+        if (!list.isEmpty()) {
+            TextView all = pill("Vaciar papelera", v -> dock.confirm("¿Vaciar la papelera?", "Se borra todo para siempre.", "Vaciar", () -> {
+                Trash.empty(this);
+                showHome();
+            }));
+            all.setTextColor(t.error);
+            actions.addView(all);
+        }
+        pageBox.addView(actions);
+        sectionTitle("Borrado hace poco");
+        long now = System.currentTimeMillis();
+        for (Trash.Entry e : list) {
+            LinearLayout r = row();
+            r.setPadding(t.dp(8), t.dp(10), t.dp(4), t.dp(10));
+            int glyph = Trash.NOTEBOOK.equals(e.kind) ? IconView.PAGES : Trash.NOTE.equals(e.kind) ? IconView.TEXT : Trash.SHEET.equals(e.kind) ? IconView.SHEET
+                    : Trash.DECK.equals(e.kind) ? IconView.SLIDES : Trash.FLOW.equals(e.kind) ? IconView.SHAPES : IconView.DOC;
+            IconView iv = icon(glyph, e.color != 0 ? e.color : t.icon, "");
+            iv.setClickable(false);
+            r.addView(iv, new LinearLayout.LayoutParams(t.dp(34), t.dp(34)));
+            LinearLayout txt = new LinearLayout(this);
+            txt.setOrientation(LinearLayout.VERTICAL);
+            txt.setPadding(t.dp(10), 0, 0, 0);
+            TextView name = text(e.title.isEmpty() ? "Sin título" : e.title, 16, t.text, t.medium);
+            name.setSingleLine(true);
+            name.setEllipsize(TextUtils.TruncateAt.END);
+            txt.addView(name);
+            long day = 24L * 60 * 60 * 1000, left = Math.max(0, (Trash.KEEP_MS - (now - e.when) + day - 1) / day);
+            String where = e.folder.isEmpty() ? "" : " · en " + pretty(e.folder);
+            txt.addView(text(e.kindName() + where + " · borrado " + DateUtils.getRelativeTimeSpanString(e.when, now, DateUtils.MINUTE_IN_MILLIS)
+                    + " · quedan " + left + (left == 1 ? " día" : " días"), 12, t.faint, t.regular));
+            r.addView(txt, new LinearLayout.LayoutParams(0, -2, 1));
+            r.addView(pill("Restaurar", v -> {
+                if (!Trash.restore(this, notes, e)) {
+                    Ui.toast(this, "No se pudo restaurar");
+                    return;
+                }
+                if (Trash.NOTE.equals(e.kind) && !e.folder.isEmpty()) {
+                    HashMap<String, String> map = noteFolders();
+                    map.put(e.itemId, e.folder);
+                    keepNoteFolders(map);
+                }
+                Ui.toast(this, "«" + e.title + "» restaurado");
+                renderSidebar();
+                showHome();
+            }));
+            TextView del = pill("Borrar", v -> dock.confirm("¿Borrar «" + e.title + "» para siempre?", "No se puede deshacer.", "Borrar", () -> {
+                Trash.purge(this, e);
+                showHome();
+            }));
+            del.setTextColor(t.error);
+            r.addView(del);
+            pageBox.addView(r);
+        }
+        View end = new View(this);
+        pageBox.addView(end, new LinearLayout.LayoutParams(-1, t.dp(120)));
+        renderSidebar();
+    }
+
     private void confirmDelete(Ink.Notebook n) {
-        dock.confirm("¿Borrar «" + n.title + "»?", "Se borra de la tablet y del PC. No se puede deshacer.", "Borrar", () -> {
-            store.deleteNotebook(n);
-            Looks.remove(this, "nb:" + n.id);
-            sync.send("{\"t\":\"delete_notebook\",\"notebook\":\"" + n.id + "\"}");
+        dock.confirm("¿Mover «" + n.title + "» a la papelera?", "Se quita de la tablet y del PC. Puedes restaurarlo durante 30 días.", "A la papelera", () -> {
+            Trash.notebook(this, n);
             renderSidebar();
             if (noteId == null) showHome();
         });
