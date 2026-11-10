@@ -232,6 +232,14 @@ final class SyncClient {
                 if ("note".equals(t) || "notes".equals(t)) {
                     // Una nota cambió en el PC.
                     main.post(() -> Notes.get(app).sync());
+                } else if ("pc_stroke".equals(t)) {
+                    // Tinta desde el PC: la tablet la hace suya y la manda como un trazo más.
+                    String page = m.optString("page");
+                    JSONObject so = m.optJSONObject("stroke");
+                    if (so != null) {
+                        Ink.Stroke stroke = Ink.Stroke.fromJson(so);
+                        main.post(() -> remoteStroke(page, stroke));
+                    }
                 } else if ("want_assets".equals(t)) {
                     JSONArray ids = m.getJSONArray("ids");
                     for (int i = 0; i < ids.length(); i++) sendAsset(ids.getString(i));
@@ -253,6 +261,25 @@ final class SyncClient {
         } finally {
             writer.interrupt();
         }
+    }
+
+    /** La hoja abierta, si hay: los trazos del PC entran por ella para verse al momento. */
+    static volatile InkView open;
+
+    private void remoteStroke(String pageId, Ink.Stroke s) {
+        InkView v = open;
+        if (v != null && v.hasPage(pageId)) {
+            v.addRemoteStroke(pageId, s);
+            return;
+        }
+        Store store = Store.get(app);
+        Ink.Page p = store.page(pageId);
+        if (p == null) return;
+        for (Ink.Stroke o : p.strokes) if (o.id.equals(s.id)) return;
+        p.strokes.add(s);
+        p.version++;
+        store.savePage(p);
+        send("{\"t\":\"stroke\",\"page\":\"" + p.id + "\",\"version\":" + p.version + ",\"stroke\":" + s.toJson() + "}");
     }
 
     /** Saludo: nombre del aparato, versiones de las páginas y los cuadernos. */

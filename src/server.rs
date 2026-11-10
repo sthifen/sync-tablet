@@ -16,7 +16,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
@@ -46,6 +46,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/page/{id}", get(page_json))
         .route("/api/page/{id}/svg", get(page_svg))
         .route("/api/asset/{file}", get(asset))
+        .route("/api/pc/stroke", post(pc_stroke))
         .route("/ws/ink", get(ws_ink))
         .route("/ws/live", get(ws_live))
         .route("/api/pair", get(pair_usb).post(pair_code))
@@ -230,6 +231,25 @@ async fn asset(State(s): State<Arc<AppState>>, Path(file): Path<String>) -> Resp
     }
 }
 
+/// Un trazo dibujado en el visor del PC: va a la tablet, que lo hace suyo y lo
+/// devuelve como un trazo normal (así las versiones de la página no chocan).
+#[derive(Deserialize)]
+struct PcStroke {
+    page: String,
+    stroke: crate::ink::Stroke,
+}
+
+async fn pc_stroke(State(s): State<Arc<AppState>>, axum::Json(req): axum::Json<PcStroke>) -> Response {
+    if s.devices.lock().unwrap().is_empty() {
+        return (StatusCode::CONFLICT, "Conecta la tablet para escribir desde el PC").into_response();
+    }
+    if req.stroke.points.len() < 3 || req.stroke.points.len() > 30_000 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let _ = s.live.send(json!({ "t": "pc_stroke", "page": req.page, "stroke": req.stroke }).to_string());
+    StatusCode::NO_CONTENT.into_response()
+}
+
 async fn ws_live(ws: WebSocketUpgrade, State(s): State<Arc<AppState>>) -> Response {
     ws.on_upgrade(move |mut socket| async move {
         let mut rx = s.live.subscribe();
@@ -265,7 +285,7 @@ async fn ws_ink(
 /// (no las que cambió ella misma).
 fn for_tablet(text: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return false };
-    matches!(v["t"].as_str(), Some("note" | "notes")) && v["client"].as_str() != Some("tablet")
+    matches!(v["t"].as_str(), Some("note" | "notes" | "pc_stroke")) && v["client"].as_str() != Some("tablet")
 }
 
 async fn tablet(mut socket: WebSocket, s: Arc<AppState>, peer: SocketAddr) {

@@ -273,6 +273,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     @Override
     protected void onResume() {
         super.onResume();
+        SyncClient.open = ink;
         if (sync != null) sync.addListener(this);
         if (ink != null) ink.redrawPages();
     }
@@ -280,6 +281,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     @Override
     protected void onPause() {
         super.onPause();
+        if (SyncClient.open == ink) SyncClient.open = null;
         if (sync == null) return;
         sync.removeListener(this);
         save();

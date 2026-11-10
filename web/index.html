@@ -359,6 +359,8 @@ a { color: inherit; }
         <span class="save-state" id="save-state"></span>
         <span id="tablet-tools" hidden style="display:contents">
           <label class="follow" title="Cambiar sola a la página en la que escribes"><input type="checkbox" id="follow"><span class="lbl">Seguir la tablet</span></label>
+          <label class="follow" title="Dibuja con el ratón o una tableta gráfica; aparece en la tablet al instante"><input type="checkbox" id="pc-ink"><span class="lbl">Escribir desde el PC</span></label>
+          <input type="color" id="pc-ink-color" value="#2563eb" title="Color de la tinta" style="width:28px;height:28px;border:none;background:none;padding:0;cursor:pointer">
           <button class="icon-btn" type="button" aria-label="Página anterior" data-act="prev">
             <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4L6 9l5 5"/></svg>
           </button>
@@ -1226,6 +1228,40 @@ a { color: inherit; }
   /* ================================================================ páginas de la tablet */
   var W = 1000, H = 1414;
   var canvas = $("paper"), ctx = canvas.getContext("2d"), follow = $("follow");
+
+  /* Tinta desde el PC: se dibuja aquí y se manda a la tablet, que la guarda como suya. */
+  var pcInk = $("pc-ink"), pcColor = $("pc-ink-color"), pcStroke = null;
+  function pcPoint(e) {
+    var r = canvas.getBoundingClientRect();
+    var p = e.pressure > 0 && e.pointerType !== "mouse" ? e.pressure : 0.6;
+    return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H, Math.round(p * 1000) / 1000];
+  }
+  canvas.addEventListener("pointerdown", function (e) {
+    if (!pcInk.checked || !S.tpage) return;
+    canvas.setPointerCapture(e.pointerId);
+    var id = "pc" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    pcStroke = { id: id, tool: "pen", color: pcColor.value.toUpperCase(), width: 3.5, points: pcPoint(e) };
+    e.preventDefault();
+  });
+  canvas.addEventListener("pointermove", function (e) {
+    if (!pcStroke) return;
+    var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    evs.forEach(function (ev) { Array.prototype.push.apply(pcStroke.points, pcPoint(ev)); });
+    render(); drawStroke(pcStroke);
+  });
+  function pcEnd() {
+    if (!pcStroke) return;
+    var st = pcStroke, page = S.tpage && S.tpage.id;
+    pcStroke = null;
+    if (!page || st.points.length < 6) { render(); return; }
+    fetch("/api/pc/stroke", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page: page, stroke: st }) })
+      .then(function (r) {
+        if (r.status === 409) { alert("Conecta la tablet para escribir desde el PC: la tablet guarda los apuntes."); render(); }
+      }).catch(function () { render(); });
+  }
+  canvas.addEventListener("pointerup", pcEnd);
+  canvas.addEventListener("pointercancel", pcEnd);
+  pcInk.addEventListener("change", function () { canvas.style.touchAction = pcInk.checked ? "none" : ""; canvas.style.cursor = pcInk.checked ? "crosshair" : ""; });
   follow.checked = store("synctablet-follow") !== "0";
   follow.addEventListener("change", function () { store("synctablet-follow", follow.checked ? "1" : "0"); });
 
@@ -1508,6 +1544,8 @@ a { color: inherit; }
         S.versions[m.page.id] = m.page.version;
         if (S.view === "tablet" && m.page.id === S.tcurrent) { S.tpage = m.page; canvas.hidden = false; $("paper-empty").hidden = true; render(); }
         refreshTabletBlocks();
+        return;
+      case "pc_stroke":
         return;
       case "laser":
         if (S.view === "tablet" && m.page === S.tcurrent) { lasers.push({ points: m.points, at: performance.now() }); render(); }

@@ -2634,6 +2634,33 @@ final class InkView extends View {
 
     // ---- PC ----
 
+    /** ¿Está abierta esta página? */
+    boolean hasPage(String id) {
+        for (Ink.Page p : pages) if (p.id.equals(id)) return true;
+        return false;
+    }
+
+    /** Un trazo hecho en el PC: entra como uno propio (se deshace igual y se manda con versión nueva). */
+    void addRemoteStroke(String pageId, Ink.Stroke s) {
+        Ink.Page page = null;
+        for (Ink.Page p : pages) if (p.id.equals(pageId)) page = p;
+        if (page == null) return;
+        for (Ink.Stroke o : page.strokes) if (o.id.equals(s.id)) return;
+        page.strokes.add(s);
+        if (GPU) strokeAdded(page);
+        else renderLayer();
+        invalidate();
+        sendStroke(page, s);
+        LinkedHashMap<Ink.Page, ArrayList<Ink.Stroke>> one = new LinkedHashMap<>();
+        ArrayList<Ink.Stroke> list = new ArrayList<>();
+        list.add(s);
+        one.put(page, list);
+        push(undo, new Object[] {"add", one});
+        redo.clear();
+        listener.onEdited(page);
+        notifyUndo();
+    }
+
     private void sendStroke(Ink.Page page, Ink.Stroke s) {
         page.version++;
         listener.onOp("{\"t\":\"stroke\",\"page\":\"" + page.id + "\",\"version\":" + page.version
