@@ -261,24 +261,75 @@ public final class DocActivity extends Activity {
             JSONObject o = new JSONObject(new String(Files.readAllBytes(new File(dir(this), id + ".json").toPath()), StandardCharsets.UTF_8));
             title = o.optString("title", "Documento");
             folder = o.optString("folder");
-            SpannableStringBuilder b = new SpannableStringBuilder(o.optString("text"));
-            JSONArray a = o.optJSONArray("spans");
-            if (a != null) for (int i = 0; i < a.length(); i++) {
-                JSONObject s = a.getJSONObject(i);
-                Object span = make(s);
-                int st = s.optInt("s"), en = Math.min(b.length(), s.optInt("e"));
-                if (span != null && st < en) b.setSpan(span, st, en, span instanceof AlignmentSpan || span instanceof BulletSpan
-                        ? Spanned.SPAN_PARAGRAPH : Spanned.SPAN_EXCLUSIVE_INCLUSIVE);
-            }
-            loading = true;
-            body.setText(b);
-            loading = false;
+            restore(o);
+            last = snapshot();
             titleView.setText(title);
             return true;
         } catch (IOException | JSONException | RuntimeException e) {
             android.util.Log.w("SyncTablet", "abrir documento", e);
             return false;
         }
+    }
+
+    /** Pone el texto con sus estilos desde {text, spans}. */
+    private void restore(JSONObject o) throws JSONException {
+        SpannableStringBuilder b = new SpannableStringBuilder(o.optString("text"));
+        JSONArray a = o.optJSONArray("spans");
+        if (a != null) for (int i = 0; i < a.length(); i++) {
+            JSONObject s = a.getJSONObject(i);
+            Object span = make(s);
+            int st = s.optInt("s"), en = Math.min(b.length(), s.optInt("e"));
+            if (span != null && st < en) b.setSpan(span, st, en, span instanceof AlignmentSpan || span instanceof BulletSpan
+                    ? Spanned.SPAN_PARAGRAPH : Spanned.SPAN_EXCLUSIVE_INCLUSIVE);
+        }
+        loading = true;
+        int cursor = body.getSelectionStart();
+        body.setText(b);
+        body.setSelection(Math.max(0, Math.min(b.length(), cursor)));
+        loading = false;
+    }
+
+    // ---- deshacer ----
+
+    private final java.util.ArrayDeque<String> undo = new java.util.ArrayDeque<>(), redo = new java.util.ArrayDeque<>();
+    private String last;
+    private final Runnable record = this::record;
+
+    private String snapshot() {
+        try {
+            Editable e = body.getText();
+            return new JSONObject().put("text", e.toString()).put("spans", spans(e)).toString();
+        } catch (JSONException e) {
+            return last;
+        }
+    }
+
+    private void record() {
+        main.removeCallbacks(record);
+        String now = snapshot();
+        if (now == null || now.equals(last)) return;
+        if (last != null) undo.push(last);
+        while (undo.size() > 100) undo.removeLast();
+        redo.clear();
+        last = now;
+    }
+
+    private void step(boolean back) {
+        record();
+        java.util.ArrayDeque<String> from = back ? undo : redo, to = back ? redo : undo;
+        if (from.isEmpty()) {
+            Ui.toast(this, back ? "Nada que deshacer" : "Nada que rehacer");
+            return;
+        }
+        to.push(last);
+        last = from.pop();
+        try {
+            restore(new JSONObject(last));
+        } catch (JSONException ignored) {
+        }
+        state.setText("Sin guardar");
+        main.removeCallbacks(autosave);
+        main.postDelayed(autosave, 800);
     }
 
     private void save() {
@@ -337,6 +388,8 @@ public final class DocActivity extends Activity {
         state = Ui.text(this, "", 13, t.faint, false);
         state.setPadding(t.dp(8), 0, t.dp(8), 0);
         top.addView(state);
+        top.addView(icon(IconView.UNDO, "Deshacer", v -> step(true)));
+        top.addView(icon(IconView.REDO, "Rehacer", v -> step(false)));
         top.addView(icon(IconView.EXPORT, "Exportar a Word o PDF", v -> exportMenu()));
         top.addView(icon(IconView.HELP, "Tutorial", v -> Tutorial.show(this, dock, "doc")));
         root.addView(top, new LinearLayout.LayoutParams(-1, t.dp(54)));
@@ -395,6 +448,8 @@ public final class DocActivity extends Activity {
                 state.setText("Sin guardar");
                 main.removeCallbacks(autosave);
                 main.postDelayed(autosave, 1200);
+                main.removeCallbacks(record);
+                main.postDelayed(record, 700);
             }
         });
         int w = Math.min(getResources().getDisplayMetrics().widthPixels - t.dp(32), t.dp(820));
@@ -447,6 +502,7 @@ public final class DocActivity extends Activity {
     }
 
     private void changed() {
+        record();
         state.setText("Sin guardar");
         main.removeCallbacks(autosave);
         main.postDelayed(autosave, 800);

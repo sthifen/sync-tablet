@@ -648,6 +648,7 @@ public final class DeckActivity extends Activity {
             save();
         }
         build();
+        lastShot = shot();
         if (getIntent().getBooleanExtra("present", false)) main.post(this::present);
         else Tutorial.offerOnce(this, dock, "slides");
     }
@@ -689,7 +690,68 @@ public final class DeckActivity extends Activity {
         }
     }
 
+    // ---- deshacer: fotos de todas las diapositivas ----
+
+    private final java.util.ArrayDeque<String> undoStack = new java.util.ArrayDeque<>(), redoStack = new java.util.ArrayDeque<>();
+    private String lastShot;
+
+    private String shot() {
+        try {
+            JSONArray a = new JSONArray();
+            for (Slide sl : slides) {
+                JSONArray els = new JSONArray();
+                for (El e : sl.els) els.put(e.json());
+                a.put(els);
+            }
+            return new JSONObject().put("theme", theme).put("slides", a).toString();
+        } catch (JSONException e) {
+            return lastShot;
+        }
+    }
+
+    private void unshot(String json) {
+        try {
+            JSONObject o = new JSONObject(json);
+            theme = o.optInt("theme", theme);
+            slides.clear();
+            JSONArray a = o.getJSONArray("slides");
+            for (int i = 0; i < a.length(); i++) {
+                Slide sl = new Slide();
+                JSONArray els = a.getJSONArray(i);
+                for (int k = 0; k < els.length(); k++) sl.els.add(El.from(els.getJSONObject(k)));
+                slides.add(sl);
+            }
+            current = Math.max(0, Math.min(current, slides.size() - 1));
+            selected = null;
+        } catch (JSONException ignored) {
+        }
+    }
+
+    private void stepHistory(boolean back) {
+        java.util.ArrayDeque<String> from = back ? undoStack : redoStack, to = back ? redoStack : undoStack;
+        if (from.isEmpty()) {
+            Ui.toast(this, back ? "Nada que deshacer" : "Nada que rehacer");
+            return;
+        }
+        to.push(lastShot);
+        lastShot = from.pop();
+        unshot(lastShot);
+        main.removeCallbacks(autosave);
+        main.postDelayed(autosave, 1200);
+        view.invalidate();
+        refreshStrip();
+        paintSelBar();
+    }
+
     private void changed() {
+        String now = shot();
+        if (lastShot == null) lastShot = now;
+        else if (!now.equals(lastShot)) {
+            undoStack.push(lastShot);
+            while (undoStack.size() > 60) undoStack.removeLast();
+            redoStack.clear();
+            lastShot = now;
+        }
         main.removeCallbacks(autosave);
         main.postDelayed(autosave, 1200);
         view.invalidate();
@@ -755,6 +817,8 @@ public final class DeckActivity extends Activity {
             }
         });
         top.addView(penBtn);
+        top.addView(icon(IconView.UNDO, "Deshacer", v -> stepHistory(true)));
+        top.addView(icon(IconView.REDO, "Rehacer", v -> stepHistory(false)));
         top.addView(icon(IconView.WAND, "Estilo", v -> themeMenu()));
         top.addView(icon(IconView.PLAY, "Presentar", v -> present()));
         top.addView(icon(IconView.EXPORT, "Exportar", v -> exportMenu()));
