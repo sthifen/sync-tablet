@@ -607,11 +607,136 @@ public final class GridActivity extends Activity {
             String type = CHART_TYPES[i];
             tiles.add(new OptionDock.Tile(new ChartIcon(type), CHART_NAMES[i], false, () -> run("chart.changeType", "{\"chart\":" + chartId + ",\"type\":\"" + type + "\"}")));
         }
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Poner en un cuaderno", false, () -> sendToNotebook(chartImage(ch))).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar gráfica", false, () -> {
             run("chart.delete", "{\"chart\":" + chartId + "}");
             pickedChart = -1;
         }));
         dock.tiles("Gráfica", tiles);
+    }
+
+    // ---- a un cuaderno ----
+
+    /** La gráfica como imagen, al doble de tamaño para que se vea nítida en la hoja. */
+    private android.graphics.Bitmap chartImage(JSONObject ch) {
+        float w = (float) ch.optDouble("w"), h = (float) ch.optDouble("h"), k = 2.5f;
+        android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(Math.round(w * k), Math.round(h * k), android.graphics.Bitmap.Config.ARGB_8888);
+        b.eraseColor(0xFFFFFFFF);
+        Canvas c = new Canvas(b);
+        c.scale(k, k);
+        drawPrims(c, ch.optJSONArray("prims") == null ? new JSONArray() : ch.optJSONArray("prims"), new Paint(Paint.ANTI_ALIAS_FLAG), new Path());
+        return b;
+    }
+
+    /** Las celdas elegidas como una tabla dibujada. */
+    private android.graphics.Bitmap rangeImage() {
+        int r0 = Math.min(ar, sr), r1 = Math.min(Math.max(ar, sr), r0 + 60), c0 = Math.min(ac, sc), c1 = Math.min(Math.max(ac, sc), c0 + 15);
+        int rows = r1 - r0 + 1, cols = c1 - c0 + 1;
+        JSONObject o;
+        try {
+            String json = Native.gridView(book, r0, c0, rows, cols);
+            o = new JSONObject(json == null ? "{}" : json);
+        } catch (JSONException e) {
+            return null;
+        }
+        JSONArray cellsIn = o.optJSONArray("cells"), cw = o.optJSONArray("colW"), rh = o.optJSONArray("rowH");
+        if (cellsIn == null || cw == null || rh == null) return null;
+        float k = 2.5f, w = 0, h = 0;
+        for (int i = 0; i < cols; i++) w += (float) cw.optDouble(i, 64);
+        for (int i = 0; i < rows; i++) h += (float) rh.optDouble(i, 20);
+        android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)), android.graphics.Bitmap.Config.ARGB_8888);
+        b.eraseColor(0xFFFFFFFF);
+        Canvas c = new Canvas(b);
+        c.scale(k, k);
+        Paint line = new Paint();
+        line.setColor(0xFFBFC5CC);
+        line.setStrokeWidth(0.6f);
+        Paint fillP = new Paint();
+        Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        text.setTextSize(11);
+        float y = 0;
+        for (int r = 0; r < rows; r++) {
+            float x = 0, ch = (float) rh.optDouble(r, 20);
+            JSONArray line0 = cellsIn.optJSONArray(r);
+            for (int col = 0; col < cols; col++) {
+                float cwid = (float) cw.optDouble(col, 64);
+                JSONObject cell = line0 == null ? null : line0.optJSONObject(col);
+                if (cell != null && cell.has("bg")) {
+                    fillP.setColor(Ink.parseColor(cell.optString("bg"), 0xFFFFFFFF));
+                    c.drawRect(x, y, x + cwid, y + ch, fillP);
+                }
+                if (cell != null && cell.has("t")) {
+                    String t0 = cell.optString("t");
+                    text.setTypeface(cell.optBoolean("b") ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+                    text.setColor(cell.has("fc") ? Ink.parseColor(cell.optString("fc"), 0xFF111827) : 0xFF111827);
+                    String a = cell.optString("a", "l");
+                    float tw = text.measureText(t0);
+                    float tx = "r".equals(a) ? x + cwid - 3 - tw : "c".equals(a) ? x + (cwid - tw) / 2 : x + 3;
+                    c.save();
+                    c.clipRect(x, y, x + cwid, y + ch);
+                    c.drawText(t0, tx, y + ch / 2 - (text.ascent() + text.descent()) / 2, text);
+                    c.restore();
+                }
+                c.drawRect(x, y, x + cwid, y + ch, outline(line));
+                x += cwid;
+            }
+            y += ch;
+        }
+        return b;
+    }
+
+    private static Paint outline(Paint p) {
+        p.setStyle(Paint.Style.STROKE);
+        return p;
+    }
+
+    /** Elegir cuaderno: la imagen va a una página nueva al final. */
+    private void sendToNotebook(android.graphics.Bitmap img) {
+        if (img == null) {
+            Ui.toast(this, "No hay nada que poner");
+            return;
+        }
+        Store store = Store.get(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(t.dp(16), 0, t.dp(16), t.dp(8));
+        for (Ink.Notebook n : store.notebooks()) {
+            box.addView(dock.row("📓  " + n.title + (n.folder.isEmpty() ? "" : "  ·  " + n.folder), v -> {
+                dock.close();
+                putInNotebook(store, n, img);
+            }));
+        }
+        if (store.notebooks().isEmpty()) box.addView(dock.message("Aún no hay cuadernos: crea uno en Inicio"));
+        dock.show("¿En qué cuaderno?", box, new OptionDock.Action("Cancelar", false, null));
+    }
+
+    private void putInNotebook(Store store, Ink.Notebook n, android.graphics.Bitmap img) {
+        try {
+            String asset = store.putAsset(img);
+            Ink.Page p = store.addPage(n);
+            Ink.Item it = new Ink.Item(Ink.newId(), "image");
+            it.asset = asset;
+            it.w = Math.min(860, img.getWidth() / 2.5f * 2f);
+            it.h = it.w * img.getHeight() / img.getWidth();
+            if (it.h > Ink.H - 160) {
+                it.h = Ink.H - 160;
+                it.w = it.h * img.getWidth() / img.getHeight();
+            }
+            it.x = (Ink.W - it.w) / 2;
+            it.y = 80;
+            p.items.add(it);
+            p.version++;
+            n.updated = System.currentTimeMillis();
+            store.savePage(p);
+            store.saveNotebooks();
+            SyncClient sync = SyncClient.get(this);
+            sync.sendAsset(asset);
+            sync.sendPage(p);
+            sync.sendNotebook(n);
+            Ui.toast(this, "Puesta en «" + n.title + "», página " + n.pages.size());
+        } catch (java.io.IOException e) {
+            Ui.toast(this, "No se pudo guardar la imagen");
+        }
     }
 
     private void formatMenu() {
@@ -639,6 +764,7 @@ public final class GridActivity extends Activity {
         ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPORT), "Guardar como Excel", false, () -> create(XLSX, ".xlsx", SAVE_XLSX)));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Exportar CSV", false, () -> create("text/csv", ".csv", SAVE_CSV)));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Poner lo elegido en un cuaderno", false, () -> sendToNotebook(rangeImage())).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Renombrar", false, this::rename).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.SHEET), "Hoja nueva", false, () -> run("home.insertSheet", "{}")));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.CHART), "Gráfica", false, this::chartMenu).stays());

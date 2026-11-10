@@ -8,9 +8,9 @@ import org.json.JSONObject;
 final class Templates {
     private Templates() {}
 
-    static final String[] SHEETS = {"blank", "budget", "grades", "lab", "schedule", "tasks"};
-    static final String[] SHEET_NAMES = {"En blanco", "Presupuesto", "Calificaciones", "Laboratorio", "Horario", "Tareas"};
-    static final String[] SHEET_ICONS = {"▦", "💰", "🎓", "🧪", "🗓️", "✅"};
+    static final String[] SHEETS = {"blank", "function", "budget", "grades", "lab", "schedule", "tasks"};
+    static final String[] SHEET_NAMES = {"En blanco", "Graficar funciones", "Presupuesto", "Calificaciones", "Laboratorio", "Horario", "Tareas"};
+    static final String[] SHEET_ICONS = {"▦", "📈", "💰", "🎓", "🧪", "🗓️", "✅"};
 
     private static JSONArray rows(Object[][] data) {
         JSONArray a = new JSONArray();
@@ -39,6 +39,24 @@ final class Templates {
     static void sheet(GridActivity g, String name) {
         try {
             switch (name) {
+                case "function": {
+                    // x de −2π a 2π; cambia las fórmulas de B y C (y «Rellenar ↓») para graficar otra cosa.
+                    int n = 41;
+                    Object[][] rows = new Object[n + 1][];
+                    rows[0] = new Object[] {"x", "f(x) = sen(x)", "g(x) = x²/10"};
+                    for (int i = 1; i <= n; i++) {
+                        int r = i + 1;
+                        rows[i] = new Object[] {"=ROUND(-2*PI()+(" + (i - 1) + ")*PI()/10,4)", "=SIN(A" + r + ")", "=A" + r + "^2/10"};
+                    }
+                    put(g, "A1", rows);
+                    bold(g, "A1:C1", "#DBEAFE");
+                    g.exec("home.numberFormat", new JSONObject().put("range", "A2:C42").put("code", "0.00"));
+                    g.exec("insert.chart", new JSONObject().put("range", "A1:C42").put("type", "scatter").put("subtype", "lines")
+                            .put("title", "Funciones").put("at", "E2").put("width", 520).put("height", 340));
+                    put(g, "E20", new Object[][] {{"Cambia la fórmula de B2 o C2 (por ejemplo =COS(A2) o =EXP(A2/3)),"},
+                            {"elige la columna desde la fila 2 hasta la 42 y toca «Rellenar ↓»."}});
+                    break;
+                }
                 case "budget":
                     put(g, "A1", new Object[][] {
                         {"Presupuesto del mes", null, null, null},
