@@ -9,6 +9,7 @@ import android.provider.Settings;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -30,10 +31,18 @@ import org.json.JSONObject;
  * Todo el JSON se genera en el hilo de la interfaz (dueño de las páginas).
  */
 final class SyncClient {
-    static final int PORT = 8788;
+    /**
+     * 8788; la app «de prueba» (android/build-apk.sh --prueba) usa el 8789 para
+     * probar contra otro servidor sin tocar los apuntes de la de verdad. En el PC
+     * se puede cambiar con -Dsynctablet.port.
+     */
+    static int PORT = Integer.getInteger("synctablet.port", 8788);
 
     interface Listener {
         void onStatus(boolean connected, String where);
+
+        /** Llegaron cambios de otro aparato a este cuaderno (null: varios o la lista). */
+        default void onRemote(String notebookId) {}
     }
 
     private static SyncClient instance;
@@ -62,6 +71,7 @@ final class SyncClient {
 
     private SyncClient(Context app) {
         this.app = app;
+        if (app.getPackageName().endsWith(".prueba")) PORT = 8789;
         this.prefs = app.getSharedPreferences("sync", Context.MODE_PRIVATE);
         token = prefs.getString("token", "");
     }
@@ -142,17 +152,66 @@ final class SyncClient {
 
     /** Manda un mensaje si hay conexión (si no, lo pondrá al día el saludo). */
     void send(String json) {
+        // Si es de un cuaderno compartido de la propia tablet, sale también por su nodo.
+        SharedNode.local(json);
         if (connected) out.offer(json);
     }
 
     void sendNotebook(Ink.Notebook n) {
         try {
+            JSONObject o = n.toJsonObject();
             JSONObject m = new JSONObject();
             m.put("t", "notebook");
-            m.put("notebook", n.toJsonObject());
-            send(m.toString());
+            m.put("notebook", o);
+            if (connected) {
+                send(m.toString());
+                synced(n.id, o.toString());
+            }
         } catch (JSONException ignored) {
         }
+    }
+
+    // ---- Cómo estaba cada cuaderno la última vez que se habló con el PC ----
+    // Al volver a conectar sólo se manda lo que cambió aquí: una copia vieja de
+    // un cuaderno no pisa lo que otro aparato cambió entretanto.
+
+    private java.util.HashMap<String, String> synced;
+
+    private java.io.File syncedFile() {
+        return new java.io.File(app.getFilesDir(), "notebooks-synced.json");
+    }
+
+    private synchronized java.util.HashMap<String, String> syncedMap() {
+        if (synced == null) {
+            synced = new java.util.HashMap<>();
+            try {
+                java.io.File f = syncedFile();
+                if (f.isFile()) {
+                    JSONObject o = new JSONObject(new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8));
+                    for (java.util.Iterator<String> it = o.keys(); it.hasNext(); ) {
+                        String k = it.next();
+                        synced.put(k, o.getString(k));
+                    }
+                }
+            } catch (IOException | JSONException e) {
+                android.util.Log.w("SyncTablet", "cuadernos sincronizados", e);
+            }
+        }
+        return synced;
+    }
+
+    /** Así quedó el cuaderno en el PC (se mandó o llegó de él). */
+    synchronized void synced(String id, String json) {
+        if (json.equals(syncedMap().put(id, json))) return;
+        final String all = new JSONObject(new java.util.HashMap<>(syncedMap())).toString();
+        new Thread(() -> {
+            try {
+                java.io.File f = syncedFile(), tmp = new java.io.File(f.getPath() + ".tmp");
+                java.nio.file.Files.write(tmp.toPath(), all.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                if (!tmp.renameTo(f)) tmp.delete();
+            } catch (IOException ignored) {
+            }
+        }, "sync-nb").start();
     }
 
     void sendPage(Ink.Page p) {
@@ -204,18 +263,120 @@ final class SyncClient {
                 String path = token.isEmpty() ? "/ws/ink" : "/ws/ink?token=" + token;
                 try (WebSocketClient ws = WebSocketClient.connect(host, PORT, path, 1500)) {
                     SyncClient.host = host;
-                    session(ws, host.equals("127.0.0.1") ? "USB" : "WiFi " + host);
+                    session(ws, host.equals("127.0.0.1") ? "USB" : "WiFi" + pcName(host));
                 } catch (IOException e) {
                     // Sin PC en ese camino: probar el siguiente.
                 }
                 SyncClient.host = null;
                 setStatus(false, "");
             }
+            long now = System.currentTimeMillis();
+            if (now - lastSearch > SEARCH_EVERY_MS) {
+                lastSearch = now;
+                if (discover() != null) continue;
+            }
             try {
                 Thread.sleep(2000);
             } catch (InterruptedException e) {
                 return;
             }
+        }
+    }
+
+    // ---- Encontrar el PC solo: sondeo en la WiFi y lo que sabe el tracker ----
+
+    private static final long SEARCH_EVERY_MS = 10_000;
+    private long lastSearch;
+    /** PCs que contestaron en la última búsqueda (para enseñarlos en la cuenta). */
+    static volatile List<Discovery.Found> nearby = new ArrayList<>();
+
+    /** Busca ya, sin esperar a la próxima vuelta (al iniciar sesión). */
+    void searchSoon() {
+        lastSearch = 0;
+    }
+
+    /**
+     * Si encuentra un PC al que puede entrar (con el token que ya tiene o con un
+     * boleto de la cuenta), guarda su IP y la devuelve; la próxima vuelta conecta.
+     */
+    private String discover() {
+        ArrayList<Discovery.Found> candidates = new ArrayList<>();
+        List<Discovery.Found> heard = Discovery.probe(PORT, 700);
+        nearby = heard;
+        candidates.addAll(heard);
+        Account account = Account.get(app);
+        if (account.loggedIn()) {
+            try {
+                JSONArray devs = account.devices();
+                for (int i = 0; i < devs.length(); i++) {
+                    JSONObject d = devs.getJSONObject(i);
+                    if (!d.optBoolean("server") || !d.optBoolean("online")) continue;
+                    JSONArray lan = d.optJSONArray("lan");
+                    for (int k = 0; lan != null && k < lan.length(); k++) {
+                        String addr = lan.getString(k);
+                        int colon = addr.lastIndexOf(':');
+                        if (colon <= 0) continue;
+                        String h = addr.substring(0, colon);
+                        boolean dup = false;
+                        for (Discovery.Found f : candidates) dup |= f.host.equals(h);
+                        if (!dup) candidates.add(new Discovery.Found(h, PORT, d.optString("name"), d.optString("id"), account.user()));
+                    }
+                }
+            } catch (IOException | JSONException e) {
+                // Sin internet: queda lo que contestó en la WiFi.
+            }
+        }
+        for (Discovery.Found f : candidates) {
+            if (f.port != PORT) continue;
+            if (!token.isEmpty() && tokenWorks(f.host)) {
+                setWifiHost(f.host);
+                return f.host;
+            }
+            if (account.loggedIn() && account.user().equals(f.user) && !f.device.isEmpty()) {
+                try {
+                    String t = pairWithTicket(f.host, account.ticket(f.device));
+                    if (t != null) {
+                        saveToken(t);
+                        setWifiHost(f.host);
+                        android.util.Log.i("SyncTablet", "entró con la cuenta en " + f.name + " (" + f.host + ")");
+                        return f.host;
+                    }
+                } catch (IOException e) {
+                    android.util.Log.w("SyncTablet", "no se pudo entrar en " + f.host, e);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** « · fedora» si se sabe cómo se llama el PC de esa IP (la gente no lee IPs). */
+    private static String pcName(String host) {
+        for (Discovery.Found f : nearby) if (f.host.equals(host) && !f.name.isEmpty()) return " · " + f.name;
+        return "";
+    }
+
+    private static boolean tokenWorks(String host) {
+        try {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("http://" + host + ":" + PORT + "/api/notebooks").openConnection();
+            c.setConnectTimeout(1500);
+            c.setReadTimeout(3000);
+            c.setRequestProperty("Authorization", "Bearer " + token);
+            try {
+                return c.getResponseCode() == 200;
+            } finally {
+                c.disconnect();
+            }
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static String pairWithTicket(String host, String ticket) throws IOException {
+        try {
+            Account.Reply r = Account.call("POST", "http://" + host + ":" + PORT + "/api/pair/account", null, new JSONObject().put("ticket", ticket));
+            return r.status == 200 ? r.body.optString("token", null) : null;
+        } catch (JSONException e) {
+            return null;
         }
     }
 
@@ -253,6 +414,16 @@ final class SyncClient {
                         Ink.Stroke stroke = Ink.Stroke.fromJson(so);
                         main.post(() -> remoteStroke(page, stroke));
                     }
+                } else if ("page".equals(t) || "notebook".equals(t) || "stroke".equals(t) || "erase".equals(t)
+                        || "delete_page".equals(t) || "delete_notebook".equals(t) || "asset".equals(t)) {
+                    // De otro aparato (la app del PC o la tablet), a través del PC.
+                    final JSONObject msgCopy = m;
+                    main.post(() -> Remote.apply(app, this, msgCopy));
+                } else if ("resync".equals(t)) {
+                    main.post(this::sendHello);
+                } else if ("clip".equals(t)) {
+                    final JSONObject msgCopy = m;
+                    main.post(() -> Clip.fromPc(app, msgCopy));
                 } else if ("want_assets".equals(t)) {
                     JSONArray ids = m.getJSONArray("ids");
                     for (int i = 0; i < ids.length(); i++) sendAsset(ids.getString(i));
@@ -305,15 +476,29 @@ final class SyncClient {
             JSONObject pages = new JSONObject();
             for (Map.Entry<String, Long> e : store.versions().entrySet()) pages.put(e.getKey(), e.getValue());
             m.put("pages", pages);
+            m.put("kind", Updater.DESKTOP ? "desktop" : "tablet");
+            JSONArray nbs = new JSONArray();
+            for (Ink.Notebook n : store.notebooks()) nbs.put(n.id);
+            m.put("notebooks", nbs);
             send(m.toString());
         } catch (JSONException ignored) {
         }
-        for (Ink.Notebook n : store.notebooks()) sendNotebook(n);
+        for (Ink.Notebook n : store.notebooks()) {
+            try {
+                if (!n.toJsonObject().toString().equals(syncedMap().get(n.id))) sendNotebook(n);
+            } catch (JSONException ignored) {
+            }
+        }
     }
 
     private String deviceName() {
         String name = Settings.Global.getString(app.getContentResolver(), "device_name");
         return name != null && !name.isEmpty() ? name : Build.MODEL;
+    }
+
+    /** Avisa a las pantallas de que algo cambió desde otro aparato. */
+    void notifyRemote(String notebookId) {
+        for (Listener l : listeners) l.onRemote(notebookId);
     }
 
     private void setStatus(boolean on, String via) {

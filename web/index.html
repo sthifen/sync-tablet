@@ -259,12 +259,79 @@ a { color: inherit; }
 .emoji-grid button:hover { background: var(--hover); }
 
 /* ---------- Búsqueda ---------- */
-.pair-link { background: none; border: 0; padding: 4px 0 0; font: inherit; color: var(--muted, #777); cursor: pointer; text-decoration: underline; }
-.pair-box { background: var(--bg, #fff); color: inherit; border-radius: 12px; padding: 20px 24px; width: min(380px, calc(100vw - 32px)); }
-.pair-box h2 { margin: 0 0 8px; font-size: 18px; }
+.side-btn { display: block; width: 100%; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line, #ddd); border-radius: 10px; background: var(--card, #fff); color: var(--text, inherit); font: 600 14px var(--font-ui, inherit); cursor: pointer; text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.side-btn:hover { background: var(--hover, #f2f2f2); }
+.side-btn.primary { background: #0f766e; border-color: #0f766e; color: #fff; }
+.side-btn.primary:hover { background: #115e59; }
+.side-btn.inline { display: inline-block; width: auto; margin: 0; }
+.pair-box { position: relative; display: flex; gap: 28px; width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box; padding: 28px 30px; background: var(--card, #fff); color: var(--text, inherit); border-radius: 16px; box-shadow: var(--shadow-card, 0 20px 60px rgba(0,0,0,.25)); }
+.pair-x { position: absolute; top: 14px; right: 14px; }
+.pair-box h2 { margin: 0 0 14px; font-size: 24px; }
+.pair-box h3 { margin: 0 0 4px; font-size: 17px; }
+.pair-qr-side { flex: 1.2; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.pair-qr { width: min(340px, 70vw); aspect-ratio: 1; padding: 10px; box-sizing: border-box; background: #fff; border-radius: 16px; border: 1px solid var(--line, #e5e5e5); box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+.pair-qr img { width: 100%; height: 100%; display: block; image-rendering: pixelated; transition: opacity .25s; }
+.pair-timer { display: flex; align-items: center; gap: 10px; width: min(340px, 70vw); margin: 12px 0 6px; font-size: 13px; color: var(--muted, #777); font-variant-numeric: tabular-nums; }
+.pair-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--hover, #eee); overflow: hidden; }
+.pair-bar i { display: block; height: 100%; background: #0f766e; border-radius: 3px; transition: width 1s linear; }
+.pair-howto { text-align: left; margin: 10px 0 6px; padding-left: 22px; font-size: 15px; line-height: 1.7; }
+.pair-acct-side { flex: 1; min-width: 0; padding: 48px 0 0 26px; border-left: 1px solid var(--line, #e5e5e5); }
 .pair-field { display: flex; justify-content: space-between; gap: 16px; margin: 8px 0; }
 .pair-field b { font-size: 18px; letter-spacing: .04em; }
+@media (max-width: 760px) {
+  .pair-box { flex-direction: column; padding: 22px 16px; }
+  .pair-acct-side { border-left: 0; border-top: 1px solid var(--line, #e5e5e5); padding: 16px 0 0; }
+}
 .pair-note { font-size: 13px; opacity: .7; }
+.acct { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
+.acct input { width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px; border: 1px solid var(--line, #ddd); border-radius: 8px; font: inherit; color: inherit; background: transparent; }
+.acct details input { margin-top: 6px; }
+.acct-btns { display: flex; gap: 8px; }
+.acct-err { color: #eb5757; font-size: 13px; margin: 0; min-height: 1em; }
+.acct-devs { display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow: auto; }
+.acct-dev { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 14px; }
+.acct-dev .dot { flex: none; }
+.acct-dev span:nth-child(2) { flex: 1; min-width: 0; }
+.acct-dev small { display: block; opacity: .6; }
+.acct-dev button { background: none; border: 0; color: var(--muted, #777); cursor: pointer; font: inherit; font-size: 12px; text-decoration: underline; }
+.setup-open { display: block; width: 100%; margin-top: 8px; padding: 9px 12px; border: 0; border-radius: 8px; background: #0f766e; color: #fff; font: 600 14px var(--font-ui, inherit); cursor: pointer; text-align: left; }
+.setup-open:hover { background: #115e59; }
+.modal-back.setup-back { padding: 24px 16px; align-items: center; }
+.setup-box { width: min(1100px, calc(100vw - 32px)); height: min(820px, calc(100vh - 48px)); display: flex; flex-direction: column; background: var(--card, #fff); color: var(--text, inherit); border-radius: 16px; box-shadow: var(--shadow-card, 0 20px 60px rgba(0,0,0,.25)); overflow: hidden; }
+.setup-head { display: flex; align-items: flex-start; gap: 16px; padding: 22px 26px 14px; border-bottom: 1px solid var(--line, #e5e5e5); }
+.setup-head > div { flex: 1; }
+.setup-head h2 { margin: 0 0 4px; font-size: 22px; }
+.setup-x { border: 0; background: none; font-size: 20px; cursor: pointer; color: var(--muted, #777); padding: 4px 8px; border-radius: 6px; }
+.setup-x:hover { background: var(--hover, #f2f2f2); }
+.setup-body { flex: 1; min-height: 0; display: flex; gap: 22px; padding: 18px 26px; }
+.setup-steps { list-style: none; margin: 0; padding: 0; width: 300px; flex: none; display: flex; flex-direction: column; gap: 6px; overflow: auto; }
+.setup-steps li { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 10px; font-size: 15px; color: var(--muted, #777); }
+.setup-steps li .ic { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 13px; border: 2px solid currentColor; }
+.setup-steps li.running { background: var(--hover, #f2f2f2); color: var(--text, #111); font-weight: 600; }
+.setup-steps li.running .ic { border-color: #0f766e; border-top-color: transparent; animation: setup-spin .8s linear infinite; }
+.setup-steps li.ok { color: var(--text, #111); }
+.setup-steps li.ok .ic { background: #35a86b; border-color: #35a86b; color: #fff; }
+.setup-steps li.error { color: #eb5757; font-weight: 600; }
+.setup-steps li.error .ic { background: #eb5757; border-color: #eb5757; color: #fff; }
+@keyframes setup-spin { to { transform: rotate(360deg); } }
+.setup-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.setup-msg { padding: 14px 16px; border-radius: 10px; background: var(--hover, #f4f4f4); font-size: 15px; line-height: 1.45; }
+.setup-msg.ok { background: rgba(53,168,107,.14); }
+.setup-msg.error { background: rgba(235,87,87,.12); }
+.setup-msg b.url { display: block; margin-top: 6px; font: 600 17px ui-monospace, monospace; word-break: break-all; }
+.setup-log { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 14px 16px; border-radius: 10px; background: #0d1117; color: #c9d1d9; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+.setup-foot { display: flex; align-items: center; gap: 12px; padding: 14px 26px 20px; border-top: 1px solid var(--line, #e5e5e5); }
+.setup-grow { flex: 1; }
+.setup-log:empty { display: none; }
+.setup-primary { padding: 10px 22px; border: 0; border-radius: 10px; background: #0f766e; color: #fff; font: 600 15px var(--font-ui, inherit); cursor: pointer; }
+.setup-primary:disabled { opacity: .5; cursor: default; }
+@media (max-width: 760px) {
+  .setup-body { flex-direction: column; overflow: auto; padding: 14px 16px; }
+  .setup-log { min-height: 240px; flex: none; }
+  .setup-head, .setup-foot { padding-left: 16px; padding-right: 16px; }
+  .setup-steps { width: auto; }
+  .setup-box { height: calc(100vh - 48px); }
+}
 .modal-back { position: fixed; inset: 0; z-index: 70; background: var(--overlay); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
 .search-box { width: min(620px, calc(100vw - 24px)); background: var(--card); border-radius: 12px; box-shadow: var(--shadow-card); overflow: hidden; }
 .search-box input { width: 100%; height: 52px; border: 0; outline: 0; padding: 0 18px; font: 400 17px var(--font); color: var(--text); background: transparent; border-bottom: 1px solid var(--line); }
@@ -343,7 +410,8 @@ a { color: inherit; }
     <div class="side-sep"></div>
     <div class="side-foot">
       <div class="row"><span class="dot" id="conn-dot"></span><span id="conn-text">Conectando con el PC…</span></div>
-      <button class="row pair-link" id="pair-open" type="button">Conectar por WiFi</button>
+      <button class="side-btn primary" id="pair-open" type="button">📱 Conectar un aparato</button>
+      <button class="side-btn" id="setup-open" type="button">☁ Crear mi servidor de cuentas</button>
       <div class="dir" id="dir"></div>
     </div>
   </aside>
@@ -399,14 +467,58 @@ a { color: inherit; }
 </main>
 
 <div class="menu" id="menu" hidden></div>
-<div class="modal-back" id="pair" hidden>
-  <div class="pair-box">
-    <h2>Conectar la tablet por WiFi</h2>
-    <p>En la tablet, toca el icono de WiFi y escribe:</p>
-    <p class="pair-field"><span>IP de este PC</span><b id="pair-ip">—</b></p>
-    <p class="pair-field"><span>Código</span><b id="pair-code">—</b></p>
-    <p class="pair-note">Si ya la conectaste por cable, basta la IP.</p>
-    <button type="button" id="pair-close">Cerrar</button>
+<div class="modal-back setup-back" id="pair" hidden>
+  <div class="pair-box" role="dialog" aria-labelledby="pair-title">
+    <button type="button" class="setup-x pair-x" id="pair-close" aria-label="Cerrar">✕</button>
+    <div class="pair-qr-side">
+      <h2 id="pair-title">Conectar un aparato</h2>
+      <div class="pair-qr"><img id="pair-qr" alt="Código QR para conectar un aparato"></div>
+      <div class="pair-timer"><span class="pair-bar"><i id="pair-bar"></i></span><span id="pair-left">—</span></div>
+      <ol class="pair-howto">
+        <li>Abre <b>Sync Tablet</b> en la tablet o el celular.</li>
+        <li>Toca el icono de WiFi y luego <b>«Escanear QR del PC»</b>.</li>
+        <li>Apunta la cámara aquí. ¡Listo!</li>
+      </ol>
+      <p class="pair-note">También funciona con la cámara normal del teléfono. El código cambia solo cada 2 minutos y cada vez que se usa.</p>
+    </div>
+    <div class="pair-acct-side">
+      <h3>Tu cuenta <span class="pair-note">(opcional)</span></h3>
+      <p class="pair-note">Con una cuenta tus aparatos se encuentran solos, también fuera de casa.</p>
+      <form class="acct" id="acct-out" hidden>
+        <input id="acct-user" type="text" placeholder="Usuario" autocomplete="username" autocapitalize="off" spellcheck="false">
+        <input id="acct-pass" type="password" placeholder="Contraseña (8 o más)" autocomplete="current-password">
+        <p class="acct-err" id="acct-err"></p>
+        <div class="acct-btns"><button type="submit" class="setup-primary" id="acct-login">Entrar</button><button type="button" class="side-btn inline" id="acct-register">Crear cuenta</button></div>
+      </form>
+      <div class="acct" id="acct-in" hidden>
+        <p class="pair-field"><span>Sesión</span><b id="acct-name">—</b></p>
+        <div class="acct-devs" id="acct-devs"></div>
+        <div class="acct-btns"><button type="button" class="side-btn inline" id="acct-logout">Cerrar sesión</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="modal-back setup-back" id="setup" hidden>
+  <div class="setup-box" role="dialog" aria-labelledby="setup-title">
+    <header class="setup-head">
+      <div>
+        <h2 id="setup-title">Crear mi servidor de cuentas</h2>
+        <p class="pair-note">Se publica gratis en tu cuenta de Cloudflare. Así tu tablet, tu celular y este PC se encuentran desde cualquier red.</p>
+      </div>
+      <button type="button" class="setup-x" id="setup-close" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="setup-body">
+      <ol class="setup-steps" id="setup-steps"></ol>
+      <div class="setup-side">
+        <div class="setup-msg" id="setup-msg">Pulsa «Empezar». Se abrirá el navegador para que autorices a Cloudflare (si no tienes cuenta, la creas ahí mismo); lo demás es automático.</div>
+        <pre class="setup-log" id="setup-log" aria-live="polite"></pre>
+      </div>
+    </div>
+    <footer class="setup-foot">
+      <a id="setup-login" href="#" target="_blank" rel="noopener" hidden>Abrir la autorización de Cloudflare</a>
+      <span class="setup-grow"></span>
+      <button type="button" id="setup-go" class="setup-primary">Empezar</button>
+    </footer>
   </div>
 </div>
 <div class="modal-back" id="search" hidden>
@@ -1580,18 +1692,187 @@ a { color: inherit; }
     ws.onclose = function () { linked = false; paintConn(); setTimeout(connect, 1500); };
   }
 
+  /* ================================================================ cuenta */
+  // La contraseña no sale de aquí: se manda una clave derivada (como en la tablet,
+  // ver tracker/src/crypto.ts). Iguales en todos los clientes o no se entienden.
+  function deriveKey(user, pass) {
+    var enc = new TextEncoder();
+    return crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveBits"]).then(function (k) {
+      return crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: enc.encode("synctablet:" + user), iterations: 200000 }, k, 256);
+    }).then(function (bits) {
+      return Array.prototype.map.call(new Uint8Array(bits), function (b) { return (b < 16 ? "0" : "") + b.toString(16); }).join("");
+    });
+  }
+
+  var KINDS = { pc: "PC", desktop: "App del PC", tablet: "Tablet", phone: "Celular" };
+
+  function paintAccount() {
+    fetch("/api/account", { cache: "no-store" }).then(json).then(function (a) {
+      $("acct-out").hidden = !!a.user;
+      $("acct-in").hidden = !a.user;
+      if (!a.user) return;
+      $("acct-name").textContent = a.user;
+      var box = $("acct-devs");
+      box.textContent = "Buscando aparatos…";
+      fetch("/api/account/devices", { cache: "no-store" }).then(function (r) {
+        return r.json().then(function (v) { if (!r.ok) throw new Error(v && v.error || r.status); return v; });
+      }).then(function (v) {
+        box.textContent = "";
+        v.devices.forEach(function (d) {
+          var row = document.createElement("div");
+          row.className = "acct-dev";
+          var dot = document.createElement("span");
+          dot.className = "dot" + (d.online ? " on" : "");
+          dot.style.background = d.online ? "#35a86b" : "";
+          var name = document.createElement("span");
+          name.textContent = d.name + (d.me ? " (este PC)" : "");
+          var sub = document.createElement("small");
+          sub.textContent = (KINDS[d.kind] || d.kind) + " · " + (d.online ? "en línea" : "visto " + new Date(d.last_seen).toLocaleString()) + (d.lan.length ? " · " + d.lan.join(", ") : "");
+          name.appendChild(sub);
+          row.appendChild(dot);
+          row.appendChild(name);
+          if (!d.me) {
+            var del = document.createElement("button");
+            del.type = "button";
+            del.textContent = "Quitar";
+            del.addEventListener("click", function () {
+              if (!confirm("¿Quitar «" + d.name + "» de la cuenta? Tendrá que volver a iniciar sesión.")) return;
+              fetch("/api/account/devices/" + encodeURIComponent(d.id), { method: "DELETE" }).then(paintAccount);
+            });
+            row.appendChild(del);
+          }
+          box.appendChild(row);
+        });
+      }).catch(function (e) { box.textContent = "No se pudo hablar con el servidor de cuentas: " + e.message; });
+    }).catch(function () {
+      // Visor abierto desde otro equipo: la cuenta sólo se toca en este PC.
+      $("acct-out").hidden = true;
+      $("acct-in").hidden = true;
+    });
+  }
+
+  function accountLogin(register) {
+    var user = $("acct-user").value.trim().toLowerCase(), pass = $("acct-pass").value, err = $("acct-err");
+    if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(user)) { err.textContent = "El usuario debe tener de 3 a 32 letras, números, «.», «_» o «-»."; return; }
+    if (pass.length < 8) { err.textContent = "La contraseña debe tener 8 caracteres o más."; return; }
+    if (!window.crypto || !crypto.subtle) { err.textContent = "Abre el visor en http://localhost:8788 para iniciar sesión."; return; }
+    err.textContent = register ? "Creando la cuenta…" : "Entrando…";
+    deriveKey(user, pass).then(function (key) {
+      return fetch("/api/account/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user: user, key: key, register: register })
+      });
+    }).then(function (r) {
+      return r.json().then(function (v) { if (!r.ok) throw new Error(v && v.error || r.status); });
+    }).then(function () {
+      err.textContent = "";
+      $("acct-pass").value = "";
+      paintAccount();
+    }).catch(function (e) { err.textContent = e.message; });
+  }
+
+  /* ================================================================ QR para conectar */
+  // Se pregunta cada segundo: el QR cambia cuando caduca o cuando alguien lo usó.
+  var pairTimer = null, pairCode = null;
+
+  function pollPair() {
+    clearTimeout(pairTimer);
+    if ($("pair").hidden) return;
+    fetch("/api/pair/code", { cache: "no-store" }).then(json).then(function (p) {
+      if (p.code !== pairCode) {
+        if (pairCode !== null) { paintAccount(); }
+        pairCode = p.code;
+        var img = $("pair-qr");
+        img.style.opacity = ".2";
+        img.onload = function () { img.style.opacity = "1"; };
+        img.src = "/api/pair/qr.svg?c=" + encodeURIComponent(p.code);
+      }
+      var left = p.expires_in || 0;
+      $("pair-left").textContent = "se renueva en " + Math.floor(left / 60) + ":" + ("0" + (left % 60)).slice(-2);
+      $("pair-bar").style.width = Math.max(0, Math.min(100, left / 120 * 100)) + "%";
+      if (!p.ip) $("pair-left").textContent = "Conecta este PC a una red WiFi";
+    }).catch(function () {
+      $("pair-left").textContent = "Abre el visor en este PC (http://localhost:8788) para ver el código.";
+    }).then(function () { pairTimer = setTimeout(pollPair, 1000); });
+  }
+
+  /* ================================================================ servidor de cuentas */
+  var setupTimer = null;
+
+  function paintSetup(st) {
+    var ol = $("setup-steps");
+    ol.textContent = "";
+    st.steps.forEach(function (x) {
+      var li = document.createElement("li");
+      li.className = x.state;
+      var ic = document.createElement("span");
+      ic.className = "ic";
+      ic.textContent = x.state === "ok" ? "✓" : x.state === "error" ? "!" : "";
+      li.appendChild(ic);
+      li.appendChild(document.createTextNode(x.label));
+      ol.appendChild(li);
+    });
+    var log = $("setup-log"), stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+    if (log.textContent !== st.log) { log.textContent = st.log; if (stick) log.scrollTop = log.scrollHeight; }
+    var msg = $("setup-msg"), go = $("setup-go"), login = $("setup-login");
+    login.hidden = !(st.running && st.login_url);
+    if (st.login_url) login.href = st.login_url;
+    go.disabled = st.running;
+    msg.className = "setup-msg";
+    if (st.running) {
+      go.textContent = "Trabajando…";
+      msg.textContent = st.steps.some(function (x) { return x.state === "running" && /Cloudflare/.test(x.label); })
+        ? "Autoriza a Wrangler en el navegador que se abrió. Si no se abrió, usa el enlace de abajo."
+        : "Trabajando… puedes ver cada paso a la derecha.";
+    } else if (st.url) {
+      go.textContent = "Volver a publicar";
+      msg.className = "setup-msg ok";
+      msg.textContent = "¡Listo! Tu servidor de cuentas está en internet:";
+      var b = document.createElement("b");
+      b.className = "url";
+      b.textContent = st.url;
+      msg.appendChild(b);
+      msg.appendChild(document.createTextNode("Este PC ya lo usa. En la tablet y el celular aparece solo al iniciar sesión en la misma WiFi."));
+    } else if (st.error) {
+      go.textContent = "Reintentar";
+      msg.className = "setup-msg error";
+      msg.textContent = st.hint || ("No se pudo terminar: " + st.error);
+    } else {
+      go.textContent = "Empezar";
+    }
+    clearTimeout(setupTimer);
+    if (st.running && !$("setup").hidden) setupTimer = setTimeout(pollSetup, 800);
+  }
+
+  function pollSetup() {
+    fetch("/api/tracker/setup", { cache: "no-store" }).then(json).then(paintSetup).catch(function () {
+      $("setup-msg").textContent = "Esto sólo se puede hacer desde el propio PC (http://localhost:8788).";
+      $("setup-go").disabled = true;
+    });
+  }
+
   /* ================================================================ arranque */
   function start() {
     var pairBox = $("pair");
     $("pair-open").addEventListener("click", function () {
-      fetch("/api/pair/code", { cache: "no-store" }).then(json).then(function (p) {
-        $("pair-code").textContent = p.code;
-        $("pair-ip").textContent = p.ip || "—";
-        pairBox.hidden = false;
-      });
+      paintAccount();
+      pairBox.hidden = false;
+      pollPair();
     });
-    $("pair-close").addEventListener("click", function () { pairBox.hidden = true; });
-    pairBox.addEventListener("click", function (e) { if (e.target === pairBox) pairBox.hidden = true; });
+    var setupBox = $("setup");
+    $("setup-open").addEventListener("click", function () { setupBox.hidden = false; pollSetup(); });
+    $("setup-close").addEventListener("click", function () { setupBox.hidden = true; clearTimeout(setupTimer); });
+    setupBox.addEventListener("click", function (e) { if (e.target === setupBox) { setupBox.hidden = true; clearTimeout(setupTimer); } });
+    $("setup-go").addEventListener("click", function () {
+      fetch("/api/tracker/setup", { method: "POST" }).then(json).then(paintSetup);
+    });
+    $("acct-out").addEventListener("submit", function (e) { e.preventDefault(); accountLogin(false); });
+    $("acct-register").addEventListener("click", function () { accountLogin(true); });
+    $("acct-logout").addEventListener("click", function () {
+      fetch("/api/account/logout", { method: "POST" }).then(paintAccount, paintAccount);
+    });
+    $("pair-close").addEventListener("click", function () { pairBox.hidden = true; clearTimeout(pairTimer); });
+    pairBox.addEventListener("click", function (e) { if (e.target === pairBox) { pairBox.hidden = true; clearTimeout(pairTimer); } });
     var noteInUrl = (location.pathname.match(/^\/n\/([^\/?#]+)/) || [])[1];
     var tabletInUrl = new URLSearchParams(location.search).get("tablet");
     var last = null;

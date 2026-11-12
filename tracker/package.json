@@ -1,0 +1,17 @@
+{
+  "name": "synctablet-tracker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "check": "tsc --noEmit",
+    "dev": "wrangler d1 migrations apply DB --local && wrangler dev --ip 0.0.0.0",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20251014.0",
+    "@types/node": "22.18.0",
+    "typescript": "5.9.3",
+    "wrangler": "4.45.0"
+  }
+}

@@ -1,0 +1,51 @@
+# Prueba el tracker cuando cambia tracker/. Publicarlo en Cloudflare es a mano
+# (Actions → tracker → Run workflow), o desde la app: «Crear mi servidor de cuentas».
+# Para publicar desde aquí hacen falta en Settings → Secrets and variables → Actions:
+#   CLOUDFLARE_API_TOKEN   (plantilla «Edit Cloudflare Workers» + permiso D1:Edit)
+#   CLOUDFLARE_ACCOUNT_ID
+name: tracker
+
+on:
+  push:
+    branches: [main]
+    paths: ["tracker/**", ".github/workflows/tracker.yml"]
+  pull_request:
+    paths: ["tracker/**"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tracker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tracker/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tracker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tracker/package-lock.json
+      - run: npm ci
+      - run: npm run deploy

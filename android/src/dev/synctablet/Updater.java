@@ -28,11 +28,17 @@ import java.util.function.IntConsumer;
  * Actualizar desde la app: mira el último release de GitHub, baja el APK,
  * comprueba su SHA-256 y se lo pasa al instalador de Android, que además exige
  * la misma firma y pide confirmación. A GitHub solo se le pide el release.
+ *
+ * En el escritorio (Linux) es lo mismo con el AppImage: el instalador de la
+ * capa de escritorio lo pone en lugar del que está abierto y reinicia la app.
  */
 final class Updater {
     static final String DONE = "dev.synctablet.UPDATE_STATUS";
     private static final String LATEST = "https://api.github.com/repos/sthifen/sync-tablet/releases/latest";
     private static final String ASSETS = "https://github.com/sthifen/sync-tablet/releases/download/";
+    /** La app corre en el PC (desktop/), no en Android. */
+    static final boolean DESKTOP = System.getProperty("synctablet.desktop") != null;
+    private static final String PACKAGE_SUFFIX = DESKTOP ? "-x86_64.AppImage" : ".apk";
 
     static final class Release {
         String version, notes, apk, apkName, sums;
@@ -85,7 +91,7 @@ final class Updater {
             JSONObject a = assets.getJSONObject(i);
             String name = a.getString("name"), url = a.getString("browser_download_url");
             if (!url.startsWith(ASSETS)) continue;
-            if (name.endsWith(".apk")) {
+            if (name.endsWith(PACKAGE_SUFFIX)) {
                 r.apk = url;
                 r.apkName = name;
                 r.size = a.optLong("size");
@@ -101,7 +107,7 @@ final class Updater {
             throws IOException, NoSuchAlgorithmException {
         String want = Version.sum(text(r.sums), r.apkName);
         if (want == null) throw new IOException("el release no trae la suma del APK");
-        File f = new File(c.getCacheDir(), "update.apk");
+        File f = new File(c.getCacheDir(), DESKTOP ? "update.AppImage" : "update.apk");
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         HttpURLConnection h = open(r.apk);
         try (InputStream in = h.getInputStream(); OutputStream out = new FileOutputStream(f)) {

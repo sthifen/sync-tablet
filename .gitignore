@@ -4,3 +4,7 @@ android/build/
 android/*.apk
 android/*.idsig
 dist/
+desktop/build/
+hs_err_pid*.log
+tracker/node_modules/
+tracker/.wrangler/

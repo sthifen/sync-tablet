@@ -23,6 +23,7 @@ import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -50,11 +51,11 @@ import java.util.LinkedHashSet;
  */
 public final class PageActivity extends Activity implements InkView.Listener, SyncClient.Listener {
     private static final int[] SHAPE_KINDS = {ShapeTools.LINE, ShapeTools.ARROW, ShapeTools.DOUBLE_ARROW, ShapeTools.RECT,
-            ShapeTools.ELLIPSE, ShapeTools.TRIANGLE, ShapeTools.AXES, ShapeTools.CROSS_AXES};
+            ShapeTools.ELLIPSE, ShapeTools.TRIANGLE, ShapeTools.AXES, ShapeTools.CROSS_AXES, ShapeTools.BRACE, ShapeTools.BRACKET};
     private static final int[] SHAPE_ICONS = {IconView.S_LINE, IconView.S_ARROW, IconView.S_ARROW2, IconView.S_RECT,
-            IconView.S_ELLIPSE, IconView.S_TRIANGLE, IconView.S_AXES, IconView.S_CROSS};
+            IconView.S_ELLIPSE, IconView.S_TRIANGLE, IconView.S_AXES, IconView.S_CROSS, IconView.S_BRACE, IconView.S_BRACKET};
     private static final String[] SHAPE_NAMES = {"Línea", "Flecha", "Flecha doble", "Rectángulo", "Elipse", "Triángulo",
-            "Ejes", "Ejes cruzados"};
+            "Ejes", "Ejes cruzados", "Llave { } (arrastra desde la punta)", "Corchete [ ] (arrastra desde el lado recto)"};
     private static final int[] CIRCUIT_KINDS = {ShapeTools.CIRCUIT_FREE, ShapeTools.LINE, ShapeTools.RESISTOR, ShapeTools.CAPACITOR, ShapeTools.INDUCTOR,
             ShapeTools.VOLTAGE, ShapeTools.AC, ShapeTools.CURRENT, ShapeTools.DIODE, ShapeTools.SWITCH, ShapeTools.GROUND,
             ShapeTools.NPN, ShapeTools.PNP, ShapeTools.NMOS, ShapeTools.PMOS, ShapeTools.OPAMP,
@@ -76,9 +77,9 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private static final float[] HL_WIDTHS = {16f, 24f, 36f};
     private static final String[] PEN_KINDS = {Ink.PEN, Ink.PENCIL, Ink.BRUSH, Ink.CALLIGRAPHY, Ink.MARKER, Ink.FOUNTAIN, Ink.DOTTED, Ink.DASHED};
     private static final String[] PEN_NAMES = {"Pluma", "Lápiz", "Pincel", "Caligrafía", "Marcador", "Estilográfica", "Punteado", "Rayado"};
-    private static final String[] BACKGROUNDS = {Ink.LINES, Ink.GRID, Ink.DOTS, Ink.HALF, Ink.HALF_GRID, Ink.HALF_H, Ink.CORNELL, Ink.WIDE, Ink.MM,
+    static final String[] BACKGROUNDS = {Ink.LINES, Ink.GRID, Ink.DOTS, Ink.HALF, Ink.HALF_GRID, Ink.HALF_H, Ink.CORNELL, Ink.WIDE, Ink.MM,
             Ink.ENGINEERING, Ink.SEMILOG, Ink.LOGLOG, Ink.SMITH, Ink.POLAR, Ink.ISO, Ink.HEX, Ink.HANDWRITING, Ink.WEEK, Ink.STORY, Ink.TODO, Ink.MUSIC, Ink.PLAIN};
-    private static final String[] BACKGROUND_NAMES = {"Rayas", "Cuadros", "Puntos", "Partida a la mitad", "Cuadros partida", "Mitad arriba y abajo",
+    static final String[] BACKGROUND_NAMES = {"Rayas", "Cuadros", "Puntos", "Partida a la mitad", "Cuadros partida", "Mitad arriba y abajo",
             "Cornell (apuntes)", "Rayas anchas", "Milimetrada", "Ingeniería", "Semilogarítmica", "Logarítmica (log-log)", "Carta de Smith", "Polar", "Isométrica", "Hexagonal", "Caligrafía", "Semana",
             "Storyboard", "Lista de tareas", "Pentagrama", "Lisa"};
     private static final int PICK_IMAGE = 1, PICK_PDF = 2, TAKE_PHOTO = 3, PICK_TEXT = 4, PICK_PPTX = 5, EDIT_IMAGE = 6;
@@ -121,6 +122,29 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     private int dockCollapsedWidth;
     private final IconView[] shapeButtons = new IconView[SHAPE_KINDS.length];
     private TextView title;
+    /** Etiqueta abajo a la izquierda con el nombre del cuaderno (ya no en la barra). */
+    private GlassLayout titleChip;
+    // ---- Cómo es la barra (Personalizar la barra) ----
+    private String barStyle = BarSettings.CLASSIC, barPos = BarSettings.TOP, colorsMode = BarSettings.C_SIDE;
+    private boolean compactBar, darkBar, fold, foldByPen;
+    private int barH, iconPx;
+    /** Todo lo de la hoja (se encoge a la izquierda al personalizar) y la raíz. */
+    private FrameLayout root, stage;
+    /** Bordes del sistema (barra de estado, navegación). */
+    private int inTop, inLeft, inBottom, inRight;
+    /** Pestañas de la barra y de los colores cuando se pliegan. */
+    private GlassLayout barTab, colorsTab;
+    private IconView barChevron, colorsChevron;
+    private View colorsDot;
+    private android.animation.ValueAnimator barAnim, palAnim;
+    private BarDesigner designer;
+    /** Colores y grosores dentro de la barra. */
+    private LinearLayout inlinePalette;
+    private View paletteSep;
+    private boolean barOpen = true, paletteOpen = true;
+    private final java.util.LinkedHashMap<String, View> barItems = new java.util.LinkedHashMap<>();
+    private long lastBarUse;
+    private final Runnable hideBars = this::hideBarsNow;
     private IconView pen, highlighter, eraser, lasso, shapes, text, note, neuron, tape, laser, undo, redo, finger;
     private View dot;
     private LinearLayout colors, widths;
@@ -143,9 +167,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         if (saved == null && asked >= 0) index = asked;
 
         paperDark = prefs.getBoolean("darkPaper", false);
-        fg = paperDark ? 0xFFF3F4F6 : Ui.ICON;
-        fgMuted = paperDark ? 0xFFB6BEC9 : Ui.ICON_MUTED;
-        glass = paperDark ? 0xB81E2228 : Ui.GLASS_LIGHT;
+        loadBarLook();
         ink = new InkView(this);
         if (paperDark) {
             ink.setDarkPaper(true);
@@ -169,42 +191,43 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         ink.buttonHold = prefs.getInt("buttonHold", InkView.HOLD_ERASE);
         customColor = prefs.getInt("customColor", 0xFF0EA5E9);
 
-        FrameLayout root = new FrameLayout(this);
-        root.addView(ink, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        bar = toolbar();
-        FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                Ui.dp(this, 56), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        root.addView(bar, barLp);
-        palette = palette();
-        FrameLayout.LayoutParams palLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.CENTER_VERTICAL);
-        root.addView(palette, palLp);
+        root = new FrameLayout(this);
+        stage = new FrameLayout(this);
+        root.addView(stage, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        stage.addView(ink, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         selectionBar = selectionBar();
-        FrameLayout.LayoutParams selLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                Ui.dp(this, 56), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        root.addView(selectionBar, selLp);
+        stage.addView(selectionBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, barH));
         selectionBar.setVisibility(View.GONE);
         shapeBar = shapeBar();
-        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        root.addView(shapeBar, dockLp);
+        stage.addView(shapeBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         shapeBar.setVisibility(View.GONE);
+        // El nombre del cuaderno, abajo a la izquierda: en la barra empujaba los botones.
+        titleChip = new GlassLayout(this, ink, glass, Ui.dp(this, 15));
+        titleChip.setGravity(Gravity.CENTER_VERTICAL);
+        title = Ui.text(this, "", 13, fg, true);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels * 0.4f));
+        title.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setContentDescription("Opciones de la página");
+        title.setOnClickListener(v -> pageMenu());
+        titleChip.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        stage.addView(titleChip, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 30)));
         dock = paperDark ? new OptionDock(this, root, ink, 0xF7262A31, true) : new OptionDock(this, root, ink);
+        buildBars();
         root.setOnApplyWindowInsetsListener((v, in) -> {
             @SuppressWarnings("deprecation") int top = in.getSystemWindowInsetTop();
             @SuppressWarnings("deprecation") int left = in.getSystemWindowInsetLeft();
             @SuppressWarnings("deprecation") int bottom = in.getSystemWindowInsetBottom();
-            int gap = Ui.dp(this, 10);
-            barLp.topMargin = top + gap;
-            palLp.leftMargin = left + Ui.dp(this, 14);
-            selLp.bottomMargin = bottom + Ui.dp(this, 18);
-            bar.setLayoutParams(barLp);
-            palette.setLayoutParams(palLp);
-            selectionBar.setLayoutParams(selLp);
-            dockLp.bottomMargin = selLp.bottomMargin;
-            shapeBar.setLayoutParams(dockLp);
-            bar.maxWidth = getResources().getDisplayMetrics().widthPixels - 2 * gap;
-            ink.topInset = top + gap + Ui.dp(this, 56);
+            @SuppressWarnings("deprecation") int right = in.getSystemWindowInsetRight();
+            inTop = top;
+            inLeft = left;
+            inBottom = bottom;
+            inRight = right;
+            layoutBars();
+            animateBar(barOpen, false);
+            animatePalette(paletteOpen, false);
             dock.setInsets(bottom, Build.VERSION.SDK_INT >= 30 ? in.getInsets(android.view.WindowInsets.Type.ime()).bottom : 0);
             return in;
         });
@@ -212,13 +235,18 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         ink.onFrame = () -> {
             bar.postInvalidateOnAnimation();
             palette.postInvalidateOnAnimation();
+            if (barTab != null) barTab.postInvalidateOnAnimation();
+            if (colorsTab != null) colorsTab.postInvalidateOnAnimation();
             if (selectionBar.getVisibility() == View.VISIBLE) selectionBar.postInvalidateOnAnimation();
             if (shapeBar.getVisibility() == View.VISIBLE) shapeBar.postInvalidateOnAnimation();
+            titleChip.postInvalidateOnAnimation();
             dock.invalidateGlass();
         };
         setContentView(root);
+        // Desde Inicio → Personalizar: se abre ya con el panel.
+        if (saved == null && getIntent().getBooleanExtra("design", false)) root.post(this::openDesigner);
         // Se vuelve al dock como se dejó.
-        if (ink.shapeKind >= ShapeTools.RESISTOR) {
+        if (ShapeTools.isComponentKind(ink.shapeKind)) {
             shapeRow.setVisibility(View.GONE);
             circuitDock.setVisibility(View.VISIBLE);
         }
@@ -296,7 +324,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
 
     private IconView icon(int which, String label, View.OnClickListener click) {
         IconView v = new IconView(this, which, fg, label);
-        if (paperDark) v.activeColors(0xFFE5E7EB, 0xFF111827);
+        if (darkBar) v.activeColors(0xFFE5E7EB, 0xFF111827);
         v.setOnClickListener(click);
         return v;
     }
@@ -314,84 +342,620 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         return v;
     }
 
-    private GlassLayout toolbar() {
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 16), 0);
+    /** Un botón de la barra, al tamaño elegido (compacta o normal). */
+    private View sized(View v) {
+        v.setLayoutParams(new LinearLayout.LayoutParams(iconPx, iconPx));
+        return v;
+    }
 
-        row.addView(icon(IconView.BACK, "Volver a los cuadernos", v -> finish()));
-        title = Ui.text(this, "", 15, fg, true);
-        title.setPadding(Ui.dp(this, 2), 0, Ui.dp(this, 8), 0);
-        title.setMinHeight(Ui.dp(this, 44));
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setContentDescription("Opciones de la página");
-        title.setOnClickListener(v -> pageMenu());
-        row.addView(title);
-        row.addView(sep(false));
+    private boolean vertical() {
+        return BarSettings.LEFT.equals(barPos) || BarSettings.RIGHT.equals(barPos);
+    }
+
+    private boolean colorsInBar() {
+        return BarSettings.C_BAR.equals(colorsMode);
+    }
+
+    private boolean colorsFloat() {
+        return BarSettings.C_FLOAT.equals(colorsMode);
+    }
+
+    /** Radio de las esquinas según la forma elegida. */
+    private int corner() {
+        int shape = BarSettings.shape(this);
+        return shape == 0 ? barH / 2 : Ui.dp(this, shape == 1 ? 14 : 6);
+    }
+
+    /** Colores, tamaño, posición y plegado según Personalizar. */
+    private void loadBarLook() {
+        fg = paperDark ? 0xFFF3F4F6 : Ui.ICON;
+        fgMuted = paperDark ? 0xFFB6BEC9 : Ui.ICON_MUTED;
+        glass = paperDark ? 0xB81E2228 : Ui.GLASS_LIGHT;
+        barStyle = BarSettings.style(this);
+        compactBar = BarSettings.compact(this);
+        barH = Ui.dp(this, compactBar ? 46 : 56);
+        iconPx = Ui.dp(this, compactBar ? 38 : 44);
+        darkBar = paperDark;
+        int barColor = BarSettings.color(this);
+        if (barColor != 0) {
+            boolean light = BarSettings.isLight(barColor);
+            glass = (barColor & 0x00FFFFFF) | 0xE6000000;
+            fg = light ? Ui.ICON : 0xFFF3F4F6;
+            fgMuted = light ? Ui.ICON_MUTED : 0xFFB6BEC9;
+            darkBar = !light;
+        }
+        barPos = BarSettings.pos(this);
+        fold = BarSettings.fold(this);
+        foldByPen = BarSettings.foldByPen(this);
+        colorsMode = BarSettings.colorsMode(this);
+    }
+
+    /** Arma (o rehace, si se cambió algo en Personalizar) la barra, los colores y sus pestañas. */
+    private void buildBars() {
+        for (View v : new View[] {bar, palette, barTab, colorsTab}) if (v != null) stage.removeView(v);
+        if (barAnim != null) barAnim.cancel();
+        if (palAnim != null) palAnim.cancel();
+        loadBarLook();
+        inlinePalette = null;
+        palette = palette();
+        bar = toolbar();
+        int at = stage.indexOfChild(ink) + 1;
+        stage.addView(palette, at, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        stage.addView(bar, at + 1, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        barTab = fold ? barTab() : null;
+        colorsTab = fold && !colorsInBar() ? colorsTab() : null;
+        if (barTab != null) stage.addView(barTab, at + 2, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        if (colorsTab != null) stage.addView(colorsTab, at + 3, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        barOpen = paletteOpen = !fold;
+        layoutBars();
+        refreshTools();
+        animateBar(barOpen, false);
+        animatePalette(paletteOpen, false);
+    }
+
+    /** Dónde va cada cosa según la posición elegida y los bordes del sistema. */
+    private void layoutBars() {
+        if (bar == null) return;
+        int gap = Ui.dp(this, 10), side = Ui.dp(this, 14);
+        int w = stage.getWidth() > 0 ? stage.getWidth() : getResources().getDisplayMetrics().widthPixels;
+        int h = stage.getHeight() > 0 ? stage.getHeight() : getResources().getDisplayMetrics().heightPixels;
+        boolean v = vertical();
+        FrameLayout.LayoutParams b = new FrameLayout.LayoutParams(v ? barH : ViewGroup.LayoutParams.WRAP_CONTENT, v ? ViewGroup.LayoutParams.WRAP_CONTENT : barH);
+        switch (barPos) {
+            case BarSettings.BOTTOM: b.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL; b.bottomMargin = inBottom + gap; break;
+            case BarSettings.LEFT: b.gravity = Gravity.START | Gravity.CENTER_VERTICAL; b.leftMargin = inLeft + gap; b.topMargin = inTop + gap; b.bottomMargin = inBottom + gap; break;
+            case BarSettings.RIGHT: b.gravity = Gravity.END | Gravity.CENTER_VERTICAL; b.rightMargin = inRight + gap; b.topMargin = inTop + gap; b.bottomMargin = inBottom + gap; break;
+            default: b.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL; b.topMargin = inTop + gap;
+        }
+        bar.setLayoutParams(b);
+        bar.maxWidth = v ? Integer.MAX_VALUE : w - 2 * gap;
+        // Los colores: del lado contrario a una barra de pie; flotando donde se dejaron.
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (colorsFloat()) {
+            p.gravity = Gravity.TOP | Gravity.START;
+            p.leftMargin = Math.round(Math.max(inLeft, Math.min(w - Ui.dp(this, 60), BarSettings.floatX(this) * w)));
+            p.topMargin = Math.round(Math.max(inTop, Math.min(h - Ui.dp(this, 200), BarSettings.floatY(this) * h)));
+        } else if (paletteAtEnd()) {
+            p.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+            p.rightMargin = inRight + side;
+        } else {
+            p.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
+            p.leftMargin = inLeft + side;
+        }
+        palette.setLayoutParams(p);
+        // Las pestañas, pegadas a su borde.
+        if (barTab != null) {
+            FrameLayout.LayoutParams t = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            switch (barPos) {
+                case BarSettings.BOTTOM: t.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL; t.bottomMargin = inBottom; break;
+                case BarSettings.LEFT: t.gravity = Gravity.START | Gravity.CENTER_VERTICAL; t.leftMargin = inLeft; break;
+                case BarSettings.RIGHT: t.gravity = Gravity.END | Gravity.CENTER_VERTICAL; t.rightMargin = inRight; break;
+                default: t.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL; t.topMargin = inTop;
+            }
+            barTab.setLayoutParams(t);
+        }
+        if (colorsTab != null) {
+            FrameLayout.LayoutParams t = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (colorsFloat()) {
+                t.gravity = Gravity.TOP | Gravity.START;
+                t.leftMargin = p.leftMargin;
+                t.topMargin = p.topMargin;
+            } else if (paletteAtEnd()) {
+                t.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+                t.rightMargin = inRight;
+            } else {
+                t.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
+                t.leftMargin = inLeft;
+            }
+            colorsTab.setLayoutParams(t);
+        }
+        // Lo de abajo (selección, figuras, nombre) sube si la barra está abajo.
+        boolean barBottom = BarSettings.BOTTOM.equals(barPos);
+        FrameLayout.LayoutParams sel = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, barH,
+                (barBottom ? Gravity.TOP : Gravity.BOTTOM) | Gravity.CENTER_HORIZONTAL);
+        if (barBottom) sel.topMargin = inTop + gap;
+        else sel.bottomMargin = inBottom + Ui.dp(this, 18);
+        selectionBar.setLayoutParams(sel);
+        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                (barBottom ? Gravity.TOP : Gravity.BOTTOM) | Gravity.CENTER_HORIZONTAL);
+        if (barBottom) dockLp.topMargin = sel.topMargin;
+        else dockLp.bottomMargin = sel.bottomMargin;
+        shapeBar.setLayoutParams(dockLp);
+        FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 30),
+                (barBottom ? Gravity.TOP : Gravity.BOTTOM) | (BarSettings.LEFT.equals(barPos) ? Gravity.END : Gravity.START));
+        tl.leftMargin = inLeft + side;
+        tl.rightMargin = inRight + side;
+        if (barBottom) tl.topMargin = inTop + Ui.dp(this, 12);
+        else tl.bottomMargin = inBottom + Ui.dp(this, 12);
+        titleChip.setLayoutParams(tl);
+        ink.topInset = BarSettings.TOP.equals(barPos) ? inTop + gap + barH : inTop + gap;
+    }
+
+    private boolean paletteAtEnd() {
+        return BarSettings.LEFT.equals(barPos);
+    }
+
+    private GlassLayout toolbar() {
+        boolean v = vertical();
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(v ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        row.setGravity(v ? Gravity.CENTER_HORIZONTAL : Gravity.CENTER_VERTICAL);
+        if (v) row.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 12));
+        else row.setPadding(Ui.dp(this, 4), 0, Ui.dp(this, 12), 0);
+        row.addView(sized(icon(IconView.BACK, "Volver a los cuadernos", x -> finish())));
 
         // Tocar otra vez la herramienta activa abre sus opciones.
-        pen = icon(IconView.PEN, "Pluma (toca otra vez para el tipo)", v -> {
+        pen = icon(IconView.PEN, "Pluma (toca otra vez para el tipo)", x -> {
             if (ink.tool == InkView.PEN) chooseKind();
             else setTool(InkView.PEN);
         });
-        highlighter = icon(IconView.HIGHLIGHTER, "Resaltador", v -> setTool(InkView.HIGHLIGHTER));
-        eraser = icon(IconView.ERASER, "Goma (toca otra vez para el modo)", v -> {
+        highlighter = icon(IconView.HIGHLIGHTER, "Resaltador", x -> setTool(InkView.HIGHLIGHTER));
+        eraser = icon(IconView.ERASER, "Goma (toca otra vez para el modo)", x -> {
             if (ink.tool == InkView.ERASER) chooseEraser();
             else setTool(InkView.ERASER);
         });
-        lasso = icon(IconView.LASSO, "Lazo: toca una palabra, rodea o pasa por encima", v -> setTool(InkView.LASSO));
-        shapes = icon(IconView.SHAPES, "Figuras (toca otra vez para la galería)", v -> {
+        lasso = icon(IconView.LASSO, "Lazo: toca una palabra, rodea o pasa por encima", x -> setTool(InkView.LASSO));
+        shapes = icon(IconView.SHAPES, "Figuras (toca otra vez para la galería)", x -> {
             if (ink.tool == InkView.SHAPE) toggleDock();
             else setTool(InkView.SHAPE);
         });
-        text = icon(IconView.TEXT, "Texto: toca la hoja para escribir", v -> setTool(InkView.TEXT));
-        tape = icon(IconView.TAPE, "Cinta: tapa algo; tócala con el dedo para destaparla", v -> setTool(InkView.TAPE));
-        laser = icon(IconView.LASER, "Puntero láser (también en el PC)", v -> setTool(InkView.LASER));
-        note = icon(IconView.NOTE, "Notas: no salen al exportar; pueden ir fuera de la hoja", v -> setTool(InkView.NOTE));
-        neuron = icon(IconView.NEURON, "Lápiz neurona: rodea lo que se relaciona", v -> setTool(InkView.LINK));
-        ruler = icon(IconView.RULER, "Regla, escuadra, transportador y compás", v -> guideMenu());
-        for (View t : new View[] {pen, highlighter, eraser, lasso, shapes, ruler, text, note, neuron, tape, laser}) row.addView(t);
-        row.addView(sep(false));
-
-        undo = icon(IconView.UNDO, "Deshacer", v -> ink.undo());
-        redo = icon(IconView.REDO, "Rehacer", v -> ink.redo());
-        row.addView(undo);
-        row.addView(redo);
-        row.addView(sep(false));
-
-        row.addView(icon(IconView.PREV, "Página anterior", v -> ink.scrollToPage(index - 1, true)));
-        row.addView(icon(IconView.NEXT, "Página siguiente", v -> ink.scrollToPage(index + 1, true)));
-        row.addView(icon(IconView.PLUS, "Página nueva", v -> addPageMenu()));
-        row.addView(icon(IconView.PAGES, "Páginas: ordenar, duplicar, borrar", v -> pageManager()));
-        row.addView(icon(IconView.PAGE, "Plantilla de la hoja", v -> chooseTemplate()));
-        row.addView(icon(IconView.IMAGE, "Insertar foto o PDF", v -> insertMenu()));
-        row.addView(icon(IconView.EXPORT, "Exportar", v -> exportMenu()));
-        row.addView(icon(IconView.PLAY, "Presentar desde esta página", v -> present()));
-        row.addView(icon(IconView.MOON, paperDark ? "Hoja clara" : "Hoja oscura (al exportar sale blanca)", v -> togglePaper()));
-        row.addView(sep(false));
-        finger = icon(IconView.HAND, "Dibujar con el dedo", v -> {
+        text = icon(IconView.TEXT, "Texto: toca la hoja para escribir", x -> setTool(InkView.TEXT));
+        tape = icon(IconView.TAPE, "Cinta: tapa algo; tócala con el dedo para destaparla", x -> setTool(InkView.TAPE));
+        laser = icon(IconView.LASER, "Puntero láser (también en el PC)", x -> setTool(InkView.LASER));
+        note = icon(IconView.NOTE, "Notas: no salen al exportar; pueden ir fuera de la hoja", x -> setTool(InkView.NOTE));
+        neuron = icon(IconView.NEURON, "Lápiz neurona: rodea lo que se relaciona", x -> setTool(InkView.LINK));
+        IconView ruler = icon(IconView.RULER, "Regla, escuadra, transportador y compás", x -> guideMenu());
+        undo = icon(IconView.UNDO, "Deshacer", x -> ink.undo());
+        redo = icon(IconView.REDO, "Rehacer", x -> ink.redo());
+        finger = icon(IconView.HAND, "Dibujar con el dedo", x -> {
             ink.fingerDraws = !ink.fingerDraws;
             prefs.edit().putBoolean("finger", ink.fingerDraws).apply();
             refreshTools();
             Ui.toast(this, ink.fingerDraws ? "El dedo dibuja (dos dedos mueven la hoja)" : "El dedo mueve la hoja; dibuja el lápiz");
         });
-        row.addView(finger);
+        IconView fit = icon(IconView.FIT, "Ver la página entera (otra vez: al ancho)", x -> {
+            if (ink.fittedWhole()) ink.fitWidth();
+            else ink.fitWholePage();
+        });
+        // En el mismo orden que BarSettings.KEYS (null donde va un separador).
+        View[] views = {pen, highlighter, eraser, lasso, shapes, ruler, text, note, neuron, tape, laser, null,
+            undo, redo, null,
+            icon(IconView.PREV, "Página anterior", x -> ink.scrollToPage(index - 1, true)),
+            icon(IconView.NEXT, "Página siguiente", x -> ink.scrollToPage(index + 1, true)),
+            icon(IconView.PLUS, "Página nueva", x -> addPageMenu()),
+            icon(IconView.PAGES, "Páginas: ordenar, duplicar, borrar", x -> pageManager()),
+            icon(IconView.PAGE, "Plantilla de la hoja", x -> chooseTemplate()),
+            icon(IconView.IMAGE, "Insertar foto o PDF", x -> insertMenu()),
+            fit,
+            icon(IconView.EXPORT, "Exportar", x -> exportMenu()),
+            icon(IconView.PLAY, "Presentar desde esta página", x -> present()),
+            icon(IconView.MOON, paperDark ? "Hoja clara" : "Hoja oscura (al exportar sale blanca)", x -> togglePaper()),
+            null, finger};
+        java.util.Set<String> hidden = BarSettings.effectiveHidden(this);
+        barItems.clear();
+        boolean needSep = true, inlineDone = false;
+        for (int i = 0; i < BarSettings.KEYS.length; i++) {
+            String k = BarSettings.KEYS[i];
+            if (k.equals("|")) {
+                // «En la barra»: colores y grosores justo después de las herramientas.
+                if (colorsInBar() && !inlineDone) {
+                    inlineDone = true;
+                    inlinePalette = new LinearLayout(this);
+                    inlinePalette.setOrientation(v ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+                    inlinePalette.setGravity(Gravity.CENTER);
+                    palette.removeView(colors);
+                    palette.removeView(widths);
+                    palette.removeView(paletteSep);
+                    colors.setOrientation(v ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+                    widths.setOrientation(v ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+                    inlinePalette.addView(sep(v));
+                    inlinePalette.addView(colors);
+                    inlinePalette.addView(widths);
+                    row.addView(inlinePalette);
+                }
+                needSep = true;
+                continue;
+            }
+            barItems.put(k, views[i]);
+            if (hidden.contains(k)) continue;
+            if (needSep) {
+                row.addView(sep(v));
+                needSep = false;
+            }
+            row.addView(sized(views[i]));
+        }
+        // Lo escondido, a mano en «⋯» (y desde ahí, Personalizar).
+        row.addView(sized(icon(IconView.DOTS, hidden.isEmpty() ? "Más: personalizar la barra" : "Más herramientas y personalizar", x -> overflowMenu())));
 
         dot = new View(this);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(Ui.dp(this, 10), Ui.dp(this, 10));
-        dlp.leftMargin = Ui.dp(this, 8);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(Ui.dp(this, 9), Ui.dp(this, 9));
+        if (v) dlp.topMargin = Ui.dp(this, 6);
+        else dlp.leftMargin = Ui.dp(this, 6);
         row.addView(dot, dlp);
 
-        HorizontalScrollView scroll = new HorizontalScrollView(this);
-        scroll.setHorizontalScrollBarEnabled(false);
-        scroll.addView(row, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        GlassLayout g = new GlassLayout(this, ink, glass, Ui.dp(this, 28));
-        g.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        GlassLayout g = new GlassLayout(this, ink, glass, corner());
+        g.setOrientation(v ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        g.setGravity(Gravity.CENTER);
+        if (v) {
+            ScrollView scroll = new ScrollView(this);
+            scroll.setVerticalScrollBarEnabled(false);
+            scroll.addView(row, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            g.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        } else {
+            HorizontalScrollView scroll = new HorizontalScrollView(this);
+            scroll.setHorizontalScrollBarEnabled(false);
+            scroll.addView(row, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            g.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
         return g;
     }
 
+    // ---- Pestañas: plegar y desplegar con animación ----
+
+    /** Hacia dónde apunta la flecha de la pestaña plegada (hacia dentro de la pantalla). */
+    private float tabRotation() {
+        switch (barPos) {
+            case BarSettings.BOTTOM: return -90;
+            case BarSettings.LEFT: return 0;
+            case BarSettings.RIGHT: return 180;
+            default: return 90;
+        }
+    }
+
+    private GlassLayout barTab() {
+        boolean v = vertical();
+        GlassLayout t = new GlassLayout(this, ink, glass, Ui.dp(this, 13));
+        t.setGravity(Gravity.CENTER);
+        barChevron = icon(IconView.NEXT, "Abrir la barra", x -> toggleBar());
+        barChevron.setRotation(tabRotation());
+        t.addView(barChevron, new LinearLayout.LayoutParams(Ui.dp(this, v ? 26 : 64), Ui.dp(this, v ? 64 : 26)));
+        t.setContentDescription("Abrir o plegar la barra");
+        return t;
+    }
+
+    private GlassLayout colorsTab() {
+        GlassLayout t = new GlassLayout(this, ink, glass, Ui.dp(this, colorsFloat() ? 22 : 13));
+        t.setOrientation(LinearLayout.VERTICAL);
+        t.setGravity(Gravity.CENTER);
+        colorsDot = new View(this);
+        LinearLayout.LayoutParams dp = new LinearLayout.LayoutParams(Ui.dp(this, 16), Ui.dp(this, 16));
+        dp.bottomMargin = colorsFloat() ? 0 : Ui.dp(this, 2);
+        t.addView(colorsDot, dp);
+        if (!colorsFloat()) {
+            colorsChevron = new IconView(this, IconView.NEXT, fg, "");
+            colorsChevron.setRotation(paletteAtEnd() ? 180 : 0);
+            colorsChevron.setClickable(false);
+            t.addView(colorsChevron, new LinearLayout.LayoutParams(Ui.dp(this, 22), Ui.dp(this, 22)));
+        } else {
+            colorsChevron = null;
+        }
+        int pad = Ui.dp(this, colorsFloat() ? 12 : 4);
+        t.setPadding(pad, Ui.dp(this, colorsFloat() ? 12 : 10), pad, Ui.dp(this, colorsFloat() ? 12 : 8));
+        t.setClickable(true);
+        t.setContentDescription("Abrir los colores");
+        t.setOnClickListener(x -> togglePalette());
+        return t;
+    }
+
+    private void toggleBar() {
+        animateBar(!barOpen, true);
+        keepBarsOpen();
+    }
+
+    private void togglePalette() {
+        animatePalette(!paletteOpen, true);
+        keepBarsOpen();
+    }
+
+    /** Fuera de la pantalla, del lado de su borde. */
+    private float barHidden() {
+        int gap = Ui.dp(this, 10);
+        switch (barPos) {
+            case BarSettings.BOTTOM: return inBottom + gap + barH + Ui.dp(this, 6);
+            case BarSettings.LEFT: return -(inLeft + gap + barH + Ui.dp(this, 6));
+            case BarSettings.RIGHT: return inRight + gap + barH + Ui.dp(this, 6);
+            default: return -(inTop + gap + barH + Ui.dp(this, 6));
+        }
+    }
+
+    /** Abierta, la pestaña queda colgando justo después de la barra. */
+    private float tabOpenOffset() {
+        float d = Ui.dp(this, 10) + barH - Ui.dp(this, 2);
+        return BarSettings.BOTTOM.equals(barPos) || BarSettings.RIGHT.equals(barPos) ? -d : d;
+    }
+
+    /** La barra baja (o entra de lado) con un rebote suave; al plegarse sale rápida. */
+    private void animateBar(boolean open, boolean animate) {
+        barOpen = open;
+        if (barAnim != null) barAnim.cancel();
+        if (!fold) {
+            bar.setVisibility(View.VISIBLE);
+            bar.setTranslationX(0);
+            bar.setTranslationY(0);
+            bar.setAlpha(1);
+            return;
+        }
+        boolean v = vertical();
+        float hidden = barHidden(), tabOpen = tabOpenOffset(), base = tabRotation();
+        float from = v ? bar.getTranslationX() : bar.getTranslationY();
+        float start = hidden == 0 ? 0 : 1 - from / hidden;
+        float end = open ? 1 : 0;
+        bar.setVisibility(View.VISIBLE);
+        android.animation.ValueAnimator a = android.animation.ValueAnimator.ofFloat(animate ? start : end, end);
+        a.setDuration(animate ? (open ? 320 : 220) : 0);
+        a.setInterpolator(open ? new android.view.animation.OvershootInterpolator(1.1f) : new android.view.animation.DecelerateInterpolator(1.6f));
+        a.addUpdateListener(an -> {
+            float f = (float) an.getAnimatedValue();
+            float off = hidden * (1 - f);
+            if (v) bar.setTranslationX(off);
+            else bar.setTranslationY(off);
+            bar.setAlpha(Math.max(0, Math.min(1, f * 1.4f)));
+            if (barTab != null) {
+                if (v) barTab.setTranslationX(tabOpen * f);
+                else barTab.setTranslationY(tabOpen * f);
+                barChevron.setRotation(base + 180 * Math.min(1, f));
+            }
+        });
+        a.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator an) {
+                if (!barOpen) bar.setVisibility(View.INVISIBLE);
+            }
+        });
+        barAnim = a;
+        a.start();
+    }
+
+    /** Los colores salen de su borde (o crecen desde la burbuja si flotan). */
+    private void animatePalette(boolean open, boolean animate) {
+        paletteOpen = open;
+        if (palAnim != null) palAnim.cancel();
+        if (!fold || colorsInBar()) {
+            palette.setTranslationX(0);
+            palette.setScaleX(1);
+            palette.setScaleY(1);
+            palette.setAlpha(1);
+            applyPaletteState();
+            return;
+        }
+        boolean end = paletteAtEnd();
+        int width = palette.getWidth() > 0 ? palette.getWidth() : Ui.dp(this, 56);
+        float hidden = (end ? 1 : -1) * (width + Ui.dp(this, 20));
+        float tabOpen = (end ? -1 : 1) * (width + Ui.dp(this, 8));
+        boolean floating = colorsFloat();
+        float target = open ? 1 : 0;
+        float startF = floating ? palette.getAlpha() : (hidden == 0 ? 0 : 1 - palette.getTranslationX() / hidden);
+        if (open && palette.getVisibility() != View.VISIBLE) palette.setVisibility(View.VISIBLE);
+        android.animation.ValueAnimator a = android.animation.ValueAnimator.ofFloat(animate ? startF : target, target);
+        a.setDuration(animate ? (open ? 300 : 200) : 0);
+        a.setInterpolator(open ? new android.view.animation.OvershootInterpolator(1.0f) : new android.view.animation.DecelerateInterpolator(1.6f));
+        a.addUpdateListener(an -> {
+            float f = (float) an.getAnimatedValue();
+            if (floating) {
+                float s = 0.4f + 0.6f * f;
+                palette.setPivotX(0);
+                palette.setPivotY(0);
+                palette.setScaleX(s);
+                palette.setScaleY(s);
+                palette.setAlpha(Math.max(0, Math.min(1, f)));
+                if (colorsTab != null) colorsTab.setAlpha(1 - Math.min(1, f));
+            } else {
+                palette.setTranslationX(hidden * (1 - f));
+                palette.setAlpha(Math.max(0, Math.min(1, f * 1.4f)));
+                if (colorsTab != null) colorsTab.setTranslationX(tabOpen * f);
+                if (colorsChevron != null) colorsChevron.setRotation((end ? 180 : 0) + 180 * Math.min(1, f));
+            }
+        });
+        a.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator an) {
+                applyPaletteState();
+            }
+        });
+        palAnim = a;
+        a.start();
+    }
+
+    /** Con «se abre con el lápiz»: se pliega sola un rato después. */
+    private void keepBarsOpen() {
+        if (!fold || !foldByPen) return;
+        lastBarUse = android.os.SystemClock.uptimeMillis();
+        main.removeCallbacks(hideBars);
+        int wait = BarSettings.hideMs(this);
+        // «Nunca»: se queda abierta hasta que se toque su pestaña.
+        if (wait > 0) main.postDelayed(hideBars, wait + 100);
+    }
+
+    private void hideBarsNow() {
+        if (!fold || !foldByPen) return;
+        int wait = BarSettings.hideMs(this);
+        if (wait <= 0) return;
+        if (dock.isOpen() || designer != null || android.os.SystemClock.uptimeMillis() - lastBarUse < wait) {
+            main.postDelayed(hideBars, Math.max(400, wait / 2));
+            return;
+        }
+        if (barOpen) animateBar(false, true);
+        if (paletteOpen) animatePalette(false, true);
+    }
+
+    /** El S Pen cerca de la pantalla (sin tocarla): cerca de una pestaña, se abre. */
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        int a = e.getActionMasked();
+        if (fold && foldByPen && designer == null && e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
+                && (a == MotionEvent.ACTION_HOVER_ENTER || a == MotionEvent.ACTION_HOVER_MOVE)) {
+            int zone = Ui.dp(this, 70);
+            if (near(barTab, e, zone) || (barOpen && near(bar, e, zone))) {
+                if (!barOpen) animateBar(true, true);
+                keepBarsOpen();
+            }
+            if (near(colorsTab, e, zone) || (paletteOpen && near(palette, e, zone))) {
+                if (!paletteOpen) animatePalette(true, true);
+                keepBarsOpen();
+            }
+        }
+        return super.dispatchGenericMotionEvent(e);
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent e) {
+        // Mientras se usa la barra o los colores, no se pliegan.
+        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && fold && foldByPen && (near(bar, e, 0) || near(palette, e, 0))) keepBarsOpen();
+        return super.dispatchTouchEvent(e);
+    }
+
+    /** ¿El punto está sobre la vista (con su desplazamiento) o a menos de `zone`? */
+    private static boolean near(View v, MotionEvent e, int zone) {
+        if (v == null || v.getVisibility() != View.VISIBLE) return false;
+        float l = v.getLeft() + v.getTranslationX(), t = v.getTop() + v.getTranslationY();
+        return e.getX() >= l - zone && e.getX() <= l + v.getWidth() + zone && e.getY() >= t - zone && e.getY() <= t + v.getHeight() + zone;
+    }
+
+    /** «⋯»: lo escondido de la barra y, bien visible, Personalizar. */
+    private void overflowMenu() {
+        java.util.Set<String> hidden = BarSettings.effectiveHidden(this);
+        java.util.List<String> opensDock = java.util.Arrays.asList("ruler", "add", "pages", "template", "insert", "export");
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        for (String k : BarSettings.KEYS) {
+            View v = barItems.get(k);
+            if (v == null || !hidden.contains(k)) continue;
+            boolean stays = opensDock.contains(k) || (k.equals("pen") && ink.tool == InkView.PEN) || (k.equals("eraser") && ink.tool == InkView.ERASER);
+            OptionDock.Tile t = new OptionDock.Tile(glyph(BarSettings.icon(k)), BarSettings.label(k), false, v::performClick);
+            tiles.add(stays ? t.stays() : t);
+        }
+        OptionDock.Action personalize = new OptionDock.Action("✦  Personalizar la barra", true, this::openDesigner);
+        if (tiles.isEmpty()) {
+            LinearLayout box = new LinearLayout(this);
+            box.setPadding(Ui.dp(this, 18), 0, Ui.dp(this, 18), Ui.dp(this, 8));
+            box.addView(dock.message("Todos los botones están en la barra. Puedes esconder los que no uses, moverla de lado, plegarla con pestañas y cambiarle el color."));
+            dock.show("Barra", box, new OptionDock.Action("Cerrar", false, null), personalize);
+        } else {
+            dock.tiles("Más herramientas", tiles, personalize);
+        }
+    }
+
+    // ---- Personalizar (concepto A): la página se encoge a la izquierda ----
+
+    private void openDesigner() {
+        if (designer != null) return;
+        BarDesigner.ColorWheelHost.dock = dock;
+        designer = new BarDesigner(this, new BarDesigner.Host() {
+            @Override
+            public void barChanged() {
+                buildBars();
+            }
+
+            @Override
+            public void closeDesigner() {
+                PageActivity.this.closeDesigner();
+            }
+        });
+        int w = root.getWidth(), h = root.getHeight(), m = Ui.dp(this, 22);
+        int panelW = Math.min(Ui.dp(this, 440), Math.round(w * 0.42f));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(panelW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END);
+        lp.setMargins(m, inTop + m, inRight + m, inBottom + m);
+        root.addView(designer.view, root.indexOfChild(stage) + 1, lp);
+        root.setBackgroundColor(paperDark ? 0xFF0B0D10 : 0xFFE5E9EF);
+        float s = Math.max(0.3f, (w - panelW - 3f * m) / w);
+        stage.setPivotX(0);
+        stage.setPivotY(h / 2f);
+        stage.setClipToOutline(true);
+        stage.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View v, android.graphics.Outline o) {
+                o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), Ui.dp(PageActivity.this, 28));
+            }
+        });
+        stage.animate().scaleX(s).scaleY(s).translationX(m).setDuration(320)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f)).start();
+        designer.view.setTranslationX(panelW + m);
+        designer.view.animate().translationX(0).setDuration(320).setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f)).start();
+    }
+
+    private void closeDesigner() {
+        if (designer == null) return;
+        View panel = designer.view;
+        designer = null;
+        stage.animate().scaleX(1).scaleY(1).translationX(0).setDuration(260)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f))
+                .withEndAction(() -> stage.setClipToOutline(false)).start();
+        panel.animate().translationX(panel.getWidth() + Ui.dp(this, 22)).setDuration(240).withEndAction(() -> root.removeView(panel)).start();
+    }
+
+    // ---- Dedo quieto sobre la hoja ----
+
+    @Override
+    public void onPageLongPress(int page, float x, float y) {
+        ArrayList<OptionDock.Tile> tiles = new ArrayList<>();
+        tiles.add(new OptionDock.Tile(glyph(IconView.PASTE), "Pegar", false, this::paste));
+        tiles.add(new OptionDock.Tile(glyph(IconView.TEXT), "Cuadro de texto", false, () -> onTextRequest(page, null, x, y)).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.NOTE), "Nota adhesiva", false, () -> onNoteRequest(page, null, x, y)).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.COPY), "Portapapeles", false, this::showClipboard).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.IMAGE), "Foto o PDF", false, this::insertMenu).stays());
+        tiles.add(new OptionDock.Tile(glyph(IconView.PAGE), "Plantilla de la hoja", false, this::chooseTemplate).stays());
+        dock.tiles("En la hoja", tiles);
+    }
+
+    /** Lo que hay copiado (texto o imagen), para verlo antes de pegarlo. */
+    private void showClipboard() {
+        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        android.content.ClipData clip = cm == null ? null : cm.getPrimaryClip();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Ui.dp(this, 18);
+        box.setPadding(pad, 0, pad, Ui.dp(this, 8));
+        if (clip == null || clip.getItemCount() == 0) {
+            box.addView(dock.message("El portapapeles está vacío. Copia un texto o una imagen (también en el PC) y vuelve aquí."));
+            dock.show("Portapapeles", box, new OptionDock.Action("Cerrar", true, null));
+            return;
+        }
+        android.content.ClipData.Item item = clip.getItemAt(0);
+        boolean image = false;
+        if (item.getUri() != null) {
+            try {
+                Bitmap b = loadImage(item.getUri(), 900);
+                if (b != null) {
+                    ImageView iv = new ImageView(this);
+                    iv.setAdjustViewBounds(true);
+                    iv.setImageBitmap(b);
+                    box.addView(iv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 220)));
+                    image = true;
+                }
+            } catch (IOException | RuntimeException ignored) {
+                // No es una imagen: se enseña como texto.
+            }
+        }
+        if (!image) {
+            CharSequence t = item.coerceToText(this);
+            TextView tv = dock.message(t == null || t.length() == 0 ? "(vacío)" : t.length() > 600 ? t.subSequence(0, 600) + "…" : t.toString());
+            tv.setMaxLines(12);
+            box.addView(tv);
+        }
+        dock.show("Portapapeles", box, new OptionDock.Action("Cerrar", false, null), new OptionDock.Action("Pegar aquí", true, this::paste));
+    }
+
     private GlassLayout palette() {
-        GlassLayout g = new GlassLayout(this, ink, glass, Ui.dp(this, 28));
+        GlassLayout g = new GlassLayout(this, ink, glass, BarSettings.shape(this) == 0 ? Ui.dp(this, 28) : corner());
         g.setOrientation(LinearLayout.VERTICAL);
         g.setGravity(Gravity.CENTER_HORIZONTAL);
         int pad = Ui.dp(this, 6);
@@ -400,15 +964,58 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         colors.setOrientation(LinearLayout.VERTICAL);
         widths = new LinearLayout(this);
         widths.setOrientation(LinearLayout.VERTICAL);
+        // Flotantes: un asa para arrastrarlos a donde estorben menos.
+        if (colorsFloat()) {
+            View grip = new View(this);
+            grip.setBackground(Ui.round(fg & 0xFFFFFF | 0x66000000, Ui.dp(this, 2)));
+            FrameLayout gripCell = new FrameLayout(this);
+            gripCell.addView(grip, new FrameLayout.LayoutParams(Ui.dp(this, 22), Ui.dp(this, 4), Gravity.CENTER));
+            gripCell.setContentDescription("Arrastrar los colores");
+            gripCell.setOnTouchListener(new View.OnTouchListener() {
+                float dx, dy;
+
+                @Override
+                public boolean onTouch(View v, MotionEvent e) {
+                    FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) g.getLayoutParams();
+                    switch (e.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            dx = e.getRawX() - lp.leftMargin;
+                            dy = e.getRawY() - lp.topMargin;
+                            return true;
+                        case MotionEvent.ACTION_MOVE:
+                            lp.leftMargin = Math.round(Math.max(0, Math.min(stage.getWidth() - g.getWidth(), e.getRawX() - dx)));
+                            lp.topMargin = Math.round(Math.max(inTop, Math.min(stage.getHeight() - g.getHeight(), e.getRawY() - dy)));
+                            g.setLayoutParams(lp);
+                            if (colorsTab != null) {
+                                FrameLayout.LayoutParams tl = (FrameLayout.LayoutParams) colorsTab.getLayoutParams();
+                                tl.leftMargin = lp.leftMargin;
+                                tl.topMargin = lp.topMargin;
+                                colorsTab.setLayoutParams(tl);
+                            }
+                            return true;
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_CANCEL:
+                            BarSettings.prefs(PageActivity.this).edit()
+                                    .putFloat(BarSettings.FLOAT_X, lp.leftMargin / (float) Math.max(1, stage.getWidth()))
+                                    .putFloat(BarSettings.FLOAT_Y, lp.topMargin / (float) Math.max(1, stage.getHeight())).apply();
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+            });
+            g.addView(gripCell, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 24)));
+        }
         // Con su propio ancho: si no, toman el de la línea separadora.
         g.addView(colors, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        g.addView(sep(true));
+        paletteSep = sep(true);
+        g.addView(paletteSep);
         g.addView(widths, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return g;
     }
 
     private GlassLayout selectionBar() {
-        GlassLayout g = new GlassLayout(this, ink, glass, Ui.dp(this, 28));
+        GlassLayout g = new GlassLayout(this, ink, glass, corner());
         g.setGravity(Gravity.CENTER_VERTICAL);
         g.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), 0);
         selectionHint = Ui.text(this, BOX_HINT, 13, fgMuted, false);
@@ -638,6 +1245,37 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     private void refreshTools() {
+        refreshToolsInner();
+        applyPaletteState();
+    }
+
+    /** Dónde y cómo se ven los colores: al lado, dentro de la barra, flotando o plegados. */
+    private void applyPaletteState() {
+        if (palette == null) return;
+        boolean hl = ink.tool == InkView.HIGHLIGHTER;
+        boolean coloring = ink.tool == InkView.PEN || ink.tool == InkView.SHAPE || hl || ink.tool == InkView.TEXT || ink.hasSelection();
+        if (colorsInBar()) {
+            palette.setVisibility(View.GONE);
+            if (inlinePalette != null) inlinePalette.setVisibility(coloring ? View.VISIBLE : View.GONE);
+            return;
+        }
+        paletteSep.setVisibility(widths.getVisibility() == View.VISIBLE ? View.VISIBLE : View.GONE);
+        if (colorsTab != null) {
+            colorsTab.setVisibility(coloring ? View.VISIBLE : View.GONE);
+            int c = hl ? ink.highlighterColor : ink.penColor;
+            GradientDrawable d = Ui.round(paperDark ? PageRenderer.onDark(c) : c, Ui.dp(this, 8));
+            d.setStroke(Ui.dp(this, 2), 0xFFFFFFFF);
+            colorsDot.setBackground(d);
+        }
+        if (!coloring) {
+            palette.setVisibility(View.GONE);
+            return;
+        }
+        boolean shown = !fold || paletteOpen || (palAnim != null && palAnim.isRunning());
+        palette.setVisibility(shown ? View.VISIBLE : View.INVISIBLE);
+    }
+
+    private void refreshToolsInner() {
         pen.setActive(ink.tool == InkView.PEN);
         highlighter.setActive(ink.tool == InkView.HIGHLIGHTER);
         eraser.setActive(ink.tool == InkView.ERASER);
@@ -697,14 +1335,17 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
                 if (hl) ink.highlighterWidth = w;
                 else ink.penWidth = w;
                 prefs.edit().putFloat(hl ? "hlWidth" : "penWidth", w).apply();
+                if (fold && paletteOpen && !colorsInBar()) animatePalette(false, true);
                 refreshTools();
             });
         }
     }
 
     private void pickColor(int c, boolean hl) {
+        if (fold && paletteOpen && !colorsInBar()) animatePalette(false, true);
         if (ink.hasSelection()) {
             ink.recolorSelection(c);
+            refreshTools();
             return;
         }
         if (hl) ink.highlighterColor = c;
@@ -918,7 +1559,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     }
 
     /** Muestra de una plantilla: la hoja en pequeño. */
-    private static final class TemplateSample extends View {
+    static final class TemplateSample extends View {
         private final String background;
         private final PageRenderer renderer;
         private final android.graphics.Paint paper = new android.graphics.Paint();
@@ -1436,7 +2077,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     // ---- Páginas ----
 
     private void showTitle() {
-        title.setText(notebook.title + "  " + (index + 1) + "/" + notebook.pages.size());
+        title.setText(notebook.title + " · " + (index + 1) + "/" + notebook.pages.size());
     }
 
     private void addPage() {
@@ -2281,6 +2922,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         if (dock.isOpen()) dock.close();
+        else if (designer != null) closeDesigner();
         else super.onBackPressed();
     }
 
@@ -2308,7 +2950,32 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         refreshTools();
     }
 
+    /** Ctrl+V con teclado (en el PC o con funda de teclado): pega la imagen o el texto copiado. */
+    @Override
+    public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {
+        if (keyCode == android.view.KeyEvent.KEYCODE_V && event.isCtrlPressed() && !event.isAltPressed()) {
+            android.view.View f = getCurrentFocus();
+            if (!(f instanceof EditText)) {
+                paste();
+                return true;
+            }
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
     // ---- SyncClient.Listener ----
+
+    /** Otro aparato cambió este cuaderno: páginas nuevas o quitadas se ven al momento. */
+    @Override
+    public void onRemote(String notebookId) {
+        if (notebookId == null || !notebookId.equals(notebook.id)) return;
+        if (store.notebook(notebook.id) == null) {
+            Ui.toast(this, "Este cuaderno se tiró desde otro aparato");
+            finish();
+            return;
+        }
+        if (ink.pageCount() != notebook.pages.size() || !ink.hasPagesInOrder(notebook.pages)) loadPages(index);
+    }
 
     @Override
     public void onStatus(boolean connected, String where) {
@@ -2319,6 +2986,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
     @Override
     public void onWindowFocusChanged(boolean focus) {
         super.onWindowFocusChanged(focus);
+        if (focus) Clip.check(this);
         if (focus) Ui.applyFullscreen(this);
     }
 }

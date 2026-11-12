@@ -5,13 +5,17 @@
 //! Por USB usa `adb reverse` (ver `adb.rs`); por WiFi, la app se conecta a
 //! la IP del PC.
 
+mod account;
 mod adb;
 mod auth;
+mod clipboard;
 mod ink;
 mod notes;
 mod server;
+mod shared;
 mod store;
 mod svg;
+mod tracker_setup;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -66,6 +70,16 @@ fn install() -> Result<()> {
     Ok(())
 }
 
+/// Cómo se llama este PC para los demás (el nombre del equipo).
+fn shared_name() -> String {
+    ["/etc/hostname", "/proc/sys/kernel/hostname"]
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok())
+        .map(|h| h.trim().to_string())
+        .find(|h| !h.is_empty())
+        .unwrap_or_else(|| "PC".into())
+}
+
 fn open_viewer(port: u16) {
     let url = format!("http://localhost:{port}");
     if std::process::Command::new("xdg-open").arg(&url).spawn().is_err() {
@@ -91,14 +105,46 @@ async fn main() -> Result<()> {
     let store = store::Store::open(&dir)?;
     let notes = notes::Notes::open(&dir)?;
     let auth = auth::Auth::open(&dir)?;
+    let account = account::Account::open(&dir);
+    let account_id = account.device_id();
     let (live, _) = tokio::sync::broadcast::channel(256);
+    let (clipboard, mut clip_changes) = match clipboard::spawn() {
+        Ok((c, rx)) => (Some(std::sync::Mutex::new(c)), Some(rx)),
+        Err(e) => {
+            tracing::warn!("sin portapapeles compartido: {e:#}");
+            (None, None)
+        }
+    };
     let state = Arc::new(server::AppState {
         store: Mutex::new(store),
         notes: Mutex::new(notes),
         live,
+        ink: tokio::sync::broadcast::channel(1024).0,
+        next_conn: std::sync::atomic::AtomicU64::new(0),
+        clipboard,
         devices: Mutex::new(Vec::new()),
         auth,
+        account,
+        port: args.port,
+        root: dir.clone(),
+        tracker_setup: tracker_setup::new(),
+        shared: Arc::new(shared::Shared::open(&dir, account_id, shared_name(), args.port)),
     });
+
+    // Lo que se copia en el PC va a las tablets conectadas.
+    if let Some(mut rx) = clip_changes.take() {
+        let s = state.clone();
+        tokio::spawn(async move {
+            use base64::Engine;
+            while let Some(clip) = rx.recv().await {
+                let msg = match clip {
+                    clipboard::Clip::Text(t) => serde_json::json!({ "t": "clip", "kind": "text", "data": t }),
+                    clipboard::Clip::Image(png) => serde_json::json!({ "t": "clip", "kind": "image", "data": base64::engine::general_purpose::STANDARD.encode(png) }),
+                };
+                let _ = s.ink.send((0, msg.to_string()));
+            }
+        });
+    }
 
     let addr = SocketAddr::new(args.bind, args.port);
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -118,6 +164,16 @@ async fn main() -> Result<()> {
     }
     if !args.no_usb {
         tokio::spawn(adb::watch(args.port));
+    }
+    // Para que los aparatos lo encuentren por WiFi: sondeo UDP y aviso al tracker.
+    tokio::spawn(account::answer_probes(state.clone(), args.port));
+    tokio::spawn(account::heartbeats(state.clone(), args.port));
+    // Nodo de los cuadernos compartidos: atiende a otros PCs y tablets y se conecta a los hosts.
+    tokio::spawn(shared::listen(state.clone()));
+    tokio::spawn(shared::run(state.clone()));
+    match state.account.user() {
+        Some(u) => tracing::info!("cuenta: {u} (los aparatos de esta cuenta entran solos por WiFi)"),
+        None => tracing::info!("sin cuenta: inicia sesión en el visor para conectar aparatos por WiFi sin código"),
     }
     tracing::info!("apuntes en {}; visor en http://localhost:{}", dir.display(), args.port);
     axum::serve(listener, server::router(state).into_make_service_with_connect_info::<SocketAddr>())

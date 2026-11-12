@@ -213,6 +213,12 @@ pub enum Msg {
         device: String,
         #[serde(default)]
         pages: std::collections::HashMap<String, u64>,
+        /// "tablet" o "desktop" (la app en el PC). Las tablets viejas no lo mandan.
+        #[serde(default)]
+        kind: String,
+        /// Cuadernos que tiene (las tablets viejas no lo mandan).
+        #[serde(default)]
+        notebooks: Option<Vec<String>>,
     },
     Notebook { notebook: Notebook },
     /// Página completa (al sincronizar o al cambiar el fondo).
@@ -227,6 +233,8 @@ pub enum Msg {
     DeleteNotebook { notebook: String },
     /// Un documento de la tablet (hoja de cálculo, Word…) para tenerlo también en el PC.
     File { kind: String, title: String, ext: String, data: String },
+    /// Lo copiado en la tablet: texto, o una imagen en base64.
+    Clip { kind: String, data: String },
 }
 
 /// Qué pasó al aplicar una operación a una página.
@@ -240,33 +248,52 @@ pub enum Applied {
 }
 
 impl Page {
-    fn step(&mut self, version: u64) -> Option<Applied> {
-        if version <= self.version {
-            Some(Applied::Stale)
-        } else if version > self.version + 1 {
-            Some(Applied::Gap)
-        } else {
-            self.version = version;
-            None
-        }
+    /// Con varios aparatos escribiendo a la vez las versiones se adelantan unas a
+    /// otras: las operaciones se aplican por el id del trazo (si ya está, es una
+    /// repetida) y la versión queda en la más alta. Sólo un salto de más de uno
+    /// respecto de lo que el aparato vio pide la página entera.
+    fn bump(&mut self, version: u64) {
+        self.version = (self.version + 1).max(version);
     }
 
     pub fn add_stroke(&mut self, version: u64, stroke: Stroke) -> Applied {
-        if let Some(r) = self.step(version) {
-            return r;
+        if version > self.version + 1 {
+            return Applied::Gap;
+        }
+        if self.strokes.iter().any(|s| *s == stroke) {
+            return Applied::Stale;
         }
         // Al rehacer, la tablet vuelve a mandar un trazo borrado con su id.
         self.strokes.retain(|s| s.id != stroke.id);
         self.strokes.push(stroke);
+        self.bump(version);
         Applied::Ok
     }
 
     pub fn erase(&mut self, version: u64, ids: &[String]) -> Applied {
-        if let Some(r) = self.step(version) {
-            return r;
+        if version > self.version + 1 {
+            return Applied::Gap;
+        }
+        if !self.strokes.iter().any(|s| ids.contains(&s.id)) {
+            return Applied::Stale;
         }
         self.strokes.retain(|s| !ids.contains(&s.id));
+        self.bump(version);
         Applied::Ok
+    }
+
+    /// Una página entera que llega con una versión más vieja que la del PC (otro
+    /// aparato escribió entretanto): se queda con lo suyo y con los trazos que
+    /// sólo había aquí.
+    pub fn merge_older(&mut self, mut incoming: Page) {
+        let theirs: std::collections::HashSet<String> = incoming.strokes.iter().map(|s| s.id.clone()).collect();
+        for s in &self.strokes {
+            if !theirs.contains(&s.id) {
+                incoming.strokes.push(s.clone());
+            }
+        }
+        incoming.version = self.version + 1;
+        *self = incoming;
     }
 }
 
@@ -303,7 +330,7 @@ mod tests {
         assert_eq!(p.version, 3);
         // Rehacer el borrado: vuelve el mismo trazo, sin duplicarse.
         assert_eq!(p.add_stroke(4, stroke("a")), Applied::Ok);
-        assert_eq!(p.add_stroke(5, stroke("a")), Applied::Ok);
+        assert_eq!(p.add_stroke(5, stroke("a")), Applied::Stale);
         assert_eq!(p.strokes.len(), 2);
     }
 
@@ -311,10 +338,31 @@ mod tests {
     fn detects_repeats_and_gaps() {
         let mut p = page();
         p.add_stroke(1, stroke("a"));
-        assert_eq!(p.add_stroke(1, stroke("x")), Applied::Stale);
+        assert_eq!(p.add_stroke(1, stroke("a")), Applied::Stale);
         assert_eq!(p.add_stroke(3, stroke("y")), Applied::Gap);
         assert_eq!(p.version, 1);
         assert_eq!(p.strokes.len(), 1);
+    }
+
+    #[test]
+    fn dos_aparatos_a_la_vez() {
+        // La tablet y el PC escriben a la vez sobre la versión 1: entran los dos.
+        let mut p = page();
+        p.add_stroke(1, stroke("a"));
+        assert_eq!(p.add_stroke(2, stroke("tablet")), Applied::Ok);
+        assert_eq!(p.add_stroke(2, stroke("pc")), Applied::Ok);
+        assert_eq!(p.version, 3);
+        assert_eq!(p.erase(2, &["zzz".into()]), Applied::Stale);
+        // Una página vieja de un aparato no borra lo que escribió el otro.
+        let mut old = page();
+        old.strokes.push(stroke("a"));
+        old.strokes.push(stroke("nuevo"));
+        old.version = 2;
+        p.merge_older(old);
+        let mut ids: Vec<_> = p.strokes.iter().map(|s| s.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["a", "nuevo", "pc", "tablet"]);
+        assert_eq!(p.version, 4);
     }
 
     #[test]

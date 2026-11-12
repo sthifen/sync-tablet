@@ -23,6 +23,14 @@ final class AuroraView extends View {
     private final long start = SystemClock.uptimeMillis();
     private final boolean dark;
     private boolean running = true;
+    /** Ya hay un fotograma pedido: no se encadena otro (si no, se acumulan y no paran). */
+    private boolean pending;
+    /** En el PC se mueve igual de despacio con menos fotogramas: así no gasta procesador. */
+    private static final long FRAME_MS = Updater.DESKTOP ? 80 : 33;
+    private final Runnable next = () -> {
+        pending = false;
+        if (running) invalidate();
+    };
 
     AuroraView(Context c, NoteTheme t) {
         super(c);
@@ -31,7 +39,7 @@ final class AuroraView extends View {
 
     void setRunning(boolean r) {
         running = r;
-        if (r) postInvalidateOnAnimation();
+        if (r) invalidate();
     }
 
     @Override
@@ -52,6 +60,9 @@ final class AuroraView extends View {
             canvas.drawCircle(cx, cy, r, paint);
         }
         paint.setShader(null);
-        if (running) postInvalidateDelayed(33);
+        if (running && !pending) {
+            pending = true;
+            postDelayed(next, FRAME_MS);
+        }
     }
 }

@@ -87,6 +87,8 @@ final class InkView extends View {
         void onTableRequest(int page, Ink.Item table);
         /** Botón del S Pen pulsado sin tocar la pantalla (doble: dos seguidos). */
         void onPenButton(boolean twice);
+        /** Se dejó el dedo quieto sobre la hoja (pegar, texto, nota…). x, y: en la página. */
+        default void onPageLongPress(int page, float x, float y) {}
     }
 
     /** Modos de la goma. */
@@ -670,6 +672,33 @@ final class InkView extends View {
             layerCanvas = new Canvas(layer);
         }
         renderLayer();
+    }
+
+    /** La página que se ve, entera en la pantalla (al 100 % de la hoja). */
+    void fitWholePage() {
+        int w = getWidth(), h = getHeight();
+        if (w == 0 || h == 0 || pages.isEmpty()) return;
+        int i = Math.max(0, Math.min(pages.size() - 1, visibleIndex()));
+        float avail = h - topInset - 2 * margin();
+        scale = Math.min(fitScale, avail / Ink.H);
+        ox = (w - Ink.W * scale) / 2 - pageLeft(i) * scale;
+        oy = topInset + margin() - pageTop(i) * scale;
+        clampView(false);
+        renderLayer();
+        invalidate();
+    }
+
+    /** De vuelta al ancho de la pantalla. */
+    boolean fittedWhole() {
+        return scale < fitScale * 0.98f;
+    }
+
+    void fitWidth() {
+        int i = Math.max(0, visibleIndex());
+        fitted = false;
+        pendingScroll = i;
+        layout();
+        invalidate();
     }
 
     private void zoomAround(float fx, float fy, float factor) {
@@ -1716,6 +1745,11 @@ final class InkView extends View {
         int action = e.getActionMasked();
         int idx = e.getActionIndex();
         watchFingerTap(e, action);
+        if (longFired) {
+            // El menú ya salió: el resto del toque no mueve la hoja.
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) longFired = false;
+            return true;
+        }
         switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
@@ -1782,12 +1816,42 @@ final class InkView extends View {
         return super.onHoverEvent(e);
     }
 
+    // ---- Dedo quieto sobre la hoja: menú de pegar, texto, nota… ----
+    private static final long LONG_MS = 550;
+    private boolean longArmed, longFired;
+    private final Runnable longPress = () -> {
+        if (!longArmed || pointerId != -1) return;
+        longArmed = false;
+        float docX = (tapX - ox) / scale, docY = (tapY - oy) / scale;
+        int p = pageAt(docX, docY);
+        if (p < 0 || p >= pages.size()) return;
+        longFired = true;
+        if (scroller != null) scroller.cancel();
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        listener.onPageLongPress(p, docX - pageLeft(p), docY - pageTop(p));
+    };
+
     private void watchFingerTap(MotionEvent e, int action) {
         long now = SystemClock.uptimeMillis();
         if (e.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) {
             penSeen = now;
             fingerTap = false;
+            longArmed = false;
+            removeCallbacks(longPress);
             return;
+        }
+        if (action == MotionEvent.ACTION_DOWN) {
+            longFired = false;
+            longArmed = !fingerDraws && now - penSeen > PEN_NEAR_MS;
+            if (longArmed) postDelayed(longPress, LONG_MS);
+        } else if (action == MotionEvent.ACTION_MOVE) {
+            if (Math.hypot(e.getX() - tapX, e.getY() - tapY) > 10 * density) {
+                longArmed = false;
+                removeCallbacks(longPress);
+            }
+        } else {
+            longArmed = false;
+            removeCallbacks(longPress);
         }
         switch (action) {
             case MotionEvent.ACTION_DOWN:
@@ -1858,7 +1922,7 @@ final class InkView extends View {
             mode = STROKE;
             boolean hl = tool == HIGHLIGHTER || (button(e) && buttonHold == HOLD_HIGHLIGHTER);
             // La plumilla de caligrafía deforma las figuras, y un esquema pide trazo parejo.
-            boolean even = tool == SHAPE && (Ink.CALLIGRAPHY.equals(penKind) || shapeKind >= ShapeTools.RESISTOR);
+            boolean even = tool == SHAPE && (Ink.CALLIGRAPHY.equals(penKind) || ShapeTools.isComponentKind(shapeKind));
             String kind = hl ? Ink.HIGHLIGHTER : tool == TAPE ? Ink.TAPE : even ? Ink.PEN : penKind;
             int color = hl ? highlighterColor : tool == TAPE ? PageRenderer.TAPE_COLOR : penColor;
             float width = hl ? highlighterWidth : tool == TAPE ? 34 : penWidth;
@@ -2701,10 +2765,32 @@ final class InkView extends View {
 
     // ---- PC ----
 
+    boolean hasPagesInOrder(List<String> ids) {
+        if (ids.size() != pages.size()) return false;
+        for (int i = 0; i < ids.size(); i++) if (!pages.get(i).id.equals(ids.get(i))) return false;
+        return true;
+    }
+
     /** ¿Está abierta esta página? */
     boolean hasPage(String id) {
         for (Ink.Page p : pages) if (p.id.equals(id)) return true;
         return false;
+    }
+
+    /** Llegó de otro aparato (trazo, borrado o la página entera): sólo hay que volver a dibujarla. */
+    void remoteChanged(String pageId, boolean strokeAdded) {
+        for (Ink.Page p : pages) {
+            if (!p.id.equals(pageId)) continue;
+            if (strokeAdded && GPU) {
+                strokeAdded(p);
+            } else {
+                PageNode n = nodes.get(p);
+                if (n != null) n.dirty = true;
+                if (!GPU) renderLayer();
+            }
+            invalidate();
+            return;
+        }
     }
 
     /** Un trazo hecho en el PC: entra como uno propio (se deshace igual y se manda con versión nueva). */

@@ -4,12 +4,13 @@
 //! .data/notebooks.json        cuadernos (orden de páginas incluido)
 //! .data/pages/<id>.json       cada página con sus trazos: la fuente de verdad
 //! .data/assets/<id>.jpg       imágenes y páginas de PDF
+//! .data/seen.json            qué versión de cada página y cuaderno vio cada aparato
 //! <Cuaderno>/Página 01.svg    copia para abrir en cualquier programa
 //! ```
 //!
 //! Los SVG se rehacen a partir de los JSON; se pueden borrar sin perder nada.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +25,35 @@ pub struct Store {
     pages: HashMap<String, Page>,
     /// Carpeta en la que se exportó cada cuaderno, para renombrarla.
     exported: HashMap<String, String>,
+    seen: Seen,
+}
+
+/// Lo que vio cada aparato (tablet, la app del PC…): con esto, al conectarse,
+/// se le manda lo que cambiaron los demás, y lo que él borró sin conexión no
+/// vuelve (lo tenía y ya no lo tiene).
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Seen {
+    /// página → aparato → versión.
+    #[serde(default)]
+    pages: HashMap<String, HashMap<String, u64>>,
+    /// cuaderno → aparato → revisión.
+    #[serde(default)]
+    notebooks: HashMap<String, HashMap<String, u64>>,
+    /// Revisión de cada cuaderno (sube con cada cambio).
+    #[serde(default)]
+    rev: HashMap<String, u64>,
+}
+
+/// Lo que había antes de recordar aparatos: lo vio «la tablet», sea cual sea.
+const LEGACY: &str = "*";
+
+/// Lo que hay que mandarle a un aparato al conectarse.
+#[derive(Default)]
+pub struct Plan {
+    pub notebooks: Vec<Notebook>,
+    pub pages: Vec<Page>,
+    /// Páginas que el aparato tiene más nuevas: que las mande.
+    pub want: Vec<String>,
 }
 
 /// Los ids vienen de la tablet y acaban en nombres de archivo.
@@ -73,8 +103,101 @@ impl Store {
             }
         }
         let exported = notebooks.iter().map(|n| (n.id.clone(), folder_name(&n.title))).collect();
+        let seen = match fs::read(data.join("seen.json")).ok().and_then(|b| serde_json::from_slice::<Seen>(&b).ok()) {
+            Some(s) => s,
+            None => {
+                let mut s = Seen::default();
+                for p in pages.values() {
+                    s.pages.entry(p.id.clone()).or_default().insert(LEGACY.into(), p.version);
+                }
+                for n in &notebooks {
+                    s.notebooks.entry(n.id.clone()).or_default().insert(LEGACY.into(), 0);
+                }
+                s
+            }
+        };
         tracing::info!("{} cuadernos y {} páginas en {}", notebooks.len(), pages.len(), root.display());
-        Ok(Self { root: root.to_owned(), notebooks, pages, exported })
+        let store = Self { root: root.to_owned(), notebooks, pages, exported, seen };
+        store.save_seen();
+        Ok(store)
+    }
+
+    fn save_seen(&self) {
+        if let Ok(b) = serde_json::to_vec(&self.seen) {
+            let _ = write_atomic(&self.root.join(".data/seen.json"), &b);
+        }
+    }
+
+    /// El aparato tiene esa versión de la página.
+    pub fn saw_page(&mut self, device: &str, id: &str, version: u64) {
+        let e = self.seen.pages.entry(id.to_owned()).or_default().entry(device.to_owned()).or_insert(0);
+        *e = (*e).max(version);
+    }
+
+    /// El aparato tiene el cuaderno como está ahora.
+    pub fn saw_notebook(&mut self, device: &str, id: &str) {
+        let rev = self.seen.rev.get(id).copied().unwrap_or(0);
+        self.seen.notebooks.entry(id.to_owned()).or_default().insert(device.to_owned(), rev);
+    }
+
+    pub fn persist_seen(&self) {
+        self.save_seen();
+    }
+
+    /// Qué le falta a `device` (tablet o PC) según lo que dijo tener al conectarse.
+    pub fn plan(&mut self, device: &str, tablet: bool, have: &HashMap<String, u64>, notebooks: Option<&[String]>) -> Plan {
+        let mut plan = Plan::default();
+        let had_before = |m: Option<&HashMap<String, u64>>| m.is_some_and(|m| m.contains_key(device) || (tablet && m.contains_key(LEGACY)));
+        let theirs: Option<HashSet<&str>> = notebooks.map(|l| l.iter().map(String::as_str).collect());
+        for n in &self.notebooks {
+            let rev = self.seen.rev.get(&n.id).copied().unwrap_or(0);
+            let seen = self.seen.notebooks.get(&n.id);
+            let mine = seen.and_then(|m| m.get(device)).copied();
+            let has = theirs.as_ref().map(|t| t.contains(n.id.as_str()));
+            let send = match has {
+                // Lo tiene: si cambió desde que lo vio.
+                Some(true) => mine.is_none_or(|r| r < rev),
+                // No lo tiene: si nunca lo tuvo (si lo tuvo, lo borró).
+                Some(false) => !had_before(seen),
+                // Tablet vieja que no dice qué tiene: sólo lo que cambió y ya conocía.
+                None => mine.is_some_and(|r| r < rev),
+            };
+            if send {
+                plan.notebooks.push(n.clone());
+            }
+        }
+        for p in self.pages.values() {
+            let send = match have.get(&p.id) {
+                Some(v) => *v < p.version,
+                None => !had_before(self.seen.pages.get(&p.id)),
+            };
+            if send {
+                plan.pages.push(p.clone());
+            }
+        }
+        for (id, v) in have {
+            if self.pages.get(id).is_none_or(|p| p.version < *v) {
+                plan.want.push(id.clone());
+            }
+            self.saw_page(device, id, *v);
+        }
+        for p in &plan.pages {
+            let (id, v) = (p.id.clone(), p.version);
+            self.saw_page(device, &id, v);
+        }
+        if let Some(list) = notebooks {
+            for id in list {
+                self.saw_notebook(device, id);
+            }
+        }
+        for n in plan.notebooks.iter().map(|n| n.id.clone()).collect::<Vec<_>>() {
+            self.saw_notebook(device, &n);
+        }
+        plan.want.sort();
+        // Primero los cuadernos que tienen menos páginas: se ven antes.
+        plan.pages.sort_by_key(|p| p.id.clone());
+        self.save_seen();
+        plan
     }
 
     pub fn root(&self) -> &Path {
@@ -179,9 +302,13 @@ impl Store {
         Ok(())
     }
 
-    pub fn put_notebook(&mut self, nb: Notebook) -> Result<()> {
+    /// Guarda un cuaderno; devuelve si cambió algo.
+    pub fn put_notebook(&mut self, nb: Notebook) -> Result<bool> {
         if !valid_id(&nb.id) || !nb.pages.iter().all(|p| valid_id(p)) {
             bail!("cuaderno con id inválido");
+        }
+        if self.notebooks.iter().any(|n| *n == nb) {
+            return Ok(false);
         }
         let folder = folder_name(&nb.title);
         if let Some(old) = self.exported.get(&nb.id).filter(|old| **old != folder) {
@@ -191,21 +318,36 @@ impl Store {
             }
         }
         self.exported.insert(nb.id.clone(), folder);
+        *self.seen.rev.entry(nb.id.clone()).or_insert(0) += 1;
         match self.notebooks.iter_mut().find(|n| n.id == nb.id) {
             Some(n) => *n = nb.clone(),
             None => self.notebooks.push(nb.clone()),
         }
         self.save_notebooks()?;
-        self.export_notebook(&nb)
+        self.export_notebook(&nb)?;
+        Ok(true)
     }
 
-    pub fn put_page(&mut self, page: Page) -> Result<()> {
+    /// Guarda una página entera. Si llega más vieja que la del PC (otro aparato
+    /// escribió entretanto) se juntan; devuelve si se juntó (hay que reenviarla
+    /// a todos, también a quien la mandó).
+    pub fn put_page(&mut self, page: Page) -> Result<bool> {
         if !valid_id(&page.id) || !valid_id(&page.notebook) {
             bail!("página con id inválido");
         }
-        self.save_page(&page)?;
-        self.pages.insert(page.id.clone(), page);
-        Ok(())
+        let id = page.id.clone();
+        let merged = match self.pages.get_mut(&page.id) {
+            Some(cur) if page.version < cur.version => {
+                cur.merge_older(page);
+                true
+            }
+            _ => {
+                self.pages.insert(page.id.clone(), page);
+                false
+            }
+        };
+        self.save_page(&self.pages[&id])?;
+        Ok(merged)
     }
 
     pub fn add_stroke(&mut self, page: &str, version: u64, stroke: Stroke) -> Result<Applied> {
@@ -327,6 +469,41 @@ mod tests {
         assert!(!root.join("Física II").exists());
         assert!(s.page("p2").is_none());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plan_entre_aparatos() {
+        let dir = tmp();
+        {
+            // Lo de antes (sin seen.json) lo tenía la tablet.
+            let mut s = Store::open(&dir).unwrap();
+            s.put_notebook(nb("Viejo", &["p1", "p2"])).unwrap();
+            s.put_page(page("p1")).unwrap();
+            s.put_page(page("p2")).unwrap();
+        }
+        let _ = std::fs::remove_file(dir.join(".data/seen.json"));
+        let mut s = Store::open(&dir).unwrap();
+        let none = HashMap::new();
+        // La app del PC, nueva: le llega todo.
+        let pc = s.plan("PC", false, &none, Some(&[]));
+        assert_eq!((pc.notebooks.len(), pc.pages.len()), (1, 2));
+        // La tablet borró p2 sin conexión: no vuelve.
+        let have: HashMap<String, u64> = [("p1".to_owned(), 0)].into();
+        let tab = s.plan("Tab", true, &have, Some(&[nb("Viejo", &[]).id]));
+        assert!(tab.pages.is_empty(), "{:?}", tab.pages.iter().map(|p| &p.id).collect::<Vec<_>>());
+        // El PC escribe en p1: a la tablet le llega al conectar.
+        s.add_stroke("p1", 1, stroke()).unwrap();
+        s.saw_page("PC", "p1", 1);
+        let tab = s.plan("Tab", true, &have, None);
+        assert_eq!(tab.pages.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["p1"]);
+        // Y el PC, que ya la tiene, no la vuelve a recibir; una página nueva del PC sí llega a la tablet.
+        s.put_page(page("p3")).unwrap();
+        s.saw_page("PC", "p3", 0);
+        let have_pc: HashMap<String, u64> = [("p1".to_owned(), 1), ("p2".to_owned(), 0), ("p3".to_owned(), 0)].into();
+        assert!(s.plan("PC", false, &have_pc, None).pages.is_empty());
+        let have: HashMap<String, u64> = [("p1".to_owned(), 1)].into();
+        let tab = s.plan("Tab", true, &have, None);
+        assert_eq!(tab.pages.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["p3"]);
     }
 
     #[test]

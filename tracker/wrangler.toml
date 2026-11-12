@@ -1,0 +1,11 @@
+name = "synctablet-tracker"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "synctablet"
+# Lo da `npx wrangler d1 create synctablet` (ver README). Para `npm run dev`
+# no hace falta: la base local la crea wrangler.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"

@@ -17,6 +17,13 @@ final class ShapeTools {
     static final int NPN = 17, PNP = 18, NMOS = 19, PMOS = 20, OPAMP = 21;
     /** Compuertas lógicas: dos entradas y salida; NOT y BUFFER, una entrada. */
     static final int AND = 22, NAND = 23, OR = 24, NOR = 25, XOR = 26, XNOR = 27, NOT = 28, BUFFER = 29;
+    /** Llave «{» y corchete «[»: se arrastra de la punta hacia donde abren (al revés, «}» y «]»). */
+    static final int BRACE = 30, BRACKET = 31;
+
+    /** Un componente de circuito (no una figura de dibujo). */
+    static boolean isComponentKind(int kind) {
+        return kind >= RESISTOR && kind <= BUFFER;
+    }
     /** Con la herramienta de figuras: dibujar a mano y que se entienda el componente. */
     static final int CIRCUIT_FREE = 100;
     /** En una lista de puntos, marca que ahí se levanta el lápiz. */
@@ -27,7 +34,7 @@ final class ShapeTools {
 
     private static final String[] NAMES = {"line", "arrow", "double-arrow", "rect", "ellipse", "triangle", "axes", "cross-axes",
             "resistor", "capacitor", "inductor", "voltage", "current", "ac", "diode", "ground", "switch",
-            "npn", "pnp", "nmos", "pmos", "opamp", "and", "nand", "or", "nor", "xor", "xnor", "not", "buffer"};
+            "npn", "pnp", "nmos", "pmos", "opamp", "and", "nand", "or", "nor", "xor", "xnor", "not", "buffer", "brace", "bracket"};
 
     /**
      * Lo que hace editable a una figura: de qué tipo es, sus dos puntos y su giro
@@ -123,7 +130,7 @@ final class ShapeTools {
         }
 
         float[] points() {
-            float[] xy = kind >= RESISTOR ? component(kind, x0, y0, x1, y1, mirror) : shape(kind, x0, y0, x1, y1);
+            float[] xy = isComponentKind(kind) ? component(kind, x0, y0, x1, y1, mirror) : shape(kind, x0, y0, x1, y1);
             if (angle == 0) return xy;
             float cx = centerX(), cy = centerY();
             double cos = Math.cos(angle), sin = Math.sin(angle);
@@ -253,7 +260,56 @@ final class ShapeTools {
                 return densify(new float[] {x0, y0 + dy, x0, y0 - dy, a[0], a[1], x0, y0 - dy, a[2], a[3], x0, y0 - dy,
                         x0, y0, x0 - dx, y0, x0 + dx, y0, b[0], b[1], x0 + dx, y0, b[2], b[3]});
             }
+            case BRACE: return brace(x0, y0, x1, y1, false);
+            case BRACKET: return brace(x0, y0, x1, y1, true);
             default: return densify(new float[] {x0, y0, x1, y1});
+        }
+    }
+
+    /**
+     * Llave o corchete en la caja del arrastre. Si es más alta que ancha va de pie
+     * («{»: la punta en la x de inicio, abre hacia la x final); si no, acostada.
+     */
+    private static float[] brace(float x0, float y0, float x1, float y1, boolean square) {
+        boolean tall = Math.abs(y1 - y0) >= Math.abs(x1 - x0);
+        // En coordenadas (a lo ancho, a lo largo): la punta en «tip», abre en «open».
+        float tip = tall ? x0 : y0, open = tall ? x1 : y1, s0 = tall ? Math.min(y0, y1) : Math.min(x0, x1), s1 = tall ? Math.max(y0, y1) : Math.max(x0, x1);
+        ArrayList<Float> v = new ArrayList<>();
+        if (square) {
+            add(v, open, s0);
+            add(v, tip, s0);
+            add(v, tip, s1);
+            add(v, open, s1);
+        } else {
+            float mid = (s0 + s1) / 2, spine = (tip + open) / 2;
+            float r = Math.min(Math.abs(open - tip) / 2, (s1 - s0) / 6);
+            float dir = Math.signum(s1 - s0);
+            quad(v, open, s0, spine, s0, spine, s0 + dir * r);
+            add(v, spine, mid - dir * r);
+            quad(v, spine, mid - dir * r, spine, mid, tip, mid);
+            quad(v, tip, mid, spine, mid, spine, mid + dir * r);
+            add(v, spine, s1 - dir * r);
+            quad(v, spine, s1 - dir * r, spine, s1, open, s1);
+        }
+        float[] xy = new float[v.size()];
+        for (int i = 0; i + 1 < xy.length; i += 2) {
+            float a = v.get(i), b = v.get(i + 1);
+            xy[i] = tall ? a : b;
+            xy[i + 1] = tall ? b : a;
+        }
+        return densify(xy);
+    }
+
+    private static void add(ArrayList<Float> v, float a, float b) {
+        v.add(a);
+        v.add(b);
+    }
+
+    /** Curva cuadrática de (a0, b0) a (a2, b2) con control en (a1, b1), en 8 tramos. */
+    private static void quad(ArrayList<Float> v, float a0, float b0, float a1, float b1, float a2, float b2) {
+        for (int i = v.isEmpty() ? 0 : 1; i <= 8; i++) {
+            float t = i / 8f, u = 1 - t;
+            add(v, u * u * a0 + 2 * u * t * a1 + t * t * a2, u * u * b0 + 2 * u * t * b1 + t * t * b2);
         }
     }
 

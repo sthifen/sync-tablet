@@ -177,6 +177,81 @@ final class Store {
         return assetsDir;
     }
 
+    // ---- Lo que llega de otro aparato (la otra tablet o la app del PC) ----
+
+    /** Una página entera más nueva que la de aquí; se cambia en el mismo objeto (la hoja abierta la ve). */
+    synchronized boolean receivePage(Ink.Page remote) {
+        Ink.Page local = page(remote.id);
+        if (local != null && local.version >= remote.version) return false;
+        if (local != null) {
+            local.copyFrom(remote);
+            local.version = remote.version;
+            savePage(local);
+        } else {
+            pages.put(remote.id, remote);
+            savePage(remote);
+        }
+        return true;
+    }
+
+    /** Un cuaderno nuevo o cambiado; se cambia en el mismo objeto. */
+    synchronized Ink.Notebook receiveNotebook(Ink.Notebook remote) {
+        Ink.Notebook n = notebook(remote.id);
+        if (n == null) {
+            notebooks.add(remote);
+            n = remote;
+        } else {
+            n.title = remote.title;
+            n.color = remote.color;
+            n.folder = remote.folder;
+            n.favorite = remote.favorite;
+            n.updated = remote.updated;
+            n.pages.clear();
+            n.pages.addAll(remote.pages);
+            n.right.clear();
+            n.right.addAll(remote.right);
+        }
+        saveNotebooks();
+        return n;
+    }
+
+    /** Un trazo; devuelve la página si cambió. */
+    synchronized Ink.Page receiveStroke(String pageId, long version, Ink.Stroke s) {
+        Ink.Page p = page(pageId);
+        if (p == null) return null;
+        for (Ink.Stroke o : p.strokes) if (o.id.equals(s.id) && o.toJson().equals(s.toJson())) return null;
+        p.strokes.removeIf(o -> o.id.equals(s.id));
+        p.strokes.add(s);
+        p.version = Math.max(p.version, version);
+        savePage(p);
+        return p;
+    }
+
+    synchronized Ink.Page receiveErase(String pageId, long version, java.util.Set<String> ids) {
+        Ink.Page p = page(pageId);
+        if (p == null || !p.strokes.removeIf(o -> ids.contains(o.id))) return null;
+        p.version = Math.max(p.version, version);
+        savePage(p);
+        return p;
+    }
+
+    /** Una página que otro aparato quitó de su cuaderno. */
+    synchronized Ink.Notebook receiveDeletePage(String pageId) {
+        for (Ink.Notebook n : notebooks) {
+            if (n.pages.remove(pageId)) {
+                n.right.remove(pageId);
+                pages.remove(pageId);
+                versions.remove(pageId);
+                final File f = new File(pagesDir, pageId + ".json");
+                writer.execute(f::delete);
+                saveNotebooks();
+                saveVersions();
+                return n;
+            }
+        }
+        return null;
+    }
+
     synchronized Map<String, Long> versions() {
         return new HashMap<>(versions);
     }
@@ -190,8 +265,12 @@ final class Store {
     }
 
     /** Página nueva al final del cuaderno, con el fondo de la anterior. */
+    /** Hoja con que nacen los cuadernos nuevos (Personalizar → Formato de cuaderno). */
+    static volatile String defaultPaper = Ink.LINES;
+
     synchronized Ink.Page addPage(Ink.Notebook n) {
         Ink.Page p = new Ink.Page(Ink.newId(), n.id);
+        if (n.pages.isEmpty()) p.background = defaultPaper;
         if (!n.pages.isEmpty()) {
             Ink.Page last = page(n.pages.get(n.pages.size() - 1));
             if (last != null) p.background = last.background;

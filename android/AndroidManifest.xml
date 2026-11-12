@@ -3,6 +3,13 @@
     package="dev.synctablet">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Sólo para escanear el QR del PC al conectarlo. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Mantener vivos los cuadernos compartidos con la app cerrada (KeepAliveService). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
@@ -24,7 +31,37 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- El QR del PC también se puede leer con la cámara normal del teléfono. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="synctablet" android:host="pair" />
+            </intent-filter>
+            <!-- Enlaces para entrar a un cuaderno compartido. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="synctablet" android:host="doc" />
+            </intent-filter>
         </activity>
+
+        <service
+            android:name=".KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Mantener vivo un cuaderno compartido entre aparatos (host P2P)" />
+        </service>
+
+        <activity
+            android:name=".QrScanActivity"
+            android:exported="false"
+            android:screenOrientation="locked"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
 
         <!-- La hoja: no se recrea al girar la tablet (el lienzo se reajusta solo). -->
         <activity
@@ -89,5 +126,10 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustNothing|stateHidden" />
+        <!-- Imagen copiada en el PC, para el portapapeles de Android (ClipProvider). -->
+        <provider
+            android:name=".ClipProvider"
+            android:authorities="dev.synctablet.clip"
+            android:exported="true" />
     </application>
 </manifest>

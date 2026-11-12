@@ -118,6 +118,16 @@ final class Trash {
     // ---- Tirar ----
 
     static void notebook(Context c, Ink.Notebook n) {
+        toTrash(c, n);
+        SyncClient.get(c).send("{\"t\":\"delete_notebook\",\"notebook\":\"" + n.id + "\"}");
+    }
+
+    /** Otro aparato lo tiró: aquí también va a la papelera (se puede recuperar). */
+    static void notebookFromOther(Context c, Ink.Notebook n) {
+        toTrash(c, n);
+    }
+
+    private static void toTrash(Context c, Ink.Notebook n) {
         Entry e = add(c, NOTEBOOK, n.id, n.title, n.folder, n.color);
         try {
             e.data = n.toJsonObject();
@@ -125,7 +135,6 @@ final class Trash {
         }
         Store.get(c).trashNotebook(n, new File(dir(c), e.id));
         append(c, e);
-        SyncClient.get(c).send("{\"t\":\"delete_notebook\",\"notebook\":\"" + n.id + "\"}");
     }
 
     static void note(Context c, Notes notes, JSONObject n, String folder) {

@@ -12,6 +12,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 NAMES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE", "COPYRIGHT")
+# Bibliotecas de Java que van dentro del APK (las descarga android/build-apk.sh).
+JAVA = [("ZXing core", "3.5.3", "Apache-2.0", "https://github.com/zxing/zxing", "leer el código QR del PC con la cámara")]
 
 
 def packages(manifest, targets):
@@ -89,6 +91,19 @@ def main():
                 "Estos paquetes declaran su licencia en su manifiesto, pero no incluyen el texto:", ""] + missing + [""]
     for n, (text, names) in enumerate(sorted(groups.items(), key=lambda g: g[1][0]), 1):
         out += [f"## Grupo {n}", ""] + names + ["", "```text", text.replace("```", "``​`"), "```", ""]
+    # El texto estándar de Apache 2.0, tomado de un paquete que lo trae tal cual.
+    apache = ""
+    for p in all_pkgs.values():
+        f = pathlib.Path(p["manifest_path"]).parent / "LICENSE-APACHE"
+        if f.is_file():
+            t = f.read_text(encoding="utf-8", errors="replace").strip()
+            if "Apache License" in t and "Version 2.0" in t and len(t) > len(apache):
+                apache = t
+    if JAVA:
+        out += ["## App de Android (Java)", ""]
+        out += [f"- {n} {v} ({lic}): {why}. {url}" for n, v, lic, url, why in JAVA]
+        if apache:
+            out += ["", "```text", apache.replace("```", "``​`"), "```", ""]
     (ROOT / "THIRD-PARTY-NOTICES.md").write_text("\n".join(out), encoding="utf-8")
     print(f"{len(all_pkgs)} paquetes, {len(groups)} grupos, {len(missing)} sin texto", file=sys.stderr)
 

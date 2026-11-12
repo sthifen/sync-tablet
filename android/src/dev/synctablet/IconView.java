@@ -16,7 +16,8 @@ final class IconView extends View {
             PREV = 7, NEXT = 8, PLUS = 9, PAGE = 10, HAND = 11, WIFI = 12, LASSO = 13, TEXT = 14, TAPE = 15,
             LASER = 16, IMAGE = 17, PAGES = 18, EXPORT = 19, COPY = 20, TRASH = 21, CHECK = 22, SEARCH = 23, STAR = 24, DOTS = 25, MORE = 26, HOME = 27, MOON = 28, SIDEBAR = 29,
             S_LINE = 30, S_ARROW = 31, S_ARROW2 = 32, S_RECT = 33, S_ELLIPSE = 34, S_TRIANGLE = 35, S_AXES = 36, S_CROSS = 37, WAND = 38, PLAY = 39, SLIDERS = 40, NOTE = 41, CHIP = 42, BACK_ROW = 43, FLIP = 44, CAMERA = 45, FILE = 46, TABLE = 47, PASTE = 48, SLIDES = 49, GRID_DOC = 50, FOLDER = 51, NEURON = 52,
-            EXPAND = 53, SELECT = 54, CUBE = 55, STICKER = 56, HELP = 57, CLOUD = 58, CHART = 59, IMPORT = 60, SHEET = 61, DOC = 62, RULER = 63;
+            EXPAND = 53, SELECT = 54, CUBE = 55, STICKER = 56, HELP = 57, CLOUD = 58, CHART = 59, IMPORT = 60, SHEET = 61, DOC = 62, RULER = 63,
+            S_BRACE = 64, S_BRACKET = 65, FIT = 66;
 
     private final int icon;
     private final Path path;
@@ -325,6 +326,18 @@ final class IconView extends View {
                     else p.lineTo(x, y);
                 }
                 p.close();
+                break;
+            case S_BRACE:
+                p.moveTo(15, 3.5f); p.quadTo(11, 3.5f, 11, 7.5f); p.lineTo(11, 10); p.quadTo(11, 12, 8, 12);
+                p.quadTo(11, 12, 11, 14); p.lineTo(11, 16.5f); p.quadTo(11, 20.5f, 15, 20.5f);
+                break;
+            case S_BRACKET:
+                p.moveTo(15, 3.5f); p.lineTo(9, 3.5f); p.lineTo(9, 20.5f); p.lineTo(15, 20.5f);
+                break;
+            case FIT: // una hoja entera dentro de un marco
+                p.moveTo(8, 6); p.lineTo(16, 6); p.lineTo(16, 18); p.lineTo(8, 18); p.close();
+                p.moveTo(3, 7); p.lineTo(3, 3); p.lineTo(7, 3); p.moveTo(17, 3); p.lineTo(21, 3); p.lineTo(21, 7);
+                p.moveTo(21, 17); p.lineTo(21, 21); p.lineTo(17, 21); p.moveTo(7, 21); p.lineTo(3, 21); p.lineTo(3, 17);
                 break;
             case RULER:
                 p.moveTo(3, 15); p.lineTo(15, 3); p.lineTo(21, 9); p.lineTo(9, 21); p.close();

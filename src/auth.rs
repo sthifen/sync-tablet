@@ -34,6 +34,17 @@ pub struct Auth {
 struct Pairing {
     code: String,
     fails: u32,
+    /// Cuándo se creó: el código (y el QR que lo lleva) caduca solo.
+    born: std::time::Instant,
+}
+
+/// Cada cuánto cambia el código del QR aunque nadie lo use.
+pub const CODE_TTL: std::time::Duration = std::time::Duration::from_secs(120);
+
+impl Pairing {
+    fn fresh() -> Self {
+        Pairing { code: new_code(), fails: 0, born: std::time::Instant::now() }
+    }
 }
 
 fn random_bytes(n: usize) -> Result<Vec<u8>> {
@@ -63,27 +74,36 @@ impl Auth {
             }
         };
         let hostname = std::fs::read_to_string("/etc/hostname").unwrap_or_default().trim().to_lowercase();
-        Ok(Self { token, hostname, pairing: Mutex::new(Pairing { code: new_code(), fails: 0 }) })
+        Ok(Self { token, hostname, pairing: Mutex::new(Pairing::fresh()) })
     }
 
     pub fn token(&self) -> &str {
         &self.token
     }
 
-    pub fn code(&self) -> String {
-        self.pairing.lock().unwrap().code.clone()
+    /// El código vigente y los segundos que le quedan (lo renueva si caducó).
+    pub fn current(&self) -> (String, u64) {
+        let mut p = self.pairing.lock().unwrap();
+        if p.born.elapsed() >= CODE_TTL {
+            *p = Pairing::fresh();
+        }
+        (p.code.clone(), CODE_TTL.saturating_sub(p.born.elapsed()).as_secs().max(1))
     }
 
     /// Canjea el código por el token. Tras varios fallos el código cambia.
     pub fn redeem(&self, code: &str) -> Option<&str> {
         let mut p = self.pairing.lock().unwrap();
+        if p.born.elapsed() >= CODE_TTL {
+            *p = Pairing::fresh();
+            return None;
+        }
         if same(code.trim(), &p.code) {
-            *p = Pairing { code: new_code(), fails: 0 };
+            *p = Pairing::fresh();
             return Some(&self.token);
         }
         p.fails += 1;
         if p.fails >= MAX_TRIES {
-            *p = Pairing { code: new_code(), fails: 0 };
+            *p = Pairing::fresh();
         }
         None
     }
@@ -141,7 +161,7 @@ pub fn is_local(peer: &SocketAddr) -> bool {
 
 /// Rutas que no enseñan datos: la página y su fuente, y el emparejado.
 fn is_public(path: &str) -> bool {
-    !(path.starts_with("/api/") || path.starts_with("/ws/")) || path == "/api/pair"
+    !(path.starts_with("/api/") || path.starts_with("/ws/")) || path == "/api/pair" || path == "/api/pair/account"
 }
 
 pub async fn guard(State(s): State<Arc<AppState>>, ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request, next: Next) -> Response {
@@ -182,7 +202,7 @@ mod tests {
         Auth {
             token: "t".repeat(64),
             hostname: "fedora".into(),
-            pairing: Mutex::new(Pairing { code: "123456".into(), fails: 0 }),
+            pairing: Mutex::new(Pairing { code: "123456".into(), fails: 0, born: std::time::Instant::now() }),
         }
     }
 
@@ -227,19 +247,29 @@ mod tests {
         assert!(a.redeem("000000").is_none());
         assert!(a.redeem("123456").is_some());
         assert!(a.redeem("123456").is_none(), "ya se usó");
-        let before = a.code();
+        let before = a.current().0;
         for _ in 0..MAX_TRIES {
             a.redeem("xxxxxx");
         }
-        assert_ne!(a.code(), before);
+        assert_ne!(a.current().0, before);
+    }
+
+    #[test]
+    fn el_codigo_caduca_solo() {
+        let a = auth();
+        a.pairing.lock().unwrap().born = std::time::Instant::now() - CODE_TTL;
+        assert!(a.redeem("123456").is_none(), "caducado");
+        let (code, left) = a.current();
+        assert_ne!(code, "123456");
+        assert!(left > CODE_TTL.as_secs() - 2);
     }
 
     #[test]
     fn publico_solo_lo_que_no_enseña_datos() {
-        for p in ["/", "/n/abc", "/fonts/inter.woff2", "/api/pair"] {
+        for p in ["/", "/n/abc", "/fonts/inter.woff2", "/api/pair", "/api/pair/account"] {
             assert!(is_public(p), "{p}");
         }
-        for p in ["/api/notes", "/api/pair/code", "/api/asset/a.jpg", "/ws/ink", "/ws/live"] {
+        for p in ["/api/notes", "/api/pair/code", "/api/account", "/api/account/login", "/api/account/devices", "/api/asset/a.jpg", "/ws/ink", "/ws/live"] {
             assert!(!is_public(p), "{p}");
         }
     }

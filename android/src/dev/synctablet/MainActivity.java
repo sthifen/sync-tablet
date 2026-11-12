@@ -103,19 +103,34 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         store = Store.get(this);
         notes = Notes.get(this);
         sync = SyncClient.get(this);
+        BarSettings.applyPaper(this);
+        // Si la tablet tiene cuadernos compartidos propios, su nodo arranca ya.
+        String[] sharedFiles = new java.io.File(getFilesDir(), "compartidos").list();
+        if (!Updater.DESKTOP && sharedFiles != null && sharedFiles.length > 0) {
+            new Thread(() -> {
+                SharedNode.get(this);
+                try {
+                    Class.forName("dev.synctablet.KeepAliveService").getMethod("update", android.content.Context.class).invoke(null, getApplicationContext());
+                } catch (ReflectiveOperationException ignored) {
+                }
+            }, "compartidos").start();
+        }
         renderer = new PageRenderer(this);
         Trash.purgeOld(this);
+        Clip.listen(getApplicationContext());
         build();
         String last = saved != null ? saved.getString("note") : prefs.getString("last", null);
         if (last != null && notes.note(last) != null) openNote(last); else showHome();
         reopenDock();
         checkUpdate(false);
+        if (saved == null) pairLink(getIntent().getData());
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (Updater.DONE.equals(intent.getAction())) installStatus(intent);
+        pairLink(intent.getData());
     }
 
     @Override
@@ -259,6 +274,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         sidebar.addView(navItem(IconView.SEARCH, "Buscar", v -> openSearch()));
         sidebar.addView(navItem(IconView.HOME, "Inicio", v -> goTo(null)));
         sidebar.addView(navItem(IconView.PLUS, "Crear", v -> createMenu()));
+        sidebar.addView(navItem(IconView.WIFI, "Compartidos", v -> showSharedList()));
         sidebar.addView(navItem(IconView.NEURON, "Mapa de ideas", v -> startActivityForResult(new Intent(this, GraphActivity.class), OPEN_GRAPH)));
         sidebar.addView(navItem(IconView.SLIDERS, "Organizar materias", v -> organize()));
         sidebar.addView(navItem(IconView.WAND, "Personalizar", v -> personalize()));
@@ -286,6 +302,17 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         View line = new View(this);
         line.setBackgroundColor(t.line);
         sidebar.addView(line, new LinearLayout.LayoutParams(-1, Math.max(1, t.dp(1))));
+        // Un botón de verdad para conectar: en el PC enseña el QR; en la tablet, lo escanea.
+        TextView connect = text(Updater.DESKTOP ? "📱  Conectar un aparato" : "📷  Conectar con el PC", 15, 0xFFFFFFFF, t.medium);
+        connect.setGravity(Gravity.CENTER);
+        connect.setMinHeight(t.dp(46));
+        connect.setBackground(Ui.round(0xFF0F766E, t.dp(12)));
+        connect.setClickable(true);
+        connect.setFocusable(true);
+        connect.setOnClickListener(v -> askWifi());
+        LinearLayout.LayoutParams cbp = new LinearLayout.LayoutParams(-1, -2);
+        cbp.setMargins(t.dp(12), t.dp(12), t.dp(12), 0);
+        sidebar.addView(connect, cbp);
         LinearLayout conn = row();
         conn.setPadding(t.dp(12), t.dp(14), t.dp(10), t.dp(16));
         connDot = new View(this);
@@ -294,7 +321,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, -2, 1);
         clp.leftMargin = t.dp(8);
         conn.addView(connText, clp);
-        IconView wifi = icon(IconView.WIFI, t.icon, "Conectar por WiFi");
+        IconView wifi = icon(IconView.WIFI, t.icon, "Conectar con el PC");
         conn.addView(wifi, new LinearLayout.LayoutParams(t.dp(28), t.dp(28)));
         conn.setOnClickListener(v -> askWifi());
         wifi.setOnClickListener(v -> askWifi());
@@ -566,6 +593,19 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         });
     }
 
+    /** Cambios de otro aparato (la app del PC o la tablet): la portada se pone al día, sin parpadear con cada trazo. */
+    private final Runnable remoteRefresh = () -> {
+        if (isFinishing()) return;
+        renderSidebar();
+        if (noteId == null && !selecting && !dock.isOpen()) showHome();
+    };
+
+    @Override
+    public void onRemote(String notebookId) {
+        main.removeCallbacks(remoteRefresh);
+        main.postDelayed(remoteRefresh, 400);
+    }
+
     @Override
     public void onStatus(boolean connected, String via) {
         online = connected;
@@ -576,7 +616,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
 
     private void paintConn() {
         if (connText == null) return;
-        connText.setText(online ? "Conectado al PC · " + where : "Sin conexión al PC");
+        connText.setText(Updater.DESKTOP ? (online ? "Servidor de este PC en marcha" : "Arrancando el servidor…")
+                : online ? "Conectado al PC · " + where : "Sin conexión al PC");
         GradientDrawable d = new GradientDrawable();
         d.setShape(GradientDrawable.OVAL);
         d.setColor(online ? 0xFF35A86B : t.faint);
@@ -1189,7 +1230,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         if (Native.available()) tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Importar Word", false, this::pickDocx));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.EXPORT), "Buscar actualización", false, () -> checkUpdate(true)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, () -> toggleTheme("more")).stays());
-        tiles.add(new OptionDock.Tile(dock.glyph(IconView.WIFI), "Conectar por WiFi", false, this::askWifi).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.WIFI), "Conectar con el PC", false, this::askWifi).stays());
         if (note != null) tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Eliminar esta nota", false, () -> confirmDeleteNote(noteId)).stays());
         dock.tiles("Opciones", tiles);
     }
@@ -1197,7 +1238,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     // ---------------------------------------------------------------- Word
 
     private static final int PICK_DOCX = 41, SAVE_DOCX = 42, PICK_LOOK = 43, OPEN_GRAPH = 44, PICK_IMPORT = 45, PICK_MODEL = 46,
-            PICK_BACKUP_DEST = 47, PICK_BACKUP_RESTORE = 48;
+            PICK_BACKUP_DEST = 47, PICK_BACKUP_RESTORE = 48, SCAN_QR = 49;
     private static final String DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     private void pickDocx() {
@@ -1216,6 +1257,10 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == SCAN_QR) {
+            if (result == RESULT_OK && data != null && data.getStringExtra("link") != null) pairLink(android.net.Uri.parse(data.getStringExtra("link")));
+            return;
+        }
         if (request == OPEN_GRAPH && result == RESULT_OK && data != null && data.getStringExtra("note") != null) {
             openNote(data.getStringExtra("note"));
             return;
@@ -1453,6 +1498,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             n.favorite = !n.favorite;
             changed(n);
         }));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.WIFI), "Compartir en vivo", false, () -> showShare(n.id, n.title)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), "Mover a carpeta", false, () -> moveToFolder(n)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.FILE), "Exportar PDF", false, () -> PdfActivity.open(this, java.util.Collections.singletonList(n.id), -1)));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TRASH), "Borrar", false, () -> confirmDelete(n)).stays());
@@ -1649,6 +1695,8 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         tiles.add(new OptionDock.Tile(lookTile(Looks.APP), "Fondo de la app", false, () -> editLook(Looks.APP, "Fondo de la app", true)).stays());
         tiles.add(new OptionDock.Tile(lookTile(Looks.HOME), "Portada de Inicio", false, () -> editLook(Looks.HOME, "Portada de Inicio", false)).stays());
         tiles.add(new OptionDock.Tile(lookTile(Looks.DESK), "Detrás de las hojas", false, () -> editLook(Looks.DESK, "Detrás de las hojas", false)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.SLIDERS), "Barra del cuaderno", false, this::openBarDesigner));
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGE), "Formato de cuaderno", false, () -> BarSettings.paperMenu(this, dock)).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.MOON), t.dark ? "Modo claro" : "Modo oscuro", false, () -> toggleTheme("personalize")).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.CLOUD), "Copia en Drive", false, () -> Backup.menu(this, dock)).stays());
         boolean full = Ui.fullscreen(this);
@@ -1657,6 +1705,18 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
             personalize();
         }).stays());
         dock.tiles("Personalizar", tiles);
+    }
+
+    /** Personalizar la barra sobre un cuaderno de verdad: la página a la izquierda, el panel a la derecha. */
+    private void openBarDesigner() {
+        flushSave();
+        Ink.Notebook n = store.notebooks().isEmpty() ? null : store.notebooks().get(0);
+        if (n == null) {
+            n = store.createNotebook("Mi cuaderno", Ui.COVERS[0]);
+            sync.sendNotebook(n);
+            sync.sendPage(store.page(n.pages.get(0)));
+        }
+        startActivity(new Intent(this, PageActivity.class).putExtra("notebook", n.id).putExtra("design", true));
     }
 
     /** Foto, difuminado y oscurecido de un sitio; los cambios se ven al momento. */
@@ -2406,6 +2466,7 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.PAGES), "Cuaderno", false, this::askNewNotebook).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.TEXT), "Nota", false, this::newNote));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.FOLDER), here.isEmpty() ? "Carpeta" : "Subcarpeta", false, () -> askNewFolder(null, here)).stays());
+        tiles.add(new OptionDock.Tile(dock.glyph(IconView.WIFI), "Unirse a un compartido", false, this::askJoin).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.IMPORT), "Importar archivo", false, this::importMenu).stays());
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.IMAGE), "Importar imagen", false, () -> notebookWith("image")));
         tiles.add(new OptionDock.Tile(dock.glyph(IconView.CAMERA), "Tomar foto", false, () -> notebookWith("photo")));
@@ -2989,37 +3050,647 @@ public final class MainActivity extends Activity implements SyncClient.Listener,
         });
     }
 
+    // ------------------------------------------------------- cuenta y aparatos
+
+    private static final String[] KIND_NAMES = {"pc", "PC", "desktop", "App del PC", "tablet", "Tablet", "phone", "Celular"};
+
+    private static String kindName(String k) {
+        for (int i = 0; i < KIND_NAMES.length; i += 2) if (KIND_NAMES[i].equals(k)) return KIND_NAMES[i + 1];
+        return k;
+    }
+
+    /** Conectar con el PC: escanear su QR (lo normal) o entrar con la cuenta. */
     private void askWifi() {
-        EditText e = field(sync.wifiHost());
-        e.setHint("IP del PC, como 192.168.1.20");
-        e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        EditText code = field("");
-        code.setHint("Código de 6 dígitos");
-        code.setInputType(InputType.TYPE_CLASS_NUMBER);
+        if (Updater.DESKTOP) {
+            showPcConnect();
+            return;
+        }
+        Account account = Account.get(this);
+        if (account.loggedIn()) showDevices(account);
+        else askLogin(account);
+    }
+
+    // ------------------------------------------- cuadernos compartidos (estilo Hamachi)
+
+    private static String roleName(String r) {
+        return "admin".equals(r) ? "Admin" : "editor".equals(r) ? "Editor" : "Lector";
+    }
+
+    /** Todos los compartidos: quién hace de host y quién está. */
+    private void showSharedList() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setMinimumWidth(t.dp(Updater.DESKTOP ? 640 : 0));
+        box.setPadding(t.dp(18), 0, t.dp(18), t.dp(10));
+        box.addView(dock.message("Cuadernos que trabajas con otras personas. El host los mantiene vivos; si se apaga, sigue otro que tenga «Mantener vivo»."));
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.addView(dock.message("Buscando…"));
+        box.addView(list);
+        dock.show("Compartidos", box, new OptionDock.Action("Unirse con un enlace", false, this::askJoin).stays(), new OptionDock.Action("Listo", true, null));
+        new Thread(() -> {
+            JSONObject l = null;
+            String problem = null;
+            try {
+                l = SharedDocs.list(this);
+            } catch (java.io.IOException e) {
+                problem = e.getMessage();
+            }
+            JSONObject fl = l;
+            String fp = problem;
+            runOnUiThread(() -> {
+                list.removeAllViews();
+                if (fl == null) {
+                    list.addView(dock.message(fp));
+                    return;
+                }
+                org.json.JSONArray docs = fl.optJSONArray("docs");
+                if (docs == null || docs.length() == 0) {
+                    list.addView(dock.message("Aún no hay ninguno. Para compartir uno: mantén pulsado un cuaderno (clic derecho en el PC) → «Compartir en vivo»."));
+                    return;
+                }
+                for (int i = 0; i < docs.length(); i++) {
+                    JSONObject d = docs.optJSONObject(i);
+                    int online = 0;
+                    org.json.JSONArray peers = d.optJSONArray("peers");
+                    for (int k = 0; peers != null && k < peers.length(); k++) if (peers.optJSONObject(k).optBoolean("online")) online++;
+                    String host = d.isNull("host") ? "sin host ahora" : "host: " + d.optString("host");
+                    String label = (d.optBoolean("keep") ? "🟢 " : "⚪ ") + d.optString("title") + " — " + roleName(d.optString("role")) + " · " + host
+                            + " · " + online + (online == 1 ? " persona" : " personas") + " en línea";
+                    String nb = d.optString("notebook"), title = d.optString("title");
+                    list.addView(dock.row(label, v -> showShare(nb, title)));
+                }
+            });
+        }, "compartidos").start();
+    }
+
+    /** Compartir un cuaderno: QR y enlace (editor o lector), Mantener vivo y quién está. */
+    private void showShare(String notebookId, String title) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(Updater.DESKTOP ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setMinimumWidth(t.dp(Updater.DESKTOP ? 820 : 0));
+        box.setPadding(t.dp(22), t.dp(4), t.dp(22), t.dp(12));
+        ImageView qr = new ImageView(this);
+        qr.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        qr.setBackground(Ui.round(0xFFFFFFFF, t.dp(18)));
+        qr.setPadding(t.dp(10), t.dp(10), t.dp(10), t.dp(10));
+        int side = t.dp(Updater.DESKTOP ? 320 : 260);
+        box.addView(qr, new LinearLayout.LayoutParams(side, side));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams colLp = Updater.DESKTOP ? new LinearLayout.LayoutParams(0, -2, 1) : new LinearLayout.LayoutParams(-1, -2);
+        if (Updater.DESKTOP) colLp.leftMargin = t.dp(26);
+        else colLp.topMargin = t.dp(14);
+        box.addView(col, colLp);
+        TextView status = text("Preparando…", 14, t.muted, t.regular);
+        col.addView(status);
+        LinearLayout roles = row();
+        TextView edit = dock.chip("Puede editar", true), view = dock.chip("Solo ver", false);
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(0, -2, 1);
+        rp.rightMargin = t.dp(8);
+        roles.addView(edit, rp);
+        roles.addView(view, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(-1, -2);
+        gap.topMargin = t.dp(14);
+        col.addView(roles, gap);
+        TextView copy = dock.chip("📋  Copiar enlace", false);
+        LinearLayout.LayoutParams gap2 = new LinearLayout.LayoutParams(-1, -2);
+        gap2.topMargin = t.dp(8);
+        col.addView(copy, gap2);
+        TextView keep = dock.chip("Mantener vivo en " + SharedDocs.where(this), false);
+        col.addView(keep, gap2);
+        TextView keepNote = text("", 12, t.muted, t.regular);
+        keepNote.setPadding(0, t.dp(4), 0, 0);
+        col.addView(keepNote);
+        TextView people = text("", 14, t.text, t.regular);
+        people.setPadding(0, t.dp(14), 0, 0);
+        col.addView(people);
+        TextView leave = dock.row("Dejar de compartir aquí", null);
+        leave.setTextColor(0xFFEB5757);
+        col.addView(leave);
+        dock.show("Compartir «" + title + "»", box, new OptionDock.Action("Listo", true, null));
+
+        final String[] st = {null, null, null}; // doc, enlace de editor, enlace de lector
+        final boolean[] editor = {true}, keepOn = {false};
+        Runnable paintQr = () -> {
+            String link = editor[0] && st[1] != null ? st[1] : st[2];
+            if (link == null || st[0] == null) return;
+            boolean ed = editor[0] && st[1] != null;
+            new Thread(() -> {
+                android.graphics.Bitmap b = null;
+                try {
+                    b = SharedDocs.qr(this, st[0], link, ed);
+                } catch (java.io.IOException ignored) {
+                }
+                android.graphics.Bitmap fb = b;
+                runOnUiThread(() -> { if (fb != null) qr.setImageBitmap(fb); });
+            }, "qr").start();
+        };
+        edit.setOnClickListener(v -> {
+            if (st[1] == null) { Ui.toast(this, "Tú sólo puedes invitar a lectores"); return; }
+            editor[0] = true;
+            dock.setChip(edit, true);
+            dock.setChip(view, false);
+            paintQr.run();
+        });
+        view.setOnClickListener(v -> {
+            editor[0] = false;
+            dock.setChip(edit, false);
+            dock.setChip(view, true);
+            paintQr.run();
+        });
+        copy.setOnClickListener(v -> {
+            String link = editor[0] && st[1] != null ? st[1] : st[2];
+            if (link == null) return;
+            android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Sync Tablet", link));
+            Ui.toast(this, editor[0] && st[1] != null ? "Enlace para editar copiado" : "Enlace para ver copiado");
+        });
+        keep.setOnClickListener(v -> {
+            if (st[0] == null) return;
+            boolean on = !keepOn[0];
+            new Thread(() -> {
+                try {
+                    SharedDocs.keep(this, st[0], on);
+                    runOnUiThread(() -> {
+                        keepOn[0] = on;
+                        dock.setChip(keep, on);
+                        Ui.toast(this, on ? "Ahora " + SharedDocs.where(this) + " es host de «" + title + "»" : "Ya no es host; los demás siguen con otro host");
+                    });
+                } catch (java.io.IOException e) {
+                    runOnUiThread(() -> Ui.toast(this, e.getMessage()));
+                }
+            }, "keep").start();
+        });
+        leave.setOnClickListener(v -> dock.confirm("¿Dejar de compartir «" + title + "» aquí?",
+                "El cuaderno se queda en este aparato como uno normal; los demás siguen con su copia.", "Dejar de compartir", () -> new Thread(() -> {
+                    try {
+                        if (st[0] != null) SharedDocs.leave(this, st[0]);
+                        runOnUiThread(() -> Ui.toast(this, "«" + title + "» ya no se comparte aquí"));
+                    } catch (java.io.IOException e) {
+                        runOnUiThread(() -> Ui.toast(this, e.getMessage()));
+                    }
+                }, "leave").start()));
+
+        Runnable[] tick = new Runnable[1];
+        tick[0] = () -> {
+            if (!dock.isOpen() || box.getParent() == null) return;
+            new Thread(() -> {
+                JSONObject links = null, doc = null;
+                String problem = null;
+                try {
+                    if (st[0] == null) links = SharedDocs.share(this, notebookId);
+                    String id = st[0] != null ? st[0] : links.optString("doc");
+                    org.json.JSONArray docs = SharedDocs.list(this).optJSONArray("docs");
+                    for (int i = 0; docs != null && i < docs.length(); i++) if (id.equals(docs.optJSONObject(i).optString("doc"))) doc = docs.optJSONObject(i);
+                } catch (java.io.IOException e) {
+                    problem = e.getMessage();
+                }
+                JSONObject fl = links, fd = doc;
+                String fp = problem;
+                runOnUiThread(() -> {
+                    if (fp != null) {
+                        status.setText(fp);
+                        return;
+                    }
+                    if (fl != null) {
+                        st[0] = fl.optString("doc");
+                        st[1] = fl.isNull("editor") ? null : fl.optString("editor");
+                        st[2] = fl.optString("lector");
+                        if (st[1] == null) {
+                            editor[0] = false;
+                            dock.setChip(edit, false);
+                            dock.setChip(view, true);
+                        }
+                        paintQr.run();
+                    }
+                    if (fd != null) {
+                        keepOn[0] = fd.optBoolean("keep");
+                        dock.setChip(keep, keepOn[0]);
+                        String host = fd.isNull("host") ? null : fd.optString("host");
+                        status.setText("Tu papel: " + roleName(fd.optString("role")) + " · " + (host == null ? "ahora no hay host: los cambios se guardan y se mandan al volver" : "host: " + host));
+                        keepNote.setText(keepOn[0] ? "Mientras " + SharedDocs.where(this) + " esté encendido, los demás pueden entrar y trabajar."
+                                : "Actívalo para que " + SharedDocs.where(this) + " sea host y el cuaderno siga vivo aunque los demás se vayan.");
+                        StringBuilder b = new StringBuilder();
+                        org.json.JSONArray peers = fd.optJSONArray("peers");
+                        for (int i = 0; peers != null && i < peers.length(); i++) {
+                            JSONObject p = peers.optJSONObject(i);
+                            b.append(p.optBoolean("online") ? "🟢 " : "⚪ ").append(p.optString("name")).append(p.optBoolean("keep") ? "  (host)" : "").append('\n');
+                        }
+                        people.setText(b.length() == 0 ? "Todavía no ha entrado nadie. Comparte el QR o el enlace." : "Personas:\n" + b.toString().trim());
+                    }
+                    status.postDelayed(tick[0], 3000);
+                });
+            }, "compartir").start();
+        };
+        tick[0].run();
+    }
+
+    /** Entrar a un cuaderno que compartió otra persona: pegar el enlace o escanear su QR. */
+    private void askJoin() {
+        EditText e = dock.field("", "Pega aquí el enlace (synctablet://doc…)");
+        e.setSingleLine(true);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setMinimumWidth(t.dp(Updater.DESKTOP ? 560 : 0));
+        box.setPadding(t.dp(18), 0, t.dp(18), t.dp(10));
+        box.addView(dock.message("Pide a quien lo comparte su enlace o su QR. El cuaderno aparecerá en la carpeta «Compartidos»."));
+        if (!Updater.DESKTOP) {
+            TextView scan = dock.chip("📷  Escanear su QR", true);
+            scan.setMinHeight(t.dp(56));
+            scan.setOnClickListener(v -> scanQr());
+            box.addView(scan, new LinearLayout.LayoutParams(-1, -2));
+            TextView or = dock.message("o pega el enlace:");
+            or.setPadding(0, t.dp(14), 0, t.dp(4));
+            box.addView(or);
+        }
+        box.addView(e, new LinearLayout.LayoutParams(-1, -2));
+        dock.show("Unirse a un compartido", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Unirse", true, () -> joinLink(e.getText().toString())));
+        dock.focus(e);
+    }
+
+    private void joinLink(String link) {
+        if (!link.trim().startsWith("synctablet://doc?")) {
+            Ui.toast(this, "Ese no es un enlace de Sync Tablet");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                JSONObject r = SharedDocs.join(this, link.trim());
+                runOnUiThread(() -> Ui.toast(this, "Entraste a «" + r.optString("title") + "»: llegará a «Compartidos» en unos segundos"));
+            } catch (java.io.IOException e) {
+                runOnUiThread(() -> Ui.toast(this, "No se pudo entrar: " + e.getMessage()));
+            }
+        }, "unirse").start();
+    }
+
+    // ------------------------------------------- en el PC: el QR y el servidor de cuentas
+
+    /** GET o POST al servidor de este PC (la app de escritorio lo arranca sola). */
+    private static byte[] localHttp(String method, String path) throws java.io.IOException {
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:" + SyncClient.PORT + path).openConnection();
+        c.setConnectTimeout(1500);
+        c.setReadTimeout(5000);
+        c.setRequestMethod(method);
+        try {
+            if (c.getResponseCode() != 200) throw new java.io.IOException("HTTP " + c.getResponseCode());
+            try (java.io.InputStream in = c.getInputStream()) {
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                byte[] b = new byte[8192];
+                for (int k; (k = in.read(b)) > 0; ) out.write(b, 0, k);
+                return out.toByteArray();
+            }
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    private static JSONObject localJson(String method, String path) throws java.io.IOException {
+        try {
+            return new JSONObject(new String(localHttp(method, path), java.nio.charset.StandardCharsets.UTF_8));
+        } catch (org.json.JSONException e) {
+            throw new java.io.IOException(e);
+        }
+    }
+
+    /** «Conectar un aparato»: un QR que cambia solo y se escanea con la tablet o el celular. */
+    private void showPcConnect() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setMinimumWidth(t.dp(780));
+        box.setPadding(t.dp(24), t.dp(4), t.dp(24), t.dp(14));
+        ImageView qr = new ImageView(this);
+        qr.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        qr.setBackground(Ui.round(0xFFFFFFFF, t.dp(18)));
+        qr.setPadding(t.dp(12), t.dp(12), t.dp(12), t.dp(12));
+        qr.setContentDescription("Código QR para conectar un aparato");
+        box.addView(qr, new LinearLayout.LayoutParams(t.dp(340), t.dp(340)));
+        LinearLayout side = new LinearLayout(this);
+        side.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams sideLp = new LinearLayout.LayoutParams(0, -2, 1);
+        sideLp.leftMargin = t.dp(28);
+        box.addView(side, sideLp);
+        side.addView(text("Escanéalo con la tablet o el celular", 22, t.text, t.medium));
+        String[] how = {"1.  Abre Sync Tablet en la tablet o el celular.", "2.  Toca «📷 Conectar con el PC».", "3.  Apunta la cámara a este código. ¡Listo!"};
+        for (String h : how) {
+            TextView step = text(h, 16, t.text, t.regular);
+            step.setPadding(0, t.dp(10), 0, 0);
+            side.addView(step);
+        }
+        TextView left = text("Preparando el código…", 13, t.muted, t.regular);
+        left.setPadding(0, t.dp(16), 0, 0);
+        side.addView(left);
+        TextView setup = dock.chip("☁  Crear mi servidor de cuentas", false);
+        setup.setOnClickListener(v -> showTrackerSetup());
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
+        sp.topMargin = t.dp(26);
+        side.addView(setup, sp);
+        TextView note = text("Para encontrar tus aparatos también fuera de casa. Se hace una sola vez y es gratis.", 13, t.muted, t.regular);
+        note.setPadding(0, t.dp(6), 0, 0);
+        side.addView(note);
+        dock.show("Conectar un aparato", box, new OptionDock.Action("Listo", true, null));
+
+        String[] shown = {null};
+        Runnable[] tick = new Runnable[1];
+        tick[0] = () -> {
+            if (!dock.isOpen() || box.getParent() == null) return;
+            new Thread(() -> {
+                String code = null, text;
+                android.graphics.Bitmap bmp = null;
+                try {
+                    JSONObject p = localJson("GET", "/api/pair/code");
+                    code = p.optString("code");
+                    int secs = p.optInt("expires_in");
+                    text = p.isNull("ip") ? "Conecta este PC a una red WiFi para poder conectar aparatos."
+                            : "El código se renueva en " + secs / 60 + ":" + String.format("%02d", secs % 60) + " y cada vez que se usa.";
+                    if (!code.equals(shown[0])) {
+                        byte[] png = localHttp("GET", "/api/pair/qr.png");
+                        bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.length);
+                    }
+                } catch (java.io.IOException e) {
+                    text = "Arrancando el servidor de Sync Tablet…";
+                }
+                String fc = code, ft = text;
+                android.graphics.Bitmap fb = bmp;
+                runOnUiThread(() -> {
+                    left.setText(ft);
+                    if (fb != null) {
+                        qr.setImageBitmap(fb);
+                        shown[0] = fc;
+                    }
+                    left.postDelayed(tick[0], 1000);
+                });
+            }, "qr").start();
+        };
+        tick[0].run();
+    }
+
+    private static final String[] SETUP_ICONS = {"pending", "○", "running", "●", "ok", "✓", "error", "✗"};
+
+    /** Publica el tracker en la cuenta de Cloudflare de quien lo pulsa, enseñando cada paso. */
+    private void showTrackerSetup() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setMinimumWidth(t.dp(860));
+        box.setPadding(t.dp(24), 0, t.dp(24), t.dp(12));
+        TextView msg = dock.message("Pulsa «Empezar». Se abrirá el navegador para que autorices a Cloudflare (si no tienes cuenta, la creas ahí mismo); lo demás es automático.");
+        box.addView(msg, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(-1, t.dp(400));
+        bodyLp.topMargin = t.dp(12);
+        box.addView(body, bodyLp);
+        LinearLayout steps = new LinearLayout(this);
+        steps.setOrientation(LinearLayout.VERTICAL);
+        body.addView(steps, new LinearLayout.LayoutParams(t.dp(290), -1));
+        TextView log = new TextView(this);
+        log.setTypeface(android.graphics.Typeface.MONOSPACE);
+        log.setTextSize(12);
+        log.setTextColor(0xFFC9D1D9);
+        log.setPadding(t.dp(12), t.dp(10), t.dp(12), t.dp(10));
+        ScrollView sv = new ScrollView(this);
+        sv.setBackground(Ui.round(0xFF0D1117, t.dp(12)));
+        sv.addView(log, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams svLp = new LinearLayout.LayoutParams(0, -1, 1);
+        svLp.leftMargin = t.dp(18);
+        body.addView(sv, svLp);
+        dock.show("Crear mi servidor de cuentas", box, new OptionDock.Action("Cerrar", false, null),
+                new OptionDock.Action("Empezar", true, () -> new Thread(() -> {
+                    try {
+                        localHttp("POST", "/api/tracker/setup");
+                    } catch (java.io.IOException ignored) {
+                    }
+                }, "setup").start()).stays());
+        Runnable[] tick = new Runnable[1];
+        tick[0] = () -> {
+            if (!dock.isOpen() || box.getParent() == null) return;
+            new Thread(() -> {
+                JSONObject st;
+                try {
+                    st = localJson("GET", "/api/tracker/setup");
+                } catch (java.io.IOException e) {
+                    st = null;
+                }
+                JSONObject fs = st;
+                runOnUiThread(() -> {
+                    if (fs != null) paintSetup(fs, msg, steps, log, sv);
+                    msg.postDelayed(tick[0], 800);
+                });
+            }, "setup-poll").start();
+        };
+        tick[0].run();
+    }
+
+    private void paintSetup(JSONObject st, TextView msg, LinearLayout steps, TextView log, ScrollView sv) {
+        org.json.JSONArray list = st.optJSONArray("steps");
+        steps.removeAllViews();
+        for (int i = 0; list != null && i < list.length(); i++) {
+            JSONObject x = list.optJSONObject(i);
+            String state = x.optString("state"), icon = "○";
+            for (int k = 0; k < SETUP_ICONS.length; k += 2) if (SETUP_ICONS[k].equals(state)) icon = SETUP_ICONS[k + 1];
+            int color = "ok".equals(state) ? 0xFF35A86B : "error".equals(state) ? 0xFFEB5757 : "running".equals(state) ? t.text : t.faint;
+            TextView row = text(icon + "   " + x.optString("label"), 15, color, "running".equals(state) ? t.medium : t.regular);
+            row.setPadding(0, t.dp(8), 0, t.dp(8));
+            steps.addView(row);
+        }
+        String l = st.optString("log").trim();
+        if (!l.equals(log.getText().toString())) {
+            log.setText(l);
+            sv.post(() -> sv.scrollTo(0, Math.max(0, log.getHeight() - sv.getHeight())));
+        }
+        boolean running = st.optBoolean("running");
+        if (running) {
+            boolean login = false;
+            for (int i = 0; list != null && i < list.length(); i++) {
+                JSONObject x = list.optJSONObject(i);
+                login |= "running".equals(x.optString("state")) && x.optString("label").contains("Cloudflare");
+            }
+            msg.setText(login ? "Autoriza a Cloudflare en el navegador que se abrió." : "Trabajando… cada paso aparece abajo.");
+        } else if (!st.isNull("url")) {
+            msg.setText("¡Listo! Tu servidor de cuentas está en " + st.optString("url") + ". Este PC ya lo usa y la tablet lo recibe al escanear el QR.");
+        } else if (!st.isNull("error")) {
+            msg.setText(st.isNull("hint") ? "No se pudo terminar: " + st.optString("error") + ". Pulsa «Empezar» para reintentar." : st.optString("hint"));
+        }
+    }
+
+    /** El botón grande para leer el QR del PC (no existe en la app de escritorio, que ya está en el PC). */
+    private View scanButton() {
+        TextView b = dock.chip("📷  Escanear QR del PC", true);
+        b.setTextSize(18);
+        b.setMinHeight(t.dp(64));
+        b.setOnClickListener(v -> scanQr());
+        return b;
+    }
+
+    private void scanQr() {
+        try {
+            startActivityForResult(new Intent(this, Class.forName("dev.synctablet.QrScanActivity")), SCAN_QR);
+        } catch (ClassNotFoundException | android.content.ActivityNotFoundException e) {
+            Ui.toast(this, "Este aparato no puede escanear");
+        }
+    }
+
+    /** synctablet://pair?h=IP&p=puerto&c=código&n=nombre&t=servidor de cuentas (lo que lleva el QR del PC). */
+    private void pairLink(android.net.Uri u) {
+        if (u != null && "synctablet".equals(u.getScheme()) && "doc".equals(u.getHost())) {
+            joinLink(u.toString());
+            return;
+        }
+        if (u == null || !"synctablet".equals(u.getScheme()) || !"pair".equals(u.getHost())) return;
+        String host = u.getQueryParameter("h"), code = u.getQueryParameter("c"), name = u.getQueryParameter("n"), tracker = u.getQueryParameter("t");
+        String port = u.getQueryParameter("p");
+        if (host == null || host.isEmpty() || code == null) {
+            Ui.toast(this, "El PC no está conectado a ninguna red WiFi");
+            return;
+        }
+        if (port != null && !port.equals(String.valueOf(SyncClient.PORT))) {
+            Ui.toast(this, "Ese QR es de otra versión de Sync Tablet");
+            return;
+        }
+        String pc = name == null || name.isEmpty() ? "el PC" : "«" + name + "»";
+        Ui.toast(this, "Conectando con " + pc + "…");
+        if (tracker != null && tracker.startsWith("http")) Account.get(this).rememberTracker(tracker);
+        new Thread(() -> {
+            sync.setWifiHost(host);
+            boolean ok = sync.pair(host, code);
+            runOnUiThread(() -> {
+                if (ok) {
+                    Ui.toast(this, "¡Conectado con " + pc + "!");
+                    if (dock.isOpen()) dock.close();
+                } else {
+                    Ui.toast(this, "No se pudo conectar: revisa que la tablet y el PC estén en la misma WiFi y vuelve a escanear");
+                }
+            });
+        }, "pair").start();
+    }
+
+    private void askLogin(Account account) {
+        // Buscar ya el PC de esta WiFi: así se sabe qué servidor de cuentas usa.
+        if (SyncClient.nearby.isEmpty()) {
+            new Thread(() -> SyncClient.nearby = Discovery.probe(SyncClient.PORT, 700), "probe").start();
+        }
+        EditText user = field("");
+        user.setHint("Usuario");
+        user.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        EditText pass = field("");
+        pass.setHint("Contraseña (8 o más)");
+        pass.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        TextView err = dock.message("");
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(t.dp(18), 0, t.dp(18), t.dp(10));
-        box.addView(dock.message("Si ya conectaste la tablet por cable, basta la IP. Si no, escribe también el código: "
-                + "los dos salen en el PC, en «Conectar por WiFi»."));
-        box.addView(e, new LinearLayout.LayoutParams(-1, -2));
+        if (!Updater.DESKTOP) {
+            box.addView(dock.message("En el PC pulsa «Conectar un aparato» y escanea el código que aparece."));
+            box.addView(scanButton(), new LinearLayout.LayoutParams(-1, -2));
+            TextView or = dock.message("o entra con tu cuenta, para encontrar tus aparatos también fuera de casa:");
+            or.setPadding(0, t.dp(18), 0, t.dp(4));
+            box.addView(or);
+        } else {
+            box.addView(dock.message("Entra con tu cuenta para ver y encontrar tus aparatos."));
+        }
         LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(-1, -2);
         gap.topMargin = t.dp(8);
-        box.addView(code, gap);
-        dock.show("Conectar por WiFi", box, new OptionDock.Action("Cancelar", false, null), new OptionDock.Action("Guardar", true, () -> {
-            String host = e.getText().toString().trim(), digits = code.getText().toString().trim();
-            sync.setWifiHost(host);
-            if (digits.isEmpty()) return;
-            new Thread(() -> {
-                boolean ok = sync.pair(host, digits);
-                runOnUiThread(() -> Ui.toast(this, ok ? "Tablet vinculada" : "No se pudo vincular: revisa la IP y el código"));
-            }, "pair").start();
-        }));
-        dock.focus(e);
+        box.addView(user, new LinearLayout.LayoutParams(-1, -2));
+        box.addView(pass, gap);
+        box.addView(err);
+        Runnable[] go = new Runnable[2];
+        for (int i = 0; i < 2; i++) {
+            boolean register = i == 1;
+            go[i] = () -> {
+                String u = user.getText().toString().trim().toLowerCase(java.util.Locale.ROOT), p = pass.getText().toString();
+                if (!u.matches("[a-z0-9][a-z0-9._-]{2,31}")) {
+                    err.setText("El usuario debe tener de 3 a 32 letras, números, «.», «_» o «-».");
+                    return;
+                }
+                if (p.length() < 8) {
+                    err.setText("La contraseña debe tener 8 caracteres o más.");
+                    return;
+                }
+                err.setText(register ? "Creando la cuenta…" : "Entrando…");
+                new Thread(() -> {
+                    String problem = null;
+                    try {
+                        account.login(account.tracker(), u, p, register);
+                    } catch (java.io.IOException ex) {
+                        problem = ex.getMessage();
+                    }
+                    String fp = problem;
+                    runOnUiThread(() -> {
+                        if (fp != null) {
+                            err.setText(fp);
+                            return;
+                        }
+                        sync.searchSoon();
+                        Ui.toast(this, "Sesión iniciada como " + account.user());
+                        showDevices(account);
+                    });
+                }, "login").start();
+            };
+        }
+        dock.show("Conectar con el PC", box, new OptionDock.Action("Crear cuenta", false, go[1]).stays(), new OptionDock.Action("Entrar", true, go[0]).stays());
+    }
+
+    private void showDevices(Account account) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(t.dp(18), 0, t.dp(18), t.dp(10));
+        box.addView(dock.message("Sesión: " + account.user() + (online ? " · conectado al PC" : " · buscando el PC…")));
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.addView(dock.message("Buscando aparatos…"));
+        box.addView(list);
+        if (!Updater.DESKTOP) {
+            View scan = scanButton();
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
+            sp.topMargin = t.dp(10);
+            box.addView(scan, sp);
+        }
+        dock.show("Mis aparatos", box, new OptionDock.Action("Cerrar sesión", false, () -> new Thread(() -> {
+            account.logout();
+            runOnUiThread(() -> Ui.toast(this, "Sesión cerrada"));
+        }, "logout").start()), new OptionDock.Action("Listo", true, null));
+        new Thread(() -> {
+            org.json.JSONArray devs = null;
+            String problem = null;
+            try {
+                devs = account.devices();
+            } catch (java.io.IOException ex) {
+                problem = ex.getMessage();
+            }
+            org.json.JSONArray fd = devs;
+            String fp = problem;
+            runOnUiThread(() -> {
+                list.removeAllViews();
+                if (fd == null) {
+                    list.addView(dock.message(fp));
+                    return;
+                }
+                for (int i = 0; i < fd.length(); i++) {
+                    JSONObject d = fd.optJSONObject(i);
+                    if (d == null) continue;
+                    String label = (d.optBoolean("online") ? "🟢 " : "⚪ ") + d.optString("name") + (d.optBoolean("me") ? " (este)" : "")
+                            + " — " + kindName(d.optString("kind")) + (d.optBoolean("online") ? " · en línea" : "");
+                    String id = d.optString("id"), name = d.optString("name");
+                    boolean me = d.optBoolean("me");
+                    list.addView(dock.row(label, me ? null : v -> dock.confirm("¿Quitar «" + name + "» de la cuenta?",
+                            "Tendrá que volver a iniciar sesión para conectarse.", "Quitar", () -> new Thread(() -> {
+                                try {
+                                    account.removeDevice(id);
+                                } catch (java.io.IOException ignored) {
+                                }
+                                runOnUiThread(() -> showDevices(account));
+                            }, "remove").start())));
+                }
+            });
+        }, "devices").start();
     }
 
     @Override
     public void onWindowFocusChanged(boolean focus) {
         super.onWindowFocusChanged(focus);
+        if (focus) Clip.check(this);
         if (focus) Ui.applyFullscreen(this);
     }
 }

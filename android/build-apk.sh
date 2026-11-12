@@ -47,25 +47,44 @@ fetch() { # fetch <zip> <destino>
 [[ -x "$BT/aapt2" ]] || fetch "$BT_ZIP" "$BT"
 [[ -f "$ANDROID_JAR" ]] || fetch "$PLATFORM_ZIP" "$SDK/platforms/$PLATFORM"
 
+# ZXing (Apache-2.0) para leer el QR del PC; sólo en Android (src-camera/).
+ZXING_VER=3.5.3
+ZXING_SHA256=8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82
+ZXING="$SDK/../synctablet-libs/zxing-core-$ZXING_VER.jar"
+if [[ ! -f "$ZXING" ]]; then
+  mkdir -p "$(dirname "$ZXING")"
+  echo "→ descargando ZXing $ZXING_VER"
+  curl -fL --progress-bar "https://repo1.maven.org/maven2/com/google/zxing/core/$ZXING_VER/core-$ZXING_VER.jar" -o "$ZXING.tmp"
+  echo "$ZXING_SHA256  $ZXING.tmp" | sha256sum -c --quiet - || { rm -f "$ZXING.tmp"; echo "ZXing no coincide con su huella" >&2; exit 1; }
+  mv "$ZXING.tmp" "$ZXING"
+fi
+
 if command -v javac >/dev/null; then JAVAC=(javac); else JAVAC=(java -m jdk.compiler/com.sun.tools.javac.Main); fi
 
 rm -rf "$OUT" && mkdir -p "$OUT"/{gen,classes,dex}
 
+# La de prueba necesita su propia autoridad para el portapapeles (no pueden repetirse).
+MANIFEST="$HERE/AndroidManifest.xml"
+if [[ ${#PRUEBA[@]} -gt 0 ]]; then
+  MANIFEST="$OUT/AndroidManifest.xml"
+  sed "s/dev\.synctablet\.clip/${SYNCTABLET_PKG:-dev.synctablet.prueba}.clip/" "$HERE/AndroidManifest.xml" > "$MANIFEST"
+fi
+
 echo "→ recursos"
 "$BT/aapt2" compile --dir "$HERE/res" -o "$OUT/res.zip"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$ANDROID_JAR" \
-  --manifest "$HERE/AndroidManifest.xml" \
+  --manifest "$MANIFEST" \
   --java "$OUT/gen" --min-sdk-version $MIN_SDK --target-sdk-version 36 \
   --version-code "$VERSION_CODE" --version-name "$VERSION" "${PRUEBA[@]}" "$OUT/res.zip"
 
 echo "→ java"
 "${JAVAC[@]}" -source 17 -target 17 -nowarn -Xlint:-options -encoding UTF-8 \
-  -classpath "$ANDROID_JAR" -d "$OUT/classes" \
-  $(find "$HERE/src" "$OUT/gen" -name '*.java')
+  -classpath "$ANDROID_JAR:$ZXING" -d "$OUT/classes" \
+  $(find "$HERE/src" "$HERE/src-camera" "$OUT/gen" -name '*.java')
 
 echo "→ dex"
 "$BT/d8" --release --min-api $MIN_SDK --lib "$ANDROID_JAR" --output "$OUT/dex" \
-  $(find "$OUT/classes" -name '*.class')
+  $(find "$OUT/classes" -name '*.class') "$ZXING"
 (cd "$OUT/dex" && zip -q "$OUT/base.apk" classes.dex)
 
 NDK="$SDK/ndk/r28c"
