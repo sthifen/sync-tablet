@@ -524,7 +524,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         laser = icon(IconView.LASER, "Puntero láser (también en el PC)", x -> setTool(InkView.LASER));
         note = icon(IconView.NOTE, "Notas: no salen al exportar; pueden ir fuera de la hoja", x -> setTool(InkView.NOTE));
         neuron = icon(IconView.NEURON, "Lápiz neurona: rodea lo que se relaciona", x -> setTool(InkView.LINK));
-        IconView ruler = icon(IconView.RULER, "Regla, escuadra, transportador y compás", x -> guideMenu());
+        ruler = icon(IconView.RULER, "Regla, escuadra, transportador y compás", x -> guideMenu());
         undo = icon(IconView.UNDO, "Deshacer", x -> ink.undo());
         redo = icon(IconView.REDO, "Rehacer", x -> ink.redo());
         finger = icon(IconView.HAND, "Dibujar con el dedo", x -> {
@@ -1619,7 +1619,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
             int k = kinds[i];
             tiles.add(new OptionDock.Tile(glyph(icons[i]), names[i], ink.guides.kind == k, () -> {
                 ink.guides.set(k, ink.getWidth(), ink.getHeight());
-                ruler.setActive(true);
+                if (ruler != null) ruler.setActive(true);
                 if (ink.tool != InkView.PEN && ink.tool != InkView.HIGHLIGHTER) setTool(InkView.PEN);
                 ink.invalidate();
                 hintOnce("guideHint", k == Guides.COMPASS
@@ -1629,7 +1629,7 @@ public final class PageActivity extends Activity implements InkView.Listener, Sy
         }
         if (ink.guides.active()) tiles.add(new OptionDock.Tile(glyph(IconView.TRASH), "Quitar", false, () -> {
             ink.guides.set(Guides.NONE, 0, 0);
-            ruler.setActive(false);
+            if (ruler != null) ruler.setActive(false);
             ink.invalidate();
         }));
         dock.tiles("Guías para dibujar", tiles);

@@ -274,14 +274,18 @@ public final class QrScanActivity extends Activity {
         if (size == null) return;
         int w = preview.getWidth(), h = preview.getHeight();
         if (w == 0 || h == 0) return;
+        // La vista previa de Camera2 ya llega girada a la orientación natural
+        // de la pantalla (la del sensor aplicada): sólo falta girar lo que
+        // esté rotada la pantalla ahora y recortar sin deformar.
         int display = getWindowManager().getDefaultDisplay().getRotation() * 90;
-        int r = (sensorDegrees - display + 360) % 360;
         float pw = size.getWidth(), ph = size.getHeight();
-        float bw = r % 180 == 0 ? pw : ph, bh = r % 180 == 0 ? ph : pw;
+        boolean natSwap = sensorDegrees % 180 != 0;
+        float nw = natSwap ? ph : pw, nh = natSwap ? pw : ph;
+        float bw = display % 180 == 0 ? nw : nh, bh = display % 180 == 0 ? nh : nw;
         float cx = w / 2f, cy = h / 2f;
         Matrix m = new Matrix();
-        m.postScale(pw / w, ph / h, cx, cy);
-        m.postRotate(r, cx, cy);
+        m.postScale(nw / w, nh / h, cx, cy);
+        m.postRotate(-display, cx, cy);
         float s = Math.max(w / bw, h / bh);
         m.postScale(s, s, cx, cy);
         preview.setTransform(m);
